@@ -6,14 +6,14 @@ Montar y validar un sistema completo de vehiculo conectado con estos cuatro elem
 
 - PC `EPC`: core LTE y nodo central de aplicacion
 - PC `eNodeB`: acceso radio LTE con `bladeRF`
-- `Jetson`: inferencia del modelo IA
+- `Jetson`: nodo opcional para aceleracion futura (fuera de la ruta critica actual)
 - `Coche`: captura de camara, envio de frames y ejecucion de comandos
 
 La estrategia es montar el sistema por capas, validando cada bloque antes de pasar al siguiente:
 
 1. Red LTE estable
 2. Servicios base en el EPC
-3. Inferencia en la Jetson
+3. Inferencia en el EPC
 4. Agente del coche
 5. Integracion extremo a extremo
 6. Endurecimiento y demo
@@ -60,9 +60,14 @@ Este equipo es el centro del sistema. Aqui va la red 4G y toda la logica de apli
   - Recibe frames del coche
   - Recibe telemetria
   - Guarda metadatos
-  - Llama a la Jetson para inferencia
+  - Ejecuta inferencia local en el EPC
   - Decide el comando final
   - Publica comandos por MQTT
+
+- `inference-service`
+  - API HTTP minima para inferencia local en EPC
+  - Endpoint principal: `POST /infer`
+  - Endpoint de salud: `GET /health`
 
 - `mosquitto`
   - Broker MQTT
@@ -78,6 +83,7 @@ Este equipo es el centro del sistema. Aqui va la red 4G y toda la logica de apli
 - `2152/UDP`: GTP-U
 - `53/TCP,UDP`: DNS
 - `8000/TCP`: API del backend
+- `9001/TCP`: API de inferencia local en EPC
 - `1883/TCP`: MQTT
 - `5432/TCP`: PostgreSQL (solo red interna)
 
@@ -107,32 +113,17 @@ Este equipo solo debe encargarse del acceso radio.
 
 ## 2.3 Jetson
 
-La Jetson solo debe ejecutar el servicio de inferencia y nada mas.
+La Jetson queda como nodo opcional de apoyo para fases futuras de optimizacion.
 
-### Servicios
+### Estado operativo actual
 
-- `inference-service`
-  - API HTTP minima
-  - Endpoint principal: `POST /infer`
-  - Endpoint de salud: `GET /health`
-  - Carga el modelo una sola vez al arrancar
-  - Devuelve:
-    - clase detectada
-    - confianza
-    - latencia
+- No participa en la ruta critica de inferencia
+- No es requisito para validar el flujo principal EPC + coche
 
-### Tecnologias recomendadas
+### Uso futuro (opcional)
 
-- `Python 3`
-- `FastAPI`
-- `PyTorch`
-- `OpenCV`
-- `TensorRT` mas adelante si hace falta optimizar
-
-### Despliegue recomendado
-
-- Primero: `venv + systemd`
-- Docker en Jetson solo mas adelante, si el entorno CUDA queda estable
+- Migrar inferencia desde EPC solo si hay necesidad real de aceleracion
+- Mantener compatibilidad de API (`GET /health`, `POST /infer`) para una migracion controlada
 
 ---
 
@@ -175,8 +166,8 @@ Flujo completo:
 2. El coche obtiene IP del EPC
 3. El coche envia un frame al backend del EPC
 4. El backend guarda el frame y registra el evento
-5. El backend envia el frame a la Jetson
-6. La Jetson responde con la deteccion
+5. El backend llama al servicio de inferencia local en el EPC
+6. El servicio local responde con la deteccion
 7. El backend decide la accion
 8. El backend publica el comando por MQTT
 9. El coche recibe el comando y ejecuta movimiento
@@ -185,9 +176,9 @@ Flujo completo:
 
 Reglas clave:
 
-- El coche no habla directamente con la Jetson
+- El coche no habla directamente con servicios de inferencia externos
 - El eNodeB no ejecuta logica de aplicacion
-- El EPC no ejecuta inferencia IA
+- El EPC ejecuta inferencia IA en esta etapa
 - Las imagenes van por HTTP, no por MQTT
 - MQTT se usa para control, estado y telemetria ligera
 
@@ -216,14 +207,14 @@ Dejar cerrados los parametros de red y las decisiones base antes de instalar mas
 - Fijar IPs de cada equipo:
   - `EPC <-> eNodeB`: `10.10.10.1/24` y `10.10.10.2/24`
   - `SGi EPC`: `172.16.0.1/24`
-  - `Jetson`: IP fija en la red donde el EPC pueda alcanzarla
+  - `Jetson` (opcional): IP fija en la red donde el EPC pueda alcanzarla
 
 - Dejar documentados:
   - puertos de cada servicio
   - nombres de host
   - rutas de logs
   - version de `srsRAN`
-  - version de `JetPack` y `PyTorch` en Jetson
+  - version de `JetPack` y `PyTorch` en Jetson (solo si se usa como acelerador futuro)
 
 - Crear estructura base de directorios en el EPC:
   - `/srv/tp2/frames`
@@ -384,13 +375,13 @@ Montar el esqueleto de servicios de aplicacion sin depender aun de la IA.
 
 ---
 
-## Fase 5. Servicio de inferencia en la Jetson
+## Fase 5. Servicio de inferencia en el EPC
 
 ### Objetivo
 
 Tener el modelo IA encapsulado en un servicio independiente y verificable.
 
-### Jetson: tareas
+### EPC: tareas
 
 - Preparar entorno:
   - `Python 3`
@@ -409,7 +400,7 @@ Tener el modelo IA encapsulado en un servicio independiente y verificable.
 
 ### Pruebas
 
-- Llamar a `/health` desde la Jetson
+- Llamar a `/health` desde el EPC
 - Llamar a `/infer` con una imagen local conocida
 - Medir tiempo de respuesta
 
@@ -422,35 +413,35 @@ Tener el modelo IA encapsulado en un servicio independiente y verificable.
 
 ### No pasar de fase hasta que
 
-- La Jetson procese una imagen de prueba de forma repetible
+- El EPC procese una imagen de prueba de forma repetible
 
 ---
 
-## Fase 6. Conexion EPC <-> Jetson
+## Fase 6. Integracion backend <-> inferencia local en EPC
 
 ### Objetivo
 
-Conectar el backend del EPC con la inferencia de la Jetson.
+Conectar el backend del EPC con el servicio de inferencia local del EPC.
 
 ### Tareas
 
-- Definir la IP fija de la Jetson
-- Abrir el puerto del `inference-service`
+- Definir el endpoint local de inferencia en el EPC
+- Abrir el puerto local del `inference-service` si aplica
 - Configurar en el backend del EPC:
-  - URL del servicio de inferencia
+  - URL local del servicio de inferencia
   - timeout
   - reintentos controlados
 
 - Implementar en `backend-api`:
   - recepcion de frame
   - guardado del frame
-  - llamada a la Jetson
+  - llamada al servicio de inferencia local
   - persistencia del resultado
 
 ### Pruebas
 
 - Subir un frame al backend del EPC
-- Verificar que el backend llama a la Jetson
+- Verificar que el backend llama al servicio local de inferencia
 - Verificar que guarda en DB:
   - ruta del frame
   - resultado de IA
@@ -558,15 +549,15 @@ Validar el sistema completo con todos los bloques conectados.
 2. Arrancar `srsenb`
 3. Confirmar attach del UE y que obtiene IP `172.16.0.x`
 4. Arrancar `docker compose` del EPC
-5. Arrancar `inference-service` en la Jetson
+5. Arrancar `inference-service` en el EPC
 6. Arrancar el agente del coche
 
 ### Flujo a verificar
 
 1. El coche envia un frame
 2. El EPC lo recibe
-3. El EPC lo manda a la Jetson
-4. La Jetson devuelve deteccion
+3. El EPC lo manda al servicio local de inferencia
+4. El servicio local devuelve deteccion
 5. El EPC decide accion
 6. El EPC publica por MQTT
 7. El coche ejecuta el movimiento
@@ -599,7 +590,7 @@ Hacer el sistema utilizable para demostracion, evitando estados peligrosos y dej
   - Recomendado: `2-5 fps`
 
 - Implementar politicas de fallback
-  - Si falla la Jetson: `SLOW` o `STOP`
+  - Si falla la inferencia en EPC: `SLOW` o `STOP`
   - Si falla MQTT: `STOP`
   - Si la confianza es baja: mantener accion segura
 
@@ -621,7 +612,7 @@ Hacer el sistema utilizable para demostracion, evitando estados peligrosos y dej
 
 ### Pruebas
 
-- Simular caida de la Jetson
+- Simular caida del servicio de inferencia en EPC
 - Simular perdida temporal de MQTT
 - Simular timeout de backend
 - Simular reinicio de un servicio critico
@@ -638,13 +629,13 @@ Hacer el sistema utilizable para demostracion, evitando estados peligrosos y dej
 
 ### Objetivo
 
-Hacer comparables los eventos entre EPC, Jetson y coche para medir y depurar la integracion real.
+Hacer comparables los eventos entre EPC y coche para medir y depurar la integracion real.
 
 ### Tareas
 
 - Fijar un mecanismo comun de sincronizacion temporal
 - Definir el formato de timestamps
-- Alinear logs de EPC, Jetson y coche sobre una misma referencia temporal
+- Alinear logs de EPC y coche sobre una misma referencia temporal
 - Dejar documentado el criterio de deriva aceptable entre nodos
 
 ### Pruebas
@@ -684,7 +675,7 @@ Dejar un procedimiento de arranque limpio y una traza minima del sistema para la
 3. Verificar S1
 4. Verificar attach del UE e IP
 5. Arrancar servicios Docker
-6. Arrancar Jetson
+6. Arrancar `inference-service` en EPC
 7. Verificar `/health`
 8. Arrancar coche
 9. Verificar MQTT y trazas basicas
@@ -694,7 +685,7 @@ Dejar un procedimiento de arranque limpio y una traza minima del sistema para la
 
 1. Parar el coche
 2. Parar servicios de aplicacion
-3. Parar Jetson
+3. Parar `inference-service` en EPC
 4. Parar eNodeB
 5. Parar EPC
 6. Guardar logs y evidencias
@@ -716,8 +707,8 @@ Para evitar mezclar errores, el orden correcto es:
 4. Confirmar conectividad IP del UE
 5. Montar `mosquitto + postgres + backend` en EPC
 6. Probar backend sin IA
-7. Montar servicio de inferencia en Jetson
-8. Conectar backend del EPC con Jetson
+7. Montar servicio de inferencia en EPC
+8. Conectar backend del EPC con su servicio de inferencia local
 9. Implementar decision y publicacion MQTT
 10. Implementar agente del coche
 11. Integrar extremo a extremo
@@ -760,11 +751,11 @@ Si aparece un fallo en una fase, no avanzar a la siguiente hasta dejar cerrada l
 
 ### Fase 5
 
-- servicio `/infer` en Jetson
+- servicio `/infer` en EPC
 
 ### Fase 6
 
-- backend llamando a Jetson y guardando resultados
+- backend llamando a inferencia local EPC y guardando resultados
 
 ### Fase 7
 
@@ -803,8 +794,8 @@ Se considera que el sistema esta listo cuando se cumplan estos puntos:
 - Existe un procedimiento reproducible de alta y attach del UE
 - El coche se registra como UE y obtiene IP
 - El coche puede enviar frames al backend del EPC
-- El backend puede pedir inferencia a la Jetson
-- La Jetson devuelve predicciones validas
+- El backend puede pedir inferencia al servicio local en EPC
+- El servicio de inferencia en EPC devuelve predicciones validas
 - El backend genera y publica comandos
 - El coche ejecuta comandos usando los scripts existentes
 - Los servicios clave recuperan su estado de forma controlada

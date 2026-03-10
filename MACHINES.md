@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This file records the role, addressing, and access path for each machine in the TP2 lab.
+Record current machine roles, addressing, and access paths for the live lab.
 
 Do not store passwords here.
 
@@ -10,27 +10,26 @@ Do not store passwords here.
 
 - Role:
   - LTE core host
-  - main application host
+  - main script runtime host
 - Hostname:
   - `tp2-EPC`
 - Services:
   - `srsepc`
   - NAT / IP forwarding
   - optional `dnsmasq`
-  - backend API
-  - `Mosquitto`
-  - `PostgreSQL`
+  - control scripts from `servicios/`
+  - local inference endpoint from `servicios/`
 - Known addresses:
   - upstream (`eno1`): `10.0.128.174/24` (DHCP)
-  - backhaul: `10.10.10.1`
+  - backhaul (`enp1s0`): `10.10.10.1/24`
   - Tailscale: `100.97.19.112`
-  - SGi: `172.16.0.1`
-- Interface bindings:
-  - backhaul (`enp1s0`): static `10.10.10.1/24`
-  - SGi (`srs_spgw_sgi`): static `172.16.0.1/24`
+  - SGi (`srs_spgw_sgi`): `172.16.0.1/24`
+- Script runtime references:
+  - repository path: `servicios/`
+  - deployed path used in validations: `/home/tp2/servicios_tp2/`
 - Access path:
   - primary remote entrypoint
-  - SSH to the EPC first
+  - SSH to EPC first
 
 ## PC eNodeB
 
@@ -45,40 +44,39 @@ Do not store passwords here.
   - backhaul: `10.10.10.2`
   - Tailscale: `100.69.186.34`
 - Access path:
-  - primary operator path: Tailscale SSH to `tp2@100.97.19.112` on the EPC, then SSH from the EPC to `tp2@10.10.10.2`
-  - `tp2@EPC -> tp2@eNodeB` key-based SSH hop was validated on `2026-03-04`
+  - operator path: Tailscale SSH to `tp2@100.97.19.112` on EPC, then SSH from EPC to `tp2@10.10.10.2`
+  - `tp2@EPC -> tp2@eNodeB` key-based SSH hop validated (`2026-03-04`)
 
 ## Jetson
 
 - Role:
-  - inference-only node
-- Services:
-  - inference API
-  - model runtime
+  - inference-only node (pending integration)
+- Target use:
+  - offload inference from EPC when required
+  - keep control path anchored on EPC
 - Addressing:
-  - must be reachable from the EPC
-  - keep its active IP documented in `docs/NETWORK.md` if it changes
+  - must be reachable from EPC
+  - document active IP in `docs/NETWORK.md`
 
 ## Coche
 
 - Role:
   - mobile client
 - Services:
-  - camera capture
-  - frame upload
-  - MQTT command handling
-  - movement adapter
+  - sends sensor payloads to EPC control scripts
+  - executes steering/throttle commands from EPC
 - Connectivity:
-  - attaches as an LTE UE
-  - receives an address from the EPC
-  - observed IMSI during attach attempts: `901650000052126`
-  - UE pool on EPC: `172.16.0.0/24`
-  - static UE assignment configured on EPC (`2026-03-10`): `901650000052126 -> 172.16.0.2`
-  - latest observed UE IP in `srsepc` log (`2026-03-10`): `172.16.0.2`
+  - attaches as LTE UE
+  - receives address from EPC UE pool `172.16.0.0/24`
+  - observed IMSI: `901650000052126`
+  - static UE assignment on EPC: `901650000052126 -> 172.16.0.2`
+- Control transport:
+  - UDP payload stream to EPC control scripts
+  - UDP control packets returned by EPC
 
 ## Ownership Rules
 
-- EPC owns orchestration.
+- EPC owns orchestration and control runtime.
 - eNodeB owns radio only.
-- Jetson owns inference only.
-- Coche owns frame capture and motion execution only.
+- Jetson owns inference only when integrated.
+- Car owns capture/sensor emission and command execution only.

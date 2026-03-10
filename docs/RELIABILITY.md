@@ -1,50 +1,50 @@
-# TP2 Reliability Model
+# TP2 Reliability Model (Current)
 
 ## Reliability Goals
 
-- LTE can be brought up repeatably.
-- The application stack can start without disturbing LTE routing.
-- The Jetson can answer inference requests predictably.
-- The car falls back safely when command flow breaks.
+- LTE starts repeatably (`srsepc` + `srsenb`).
+- Car UE attach remains stable with expected UE IP mapping.
+- EPC control scripts maintain UDP RX/TX loop with the car.
+- Inference on EPC remains callable and deterministic.
+- Jetson integration does not break EPC fallback path.
 
 ## Primary Failure Domains
 
-- EPC and eNodeB configuration drift
+- EPC/eNodeB config drift
 - `bladeRF` startup instability
-- Docker networking interfering with EPC routing
-- Jetson model or runtime failure
-- MQTT path failure
-- Car-agent watchdog disabled or misconfigured
+- UE attach/auth provisioning mismatch
+- UDP control script not bound or blocked
+- inference endpoint down (`127.0.0.1:9001` when required)
+- Jetson endpoint unreachable when enabled
 
 ## Fallback Rules
 
-- If the Jetson fails:
-  - degrade to `SLOW` or `STOP`
+- If Jetson inference fails:
+  - fallback to EPC local inference target.
 
-- If MQTT fails:
-  - the car watchdog must stop movement
+- If local inference endpoint fails:
+  - hold or reduce control aggressiveness and avoid stale command loops.
 
-- If the backend is unavailable:
-  - do not keep executing stale commands indefinitely
+- If UDP control loop breaks:
+  - car must fall back to safe stop behavior.
 
 ## Operational Logging
 
 Capture evidence for:
 
-- service start and stop
-- connectivity checks
-- inference latency
-- published commands
-- watchdog-triggered fallbacks
+- LTE process and port state
+- UE attach and IP assignment
+- control script startup and packet flow
+- inference request outcomes
+- fallback trigger events
 
 ## Troubleshooting Strategy
 
 Fix one layer at a time:
 
 1. LTE transport
-2. UE routing
-3. EPC application services
-4. Jetson inference
-5. MQTT control path
+2. UE routing and attach
+3. EPC UDP control loop
+4. EPC inference endpoint
+5. Jetson inference path
 6. Car execution path
-

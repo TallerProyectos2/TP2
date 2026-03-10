@@ -1,49 +1,57 @@
-# TP2 Design Notes
+# TP2 Design Notes (Current)
 
 ## Functional Design
 
-The design intentionally separates transport, inference, orchestration, and motion execution:
+The current system is intentionally script-first:
 
-- LTE core and routing are isolated on the EPC and eNodeB.
-- Inference is isolated on the Jetson.
-- Motion decisions are centralized in the EPC backend.
-- The car stays lightweight and reactive.
+- LTE transport is isolated in EPC + eNodeB.
+- Control loop runs on EPC scripts.
+- Car acts as sensor/control endpoint.
+- Inference runs on EPC today, with Jetson planned as optional offload.
 
-## Why The EPC Hosts The Application Stack
+## Why EPC Is The Runtime Hub
 
-The EPC machine is the most capable host and already sits at the center of network routing. Hosting the backend, MQTT broker, and database there reduces cross-machine dependencies and keeps the Jetson focused on GPU-bound work.
+EPC already owns:
 
-## Why The Jetson Is Inference-Only
+- LTE core state
+- UE routing
+- central operator access path
 
-The Jetson is the best place for model execution, but it should avoid carrying the rest of the platform:
+Keeping script orchestration there reduces moving parts and avoids introducing a second orchestration layer prematurely.
 
-- less operational complexity
-- simpler failure isolation
-- easier GPU/runtime management
+## Why No New API Layer Right Now
 
-## Why HTTP For Frames
+Existing scripts in `servicios/` already provide:
 
-Frame upload should be explicit and bounded:
+- car control loop
+- autonomous/manual operation modes
+- local/cloud inference tooling
 
-- better control over payload size
-- easier retries
-- easier logging
-- cleaner separation from command traffic
+Building a new API stack now would duplicate behavior and slow integration without reducing current risk.
 
-## Why MQTT For Commands
+## Why Jetson Is Deferred To Integration Phase
 
-MQTT fits low-latency, lightweight control messages:
+Jetson is still useful, but should be added only as:
 
-- command dispatch
-- acknowledgement
-- car status
-- light telemetry
+- inference offload endpoint
+- configuration-selectable target
+- fallback-safe extension
 
-## Data Ownership
+This avoids destabilizing the validated EPC+eNodeB+car path.
 
-- Filesystem on the EPC:
-  - frame images
-  - validation artifacts
-- PostgreSQL:
-  - structured metadata and events
+## Data/Transport Design (Current)
 
+- LTE:
+  - attach and user plane through EPC/eNodeB
+- Car control:
+  - UDP payload stream to EPC scripts
+  - UDP control response from EPC to car
+- Inference:
+  - local endpoint on EPC (or cloud target when configured)
+
+## Design Invariants
+
+- eNodeB stays radio-only.
+- Control decisions stay centralized on EPC runtime.
+- Jetson is inference-only when integrated.
+- No firmware upgrades in project operations.

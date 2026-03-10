@@ -1,116 +1,93 @@
-# TP2 System Architecture
+# TP2 System Architecture (Current Operational Context)
 
 ## Overview
 
-TP2 is a connected-vehicle demonstrator built around a private LTE lab network. The system is split across four machines, with a strict separation between radio, core networking, inference, and vehicle control.
+TP2 runs as a four-machine lab, but the current critical path is script-based and centered on the EPC:
 
-The EPC is the central host for both LTE core services and the main application stack. The eNodeB exposes the radio network. The Jetson performs inference only. The car is the mobile endpoint that captures frames and executes movement commands.
+- EPC: LTE core, control scripts, and local inference service.
+- eNodeB: radio-only access.
+- Car: mobile endpoint sending sensor payloads and receiving control commands.
+- Jetson: pending integration for inference offload.
+
+## Current Critical Path
+
+1. Car attaches to LTE and gets UE IP from EPC (`172.16.0.2`).
+2. Car sends UDP payloads (image/LIDAR/battery) to EPC control server.
+3. EPC script computes steering/throttle.
+4. EPC sends UDP control packet back to car.
+
+This path works without introducing a new backend API layer.
 
 ## Machine Responsibilities
 
 ## PC EPC
 
 - `srsepc` (`MME + HSS + SPGW`)
-- UE IP allocation
-- NAT and IP forwarding
-- Optional UE DNS
-- Main application services:
-  - backend API
-  - MQTT broker
-  - PostgreSQL
-  - frame storage
+- UE IP allocation and routing (`172.16.0.0/24`)
+- NAT and forwarding
+- Optional UE DNS (`dnsmasq`)
+- Script runtime from `servicios/`:
+  - car control UDP servers
+  - local inference endpoint launcher
+  - inference CLI and GUI tools
 
 ## PC eNodeB
 
 - `srsenb`
 - `bladeRF`
-- Radio access only
+- Radio transport only
 
-## Jetson
+## Car
 
-- Inference API
-- Model loading and execution
-- No DB, no MQTT broker, no main backend
+- Streams data to EPC over UDP
+- Executes control commands received from EPC
+- Runs movement logic driven by EPC commands
 
-## Coche
+## Jetson (Pending)
 
-- Camera capture
-- Frame upload over HTTP
-- MQTT command reception
-- Movement adapter over the existing Python scripts
-- Safety watchdog
+- Planned as inference-only offload node
+- Must not host LTE core, DB, MQTT broker, or orchestration
 
 ## Network Topology
 
 ## EPC <-> eNodeB Backhaul
 
-- Network: `10.10.10.0/24`
-- EPC: `10.10.10.1`
-- eNodeB: `10.10.10.2`
-
-This link carries S1 control and user-plane traffic between `srsepc` and `srsenb`.
+- `10.10.10.1` (EPC) <-> `10.10.10.2` (eNodeB)
+- Carries S1-MME and S1-U
 
 ## UE Side
 
-- SGi interface: `172.16.0.1`
-- UE pool: `172.16.0.0/24`
+- EPC SGi: `172.16.0.1/24`
+- Car UE subnet: `172.16.0.0/24`
+- Current fixed car mapping: `901650000052126 -> 172.16.0.2`
 
-The car attaches to LTE and receives a UE-side IP from the EPC.
+## Protocol Contract (Current)
 
-## Jetson Reachability
+- LTE core transport:
+  - `36412/SCTP` (S1-MME)
+  - `2152/UDP` (GTP-U)
+- Car control transport:
+  - UDP script servers on EPC (`20001` for car1 scripts, `20003` for car3 scripts)
+  - payload discriminator byte (`I`, `L`, `B`, `D`)
+  - control packet type (`C`) with steering/throttle doubles
+- Inference transport:
+  - local HTTP endpoint (default `127.0.0.1:9001`) for Roboflow-compatible runtime
+  - optional cloud endpoint when configured in scripts
 
-The Jetson must be reachable from the EPC over the lab LAN or upstream network. The car should not talk to the Jetson directly.
+## Inference Contract
 
-## Data Flow
+Inference is currently run on EPC through:
 
-1. The car attaches to LTE and gets a UE IP.
-2. The car uploads a frame to the EPC backend by HTTP.
-3. The EPC backend stores the frame metadata and file path.
-4. The EPC backend sends the frame to the Jetson inference API.
-5. The Jetson returns the detected class, confidence, and latency.
-6. The EPC backend decides the final action.
-7. The EPC backend publishes the action by MQTT.
-8. The car receives the command and invokes the movement adapter.
-9. The car publishes status or acknowledgement.
+- `start_local_inference_server.py` (local endpoint)
+- `inferencia.py` (CLI test and annotated output)
+- `inferencia_gui_web.py` (batch GUI)
 
-## Protocol Contract
-
-- HTTP:
-  - frame upload
-  - backend health
-  - Jetson inference
-- MQTT:
-  - command publish
-  - acknowledgement
-  - status
-  - light telemetry
-- PostgreSQL:
-  - events
-  - sessions
-  - detections
-  - commands
-
-## Storage Contract
-
-- Frame files live on the EPC filesystem.
-- Structured metadata lives in PostgreSQL.
-- Avoid storing bulk frame blobs in the database.
-
-## Ports
-
-- `36412/SCTP`: S1-MME
-- `2152/UDP`: GTP-U
-- `53/TCP,UDP`: optional UE DNS
-- `8000/TCP`: EPC backend API
-- `1883/TCP`: MQTT broker
-- `5432/TCP`: PostgreSQL (internal only)
-- `9000/TCP`: suggested Jetson inference API
+Jetson integration must preserve compatibility with the current inference client behavior to avoid rewrites of the operational scripts.
 
 ## Invariants
 
-- eNodeB is radio-only.
-- Jetson is inference-only.
-- EPC is the orchestration hub.
-- Images do not travel over MQTT.
-- The final motion command is decided centrally at the EPC backend.
-
+- eNodeB remains radio-only.
+- EPC remains control and orchestration hub.
+- Car does not decide global policy; it executes received commands.
+- No firmware upgrades in project operations.
+- No parallel rebuild of a new API stack is required to keep the current path operational.

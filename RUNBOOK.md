@@ -1,97 +1,82 @@
-# TP2 Operating Runbook
+# TP2 Operating Runbook (Script-First)
 
 ## Purpose
 
-This runbook defines the standard operating sequence for bringing the lab up, validating it, and shutting it down cleanly.
+Define the real startup, validation, and shutdown sequence for the current operational model based on `servicios/`.
 
 ## Startup Order
 
-1. Validate network connectivity between EPC and eNodeB.
-2. Start `srsepc` on the EPC.
-3. Start `srsenb` on the eNodeB.
+1. Validate EPC <-> eNodeB backhaul connectivity (`10.10.10.1` <-> `10.10.10.2`).
+2. Start `srsepc` on EPC.
+3. Start `srsenb` on eNodeB.
 4. Verify S1 setup is established.
-5. Start the application stack on the EPC:
-   - backend
-   - MQTT
-   - PostgreSQL
-6. Start the inference service on the Jetson.
-7. Verify the Jetson health endpoint.
-8. Start the car agent.
-9. Verify the car can attach to LTE and reach the EPC backend.
+5. Verify car UE attach and IP assignment (`172.16.0.2` expected).
+6. Start required script services on EPC:
+   - control server script (manual/autonomous/real-time variant)
+   - inference endpoint (`start_local_inference_server.py`) if local inference path is needed
+7. Optionally start inference GUI web (`inferencia_gui_web.py`) for batch checks.
+8. If testing Jetson integration, start Jetson inference service last and enable it via script config.
 
 ## Shutdown Order
 
-1. Stop the car agent.
-2. Stop the application stack on the EPC.
-3. Stop the Jetson inference service.
-4. Stop `srsenb`.
-5. Stop `srsepc`.
-6. Capture logs or validation artifacts if the session changed system state.
+1. Stop car activity.
+2. Stop EPC script services (control server, optional inference GUI/server).
+3. Stop `srsenb`.
+4. Stop `srsepc`.
+5. Collect logs and validation evidence if session changed system state.
 
 ## Default Validation Sequence
 
 ## LTE Validation
 
-- Confirm EPC and eNodeB configs are aligned.
-- Confirm `srsenb` reaches `srsepc`.
-- Confirm S1 setup completes.
-- Confirm the UE can attach.
+- EPC and eNodeB configs aligned.
+- `srsenb` reaches `srsepc`.
+- S1 setup completes.
+- Car UE attaches and keeps expected IP mapping.
 
-## EPC Application Validation
+## Script Control Validation
 
-- Check backend health endpoint.
-- Check MQTT publish/subscribe.
-- Check PostgreSQL connectivity.
-- Check frame storage path exists and is writable.
+- Selected control script binds its UDP port.
+- Script receives car payloads (`I`, `L`, `B`, `D`).
+- Script sends control packets (`C`) back to car.
+- Car behavior matches command stream.
 
-## Jetson Validation
+## EPC Inference Validation
 
-- Check `GET /health`.
-- Run one known-image inference request.
-- Record latency.
+- Local inference endpoint reachable when enabled (default `127.0.0.1:9001`).
+- `inferencia.py` runs with a known image and writes annotated output.
+- Optional GUI web can process selected images without runtime errors.
 
-## Car Validation
+## Jetson Validation (when enabled)
 
-- Confirm HTTP frame upload succeeds.
-- Confirm MQTT command reception.
-- Confirm the movement adapter runs.
-- Confirm the watchdog fallback is active.
-
-## End-To-End Validation
-
-- Upload frame
-- Trigger inference
-- Publish action
-- Receive command
-- Execute movement
-- Record acknowledgement
+- EPC can reach Jetson inference endpoint.
+- Script configuration can switch to Jetson target.
+- Fallback to EPC local inference is validated.
 
 ## Operational Rules
 
 - Prefer read-only inspection first.
-- Avoid restarting healthy services unless needed for the task.
+- Avoid restarting healthy services unless required by the task.
 - Do not change more than one layer at once during troubleshooting.
-- If LTE is unstable, do not continue to backend or car-level debugging.
-- Firmware updates are forbidden on all components during this project.
+- If LTE is unstable, stop before script-level or Jetson-level debugging.
+- Firmware updates are forbidden on all components.
 
 ## Troubleshooting Order
 
-When the system fails, debug in this order:
-
 1. EPC and eNodeB process state
-2. Backhaul network reachability
-3. UE attachment and routing
-4. EPC backend health
-5. Jetson inference health
-6. MQTT flow
-7. Car-agent execution path
+2. Backhaul network and S1 state
+3. UE attach and IP assignment
+4. UDP control script RX/TX path
+5. EPC local inference endpoint
+6. Jetson inference path (only if enabled)
+7. Car-side execution path
 
 ## Escalation Conditions
 
 Stop and escalate if:
 
-- remote credentials are missing,
-- a change risks breaking working LTE connectivity,
-- a task appears to require a firmware update,
-- service restarts are required but current state is not understood,
-- Jira state suggests work is done but runtime validation fails.
+- credentials are missing,
+- remote state is ambiguous,
+- a destructive action is required and impact is unclear,
+- validation cannot be completed,
+- documentation and live system behavior diverge in a way that cannot be explained.

@@ -6,56 +6,54 @@
 - EPC: `10.10.10.1`
 - eNodeB: `10.10.10.2`
 
-This is the dedicated link between `srsepc` and `srsenb`.
+This link carries S1 control and user-plane traffic between `srsepc` and `srsenb`.
 
 ## EPC Interfaces
 
-- Hostname:
-  - `tp2-EPC`
-- Backhaul side:
-  - interface: `enp1s0`
-  - `10.10.10.1`
-- SGi side:
-  - interface: `srs_spgw_sgi`
-  - `172.16.0.1`
-- External or upstream side:
-  - interface: `eno1`
-  - the interface used for NAT and any upstream reachability
+- `enp1s0` (backhaul): `10.10.10.1`
+- `srs_spgw_sgi` (UE side): `172.16.0.1`
+- `eno1` (upstream): NAT egress interface
+- `tailscale0`: operator remote access
 
 ## UE Routing Path
 
-- UE subnet: `172.16.0.0/24` on `srs_spgw_sgi`
-- Forwarding is enabled on EPC (`net.ipv4.ip_forward=1`)
-- UE egress to upstream uses NAT/MASQUERADE from `172.16.0.0/24` to `eno1`
-- EPC exposes DNS for UEs on `172.16.0.1:53` via `dnsmasq`
+- UE subnet: `172.16.0.0/24`
+- Forwarding enabled on EPC
+- NAT/MASQUERADE from `172.16.0.0/24` to `eno1`
+- Optional DNS for UE on `172.16.0.1:53`
 
 ## UE Addressing
 
-- UE pool: `172.16.0.0/24`
-- The car receives its IP dynamically from the EPC unless an explicit static assignment is added to the HSS.
+- Car IMSI: `901650000052126`
+- Current fixed assignment: `172.16.0.2`
 
-## Service Reachability
+## Current Runtime Reachability
 
-- The car must reach the EPC backend over HTTP.
-- The car must reach the EPC MQTT broker.
-- The EPC must reach the Jetson inference API.
-- The car should not call the Jetson directly.
+- Car must reach EPC control script UDP endpoint.
+- EPC must return UDP control packets to car.
+- EPC local inference endpoint is usually loopback (`127.0.0.1:9001`), not external by default.
+
+## Jetson Reachability (Pending Integration)
+
+- Jetson must be reachable from EPC only.
+- Car should not call Jetson directly.
+- When Jetson inference is enabled, keep EPC local inference as fallback.
 
 ## Core Ports
 
-- `36412/SCTP`: S1-MME
-- `2152/UDP`: GTP-U
-- `53/TCP,UDP`: DNS if enabled
-- `8000/TCP`: backend API
-- `1883/TCP`: MQTT
-- `5432/TCP`: PostgreSQL internal access
-- `9000/TCP`: suggested Jetson inference API
+- `36412/SCTP`: EPC S1-MME
+- `2152/UDP`: EPC GTP-U
+- `53/TCP,UDP`: EPC DNS (optional)
+- `20001/UDP`: car1 control script endpoint
+- `20003/UDP`: car3 control script endpoint
+- `9001/TCP`: EPC local inference endpoint
+- `7860/TCP` or `7861/TCP`: inference GUI web (when launched)
 
 ## Validation Checklist
 
 - EPC can ping eNodeB
-- eNodeB can reach the EPC S1 endpoint
-- UE receives an IP
-- UE can reach `172.16.0.1`
-- EPC can reach the Jetson service IP
-- EPC Phase 0 baseline is documented in `docs/EPC.md`
+- eNodeB has S1 association to EPC
+- Car UE is attached with `172.16.0.2`
+- EPC control script receives UDP payloads from car
+- EPC sends UDP control back to car
+- If local inference is enabled, `127.0.0.1:9001` responds

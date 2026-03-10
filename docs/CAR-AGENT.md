@@ -1,37 +1,64 @@
-# Car Agent Contract
+# Car Runtime Contract (Current)
 
 ## Purpose
 
-The car agent is the mobile client that captures frames, sends them to the EPC backend, receives control commands, and maps those commands onto the existing movement scripts.
+Document the current car-side interaction model used by existing EPC scripts.
 
-## Logical Components
+## Control Model
 
-- `camera-capture`
-  - captures frames at a bounded rate
+The active operational model is UDP stream + UDP control:
 
-- `frame-uploader`
-  - uploads frames to the EPC backend over HTTP
+- Car sends payloads to EPC control server.
+- EPC script processes payloads and returns control command.
 
-- `mqtt-client`
-  - subscribes to command topics
-  - publishes acknowledgements and status
+No new backend API is required to run this path.
 
-- `movement-adapter`
-  - translates abstract actions into calls to the existing Python movement scripts
+## Script Endpoints In Use
 
-- `safety-watchdog`
-  - stops or slows the vehicle when commands become stale
+Control servers available in `servicios/`:
 
-## Behavioral Rules
+- `car1_cloud_control_server.py`
+- `car1_cloud_control_server_real_time_control.py`
+- `car1_manual_control_server.py`
+- `car3_cloud_control_server.py`
+- `car3_cloud_control_server_real_time_control.py`
+- `car3_manual_control_server.py`
 
-- The car does not perform final action selection.
-- The car executes commands coming from the EPC backend.
-- The watchdog must be active during all remote-control or autonomous tests.
+Shared control logic:
 
-## Validation
+- `artemis_autonomous_car.py`
 
-- Receive a manual MQTT command
-- Execute a known movement action
-- Upload at least one frame successfully
-- Confirm watchdog fallback triggers when command flow stops
+## UDP Packet Contract (As Implemented)
 
+- Incoming payload discriminator (first byte):
+  - `I`: camera image payload
+  - `L`: lidar payload
+  - `B`: battery level
+  - `D`: reserved/other data path
+- Payload body is deserialized with `pickle.loads(...)` in current scripts.
+- Outgoing control packet type:
+  - `C` + steering (`double`) + throttle (`double`)
+
+## Runtime Modes
+
+- Manual mode:
+  - keyboard-driven steering/throttle
+  - camera/LIDAR display for operator feedback
+- Autonomous mode:
+  - image/LIDAR processed by `artemis_autonomous_car`
+  - steering/throttle computed automatically
+- Real-time autonomous mode:
+  - keyboard switches route/behavior mode while autonomous loop runs
+
+## LTE Binding Context
+
+- Car attaches as UE in EPC network.
+- Current static mapping:
+  - IMSI `901650000052126` -> `172.16.0.2`
+
+## Minimum Validation
+
+1. Start LTE (`srsepc` + `srsenb`) and verify UE attach.
+2. Start chosen EPC control script.
+3. Confirm script receives UDP payloads from car.
+4. Confirm control packets are returned and car responds.

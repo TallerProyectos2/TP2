@@ -1,0 +1,13 @@
+name: tp2
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - numpy
+  - opencv
+  - evdev
+  - pynput
+  - gradio
+  - pip
+  - pip:
+      - inference-sdk

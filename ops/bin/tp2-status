@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/tp2-common.sh
+source "${SCRIPT_DIR}/../lib/tp2-common.sh"
+tp2_load_config
+
+show_remote() {
+  local label="$1"
+  local target="$2"
+  local command="$3"
+
+  printf '\n== %s (%s) ==\n' "${label}" "${target}"
+  if ! tp2_remote_sh "${target}" "${command}"; then
+    printf '[tp2][warn] %s status unavailable\n' "${label}" >&2
+  fi
+}
+
+epc_status_command="$(cat <<EOF
+hostname
+printf 'srsepc: '; systemctl is-active ${TP2_EPC_SRSEPC_SERVICE} 2>/dev/null || true
+printf 'srsepc cmd: '; if ps -eo pid=,args= | grep -F -- '${TP2_EPC_SRSEPC_CMD}' | grep -v -F 'grep -F --'; then :; else echo missing; fi
+printf 'mosquitto: '; systemctl is-active ${TP2_EPC_MQTT_SERVICE} 2>/dev/null || true
+printf 'local inference: '; systemctl is-active ${TP2_EPC_LOCAL_INFERENCE_SERVICE} 2>/dev/null || true
+printf 'car control: '; systemctl is-active ${TP2_EPC_CAR_CONTROL_SERVICE} 2>/dev/null || true
+printf 'S1 association: '; if ss -H -nA sctp | grep ESTAB | grep -F ':36412' | grep -F '${TP2_ENB_BACKHAUL_IP}:' >/dev/null; then echo established; else echo missing; fi
+if ping -c 1 -W 1 ${TP2_CAR_UE_IP} >/dev/null 2>&1 || grep -q 'UE IP: ${TP2_CAR_UE_IP}' /srv/tp2/logs/srsepc.log; then
+  echo 'car UE: ok (${TP2_CAR_UE_IP})'
+else
+  echo 'car UE: not confirmed'
+fi
+ss -H -lnA sctp | grep ':36412' || true
+ss -H -lun | grep -E '(:2152|:20001)' || true
+ss -H -ltn | grep -E '(:1883|:9001|:8088)' || true
+curl -fsS --max-time 2 ${TP2_CAR_WEB_URL} >/dev/null 2>&1 && echo "car web: ok" || echo "car web: fail"
+EOF
+)"
+
+enb_status_command="$(cat <<EOF
+hostname
+printf 'link active: '; systemctl is-active ${TP2_ENB_LINK_SERVICE} 2>/dev/null || true
+printf 'link enabled: '; systemctl is-enabled ${TP2_ENB_LINK_SERVICE} 2>/dev/null || true
+printf 'fpga: '; systemctl is-active ${TP2_ENB_FPGA_SERVICE} 2>/dev/null || true
+printf 'srsenb: '; systemctl is-active ${TP2_ENB_SRSENB_SERVICE} 2>/dev/null || true
+printf 'srsenb cmd: '; if ps -eo pid=,args= | grep -F -- '${TP2_ENB_SRSENB_CMD}' | grep -v -F 'grep -F --'; then :; else echo missing; fi
+printf 'bladeRF-cli: '; if pgrep -x bladeRF-cli >/dev/null || pgrep -x bladerf-cli >/dev/null; then echo busy; else echo released; fi
+printf 'bladeRF: '; lsusb | grep -i bladerf || echo missing
+EOF
+)"
+
+show_remote "EPC" "${TP2_EPC_SSH}" "${epc_status_command}"
+show_remote "eNodeB" "${TP2_ENB_SSH}" "${enb_status_command}"
+
+if [[ -n "${TP2_JETSON_SSH}" ]]; then
+  jetson_status_command="$(cat <<EOF
+hostname
+printf 'inference: '; systemctl is-active ${TP2_JETSON_INFERENCE_SERVICE} 2>/dev/null || true
+curl -fsS --max-time 8 http://127.0.0.1:9001/openapi.json >/dev/null && echo openapi: ok || echo openapi: fail
+EOF
+)"
+  show_remote "Jetson" "${TP2_JETSON_SSH}" "${jetson_status_command}"
+else
+  jetson_epc_check_command="$(cat <<EOF
+curl -fsS --max-time 8 ${TP2_JETSON_INFERENCE_URL}/openapi.json >/dev/null && echo "endpoint: ok" || echo "endpoint: fail"
+EOF
+)"
+  show_remote "Jetson endpoint from EPC" "${TP2_EPC_SSH}" "${jetson_epc_check_command}"
+fi

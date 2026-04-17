@@ -1,0 +1,12 @@
+[Unit]
+Description=TP2 eNodeB backhaul link preparation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/tp2/to_epc_link.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

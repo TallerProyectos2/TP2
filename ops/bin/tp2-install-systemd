@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/tp2-common.sh
+source "${SCRIPT_DIR}/../lib/tp2-common.sh"
+tp2_load_config
+
+target="${1:-all}"
+
+install_unit() {
+  local ssh_target="$1"
+  local local_file="$2"
+  local unit_name
+  unit_name="$(basename "${local_file}")"
+
+  tp2_log "Installing ${unit_name} on ${ssh_target}"
+  tp2_scp_to "${local_file}" "${ssh_target}" "/tmp/${unit_name}"
+  tp2_remote_sh "${ssh_target}" "sudo -n install -m 0644 /tmp/${unit_name} /etc/systemd/system/${unit_name} && rm -f /tmp/${unit_name} && sudo -n systemctl daemon-reload"
+}
+
+install_script() {
+  local ssh_target="$1"
+  local local_file="$2"
+  local remote_name
+  remote_name="$(basename "${local_file}")"
+
+  tp2_log "Installing ${remote_name} on ${ssh_target}"
+  tp2_scp_to "${local_file}" "${ssh_target}" "/tmp/${remote_name}"
+  tp2_remote_sh "${ssh_target}" "sudo -n install -m 0755 /tmp/${remote_name} /usr/local/sbin/${remote_name} && rm -f /tmp/${remote_name}"
+}
+
+install_epc() {
+  tp2_require_ssh "${TP2_EPC_SSH}"
+  install_unit "${TP2_EPC_SSH}" "${TP2_OPS_DIR}/systemd/epc/tp2-srsepc.service"
+  install_unit "${TP2_EPC_SSH}" "${TP2_OPS_DIR}/systemd/epc/tp2-local-inference.service"
+  install_unit "${TP2_EPC_SSH}" "${TP2_OPS_DIR}/systemd/epc/tp2-car-control.service"
+  install_unit "${TP2_EPC_SSH}" "${TP2_OPS_DIR}/systemd/epc/tp2-car-command-am-cloud.service"
+}
+
+install_enb() {
+  tp2_require_ssh "${TP2_ENB_SSH}"
+  install_script "${TP2_ENB_SSH}" "${TP2_OPS_DIR}/bin/tp2-enb-load-fpga"
+  install_unit "${TP2_ENB_SSH}" "${TP2_OPS_DIR}/systemd/enb/tp2-enb-link.service"
+  install_unit "${TP2_ENB_SSH}" "${TP2_OPS_DIR}/systemd/enb/tp2-bladerf-fpga.service"
+  install_unit "${TP2_ENB_SSH}" "${TP2_OPS_DIR}/systemd/enb/tp2-srsenb.service"
+  tp2_log "Enabling ${TP2_ENB_LINK_SERVICE} on ${TP2_ENB_SSH}"
+  tp2_remote_sh "${TP2_ENB_SSH}" "sudo -n systemctl enable ${TP2_ENB_LINK_SERVICE}"
+}
+
+install_jetson() {
+  if [[ -z "${TP2_JETSON_SSH}" ]]; then
+    tp2_die "TP2_JETSON_SSH is empty. Set direct Jetson SSH before installing Jetson systemd units."
+  fi
+
+  tp2_require_ssh "${TP2_JETSON_SSH}"
+  install_unit "${TP2_JETSON_SSH}" "${TP2_OPS_DIR}/systemd/jetson/tp2-roboflow-inference.service"
+}
+
+case "${target}" in
+  epc)
+    install_epc
+    ;;
+  enb)
+    install_enb
+    ;;
+  jetson)
+    install_jetson
+    ;;
+  all)
+    install_epc
+    install_enb
+    install_jetson
+    ;;
+  *)
+    tp2_die "Usage: $0 [all|epc|enb|jetson]"
+    ;;
+esac
+
+tp2_log "Systemd installation completed. Units were installed but not started."

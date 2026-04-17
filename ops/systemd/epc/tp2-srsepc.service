@@ -1,0 +1,16 @@
+[Unit]
+Description=TP2 EPC core (srsepc)
+After=network-online.target tp2-ue-routing.service
+Wants=network-online.target tp2-ue-routing.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/test -r /home/tp2/.config/srsran/epc.conf
+ExecStart=/usr/local/bin/srsepc /home/tp2/.config/srsran/epc.conf
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

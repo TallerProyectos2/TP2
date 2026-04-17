@@ -1,0 +1,13 @@
+[Unit]
+Description=TP2 publish AM-Cloud mode to the car command topic
+After=mosquitto.service tp2-car-control.service
+Requires=mosquitto.service
+
+[Service]
+Type=oneshot
+Environment=TP2_MQTT_HOST=172.16.0.1
+Environment=TP2_MQTT_PORT=1883
+Environment=TP2_MQTT_COMMAND_TOPIC=1/command
+Environment=TP2_MQTT_COMMAND_PAYLOAD=AM-Cloud
+EnvironmentFile=-/etc/tp2/car-command.env
+ExecStart=/bin/sh -c 'exec /usr/bin/mosquitto_pub -h "$TP2_MQTT_HOST" -p "$TP2_MQTT_PORT" -t "$TP2_MQTT_COMMAND_TOPIC" -m "$TP2_MQTT_COMMAND_PAYLOAD"'

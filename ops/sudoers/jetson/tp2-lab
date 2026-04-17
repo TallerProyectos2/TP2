@@ -1,0 +1,12 @@
+# TP2 Jetson automation permissions.
+# No passwords or tokens belong in this file.
+
+Cmnd_Alias TP2_JETSON_SYSTEMCTL = \
+    /usr/bin/systemctl start tp2-roboflow-inference.service, \
+    /usr/bin/systemctl stop tp2-roboflow-inference.service, \
+    /usr/bin/systemctl daemon-reload
+
+Cmnd_Alias TP2_JETSON_INSTALL = \
+    /usr/bin/install -m 0644 /tmp/tp2-roboflow-inference.service /etc/systemd/system/tp2-roboflow-inference.service
+
+grupo4 ALL=(root) NOPASSWD: TP2_JETSON_SYSTEMCTL, TP2_JETSON_INSTALL

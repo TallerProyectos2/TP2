@@ -28,8 +28,8 @@ Do not store passwords here.
   - repository path: `servicios/`
   - deployed path used in validations: `/home/tp2/servicios_tp2/`
 - Access path:
-  - primary remote entrypoint
-  - SSH to EPC first
+  - primary remote entrypoint from the operator MacBook
+  - direct Tailscale SSH: `ssh tp2@100.97.19.112`
 
 ## PC eNodeB
 
@@ -44,7 +44,8 @@ Do not store passwords here.
   - backhaul: `10.10.10.2`
   - Tailscale: `100.69.186.34`
 - Access path:
-  - operator path: Tailscale SSH to `tp2@100.97.19.112` on EPC, then SSH from EPC to `tp2@10.10.10.2`
+  - operator path from a MacBook: `ssh -J tp2@100.97.19.112 tp2@10.10.10.2`
+  - fallback operator path: SSH to `tp2@100.97.19.112` on EPC, then SSH from EPC to `tp2@10.10.10.2`
   - `tp2@EPC -> tp2@eNodeB` key-based SSH hop validated (`2026-03-04`)
 
 ## Jetson
@@ -65,8 +66,8 @@ Do not store passwords here.
   - Tailscale IP: `100.115.99.8`
   - must be reachable from EPC
 - Access path:
-  - primary SSH: `ssh grupo4@tp2-jetson`
-  - Tailscale direct SSH: `ssh grupo4@100.115.99.8`
+  - primary operator path from a MacBook: `ssh grupo4@100.115.99.8`
+  - direct SSH by hostname when available: `ssh grupo4@tp2-jetson`
   - management LAN SSH: `ssh grupo4@192.168.72.127`
 
 ## Coche

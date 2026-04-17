@@ -1,0 +1,18 @@
+[Unit]
+Description=TP2 Roboflow Inference on Jetson
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/tp2/jetson-inference.env
+ExecStartPre=-/usr/bin/docker rm -f tp2-roboflow-inference
+ExecStart=/usr/bin/docker run --rm --name tp2-roboflow-inference --runtime=nvidia --network=host --env-file /etc/tp2/jetson-inference.env roboflow/roboflow-inference-server-jetson-6.2.0:latest
+ExecStop=/usr/bin/docker stop tp2-roboflow-inference
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

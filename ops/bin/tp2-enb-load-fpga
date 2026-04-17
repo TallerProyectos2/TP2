@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+rbf_path="${1:-/home/tp2/Descargas/hostedxA9.rbf}"
+timeout_sec="${TP2_BLADERF_WAIT_TIMEOUT_SEC:-120}"
+
+if [[ ! -r "${rbf_path}" ]]; then
+  echo "FPGA bitstream not readable: ${rbf_path}" >&2
+  exit 1
+fi
+
+blade_cli="$(command -v bladeRF-cli || command -v bladerf-cli || true)"
+if [[ -z "${blade_cli}" ]]; then
+  echo "bladeRF-cli not found in PATH" >&2
+  exit 1
+fi
+
+deadline=$((SECONDS + timeout_sec))
+while (( SECONDS < deadline )); do
+  if "${blade_cli}" -p 2>/dev/null | grep -qi "bladeRF"; then
+    echo "bladeRF detected"
+    exec "${blade_cli}" -l "${rbf_path}"
+  fi
+
+  echo "Waiting for bladeRF..."
+  sleep 2
+done
+
+echo "Timed out waiting for bladeRF after ${timeout_sec}s" >&2
+exit 1

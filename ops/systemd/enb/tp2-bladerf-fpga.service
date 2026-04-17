@@ -1,0 +1,13 @@
+[Unit]
+Description=TP2 wait for bladeRF and load hostedxA9 FPGA bitstream
+After=network-online.target tp2-enb-link.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/tp2-enb-load-fpga /home/tp2/Descargas/hostedxA9.rbf
+RemainAfterExit=yes
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

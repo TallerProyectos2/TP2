@@ -1,0 +1,23 @@
+# TP2 EPC automation permissions.
+# No passwords or tokens belong in this file.
+
+Cmnd_Alias TP2_EPC_SYSTEMCTL = \
+    /usr/bin/systemctl start tp2-srsepc.service, \
+    /usr/bin/systemctl stop tp2-srsepc.service, \
+    /usr/bin/systemctl start tp2-local-inference.service, \
+    /usr/bin/systemctl stop tp2-local-inference.service, \
+    /usr/bin/systemctl start mosquitto.service, \
+    /usr/bin/systemctl stop mosquitto.service, \
+    /usr/bin/systemctl start tp2-car-control.service, \
+    /usr/bin/systemctl stop tp2-car-control.service, \
+    /usr/bin/systemctl start tp2-car-command-am-cloud.service, \
+    /usr/bin/systemctl daemon-reload, \
+    /usr/bin/systemctl set-environment TP2_INFERENCE_MODE=* TP2_INFERENCE_TARGET=* ROBOFLOW_LOCAL_API_URL=* ROBOFLOW_MODEL_ID=*
+
+Cmnd_Alias TP2_EPC_INSTALL = \
+    /usr/bin/install -m 0644 /tmp/tp2-srsepc.service /etc/systemd/system/tp2-srsepc.service, \
+    /usr/bin/install -m 0644 /tmp/tp2-local-inference.service /etc/systemd/system/tp2-local-inference.service, \
+    /usr/bin/install -m 0644 /tmp/tp2-car-control.service /etc/systemd/system/tp2-car-control.service, \
+    /usr/bin/install -m 0644 /tmp/tp2-car-command-am-cloud.service /etc/systemd/system/tp2-car-command-am-cloud.service
+
+tp2 ALL=(root) NOPASSWD: TP2_EPC_SYSTEMCTL, TP2_EPC_INSTALL

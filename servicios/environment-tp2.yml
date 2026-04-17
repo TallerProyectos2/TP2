@@ -10,4 +10,5 @@ dependencies:
   - gradio
   - pip
   - pip:
+      - inference
       - inference-sdk

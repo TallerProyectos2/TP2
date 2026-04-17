@@ -1,0 +1,19 @@
+[Unit]
+Description=TP2 EPC local Roboflow-compatible inference endpoint
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tp2
+WorkingDirectory=/home/tp2/TP2_red4G/servicios
+Environment=PYTHONNOUSERSITE=1
+EnvironmentFile=-/home/tp2/.config/tp2/inference.env
+EnvironmentFile=-/etc/tp2/inference.env
+ExecStart=/home/tp2/miniforge3/bin/conda run --no-capture-output -n tp2 python -u /home/tp2/TP2_red4G/servicios/start_local_inference_server.py --host 127.0.0.1 --port 9001
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

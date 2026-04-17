@@ -1,0 +1,18 @@
+[Unit]
+Description=TP2 eNodeB radio (srsenb)
+After=network-online.target tp2-enb-link.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/test -r /home/tp2/.config/srsran/enb.conf
+ExecStartPre=/bin/ping -c 1 -W 2 10.10.10.1
+ExecStartPre=/usr/local/sbin/tp2-enb-load-fpga /home/tp2/Descargas/hostedxA9.rbf
+ExecStart=/usr/local/bin/srsenb /home/tp2/.config/srsran/enb.conf
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

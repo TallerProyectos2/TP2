@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/tp2-common.sh
+source "${SCRIPT_DIR}/../lib/tp2-common.sh"
+tp2_load_config
+
+profile="${TP2_DEFAULT_PROFILE}"
+if [[ "${1:-}" == "--profile" ]]; then
+  profile="${2:-jetson}"
+elif [[ -n "${1:-}" ]]; then
+  profile="$1"
+fi
+
+case "${profile}" in
+  jetson|local|no-inference)
+    ;;
+  *)
+    tp2_die "Unknown profile '${profile}'. Use jetson, local, or no-inference."
+    ;;
+esac
+
+tp2_log "Using config: ${TP2_CONFIG_FILE:-defaults}"
+tp2_log "Starting TP2 session profile: ${profile}"
+
+tp2_require_ssh "${TP2_EPC_SSH}"
+tp2_require_ssh "${TP2_ENB_SSH}"
+
+tp2_log "Ensuring eNodeB backhaul link service"
+tp2_remote_systemctl "${TP2_ENB_SSH}" start "${TP2_ENB_LINK_SERVICE}"
+tp2_wait_service_active "${TP2_ENB_SSH}" "${TP2_ENB_LINK_SERVICE}"
+
+tp2_log "Checking eNodeB backhaul reachability"
+tp2_wait_remote "${TP2_ENB_SSH}" "${TP2_WAIT_SERVICE_TIMEOUT_SEC}" "eNodeB reaches EPC backhaul ${TP2_EPC_BACKHAUL_IP}" \
+  "ping -c 1 -W 2 ${TP2_EPC_BACKHAUL_IP} >/dev/null"
+
+if tp2_remote_systemctl_is_active "${TP2_ENB_SSH}" "${TP2_ENB_SRSENB_SERVICE}"; then
+  tp2_log "eNodeB radio already active; skipping manual FPGA reload"
+else
+  tp2_log "Waiting for bladeRF and loading FPGA bitstream"
+  # Clear stale active(exited) state so the oneshot actually reruns on each startup.
+  tp2_remote_systemctl_quiet "${TP2_ENB_SSH}" stop "${TP2_ENB_FPGA_SERVICE}"
+  tp2_remote_systemctl "${TP2_ENB_SSH}" start "${TP2_ENB_FPGA_SERVICE}"
+  tp2_wait_service_active "${TP2_ENB_SSH}" "${TP2_ENB_FPGA_SERVICE}" 150
+fi
+tp2_wait_bladerf_cli_released "${TP2_WAIT_SERVICE_TIMEOUT_SEC}"
+
+tp2_log "Starting EPC core"
+tp2_remote_systemctl "${TP2_EPC_SSH}" start "${TP2_EPC_SRSEPC_SERVICE}"
+tp2_wait_service_active "${TP2_EPC_SSH}" "${TP2_EPC_SRSEPC_SERVICE}"
+tp2_wait_remote "${TP2_EPC_SSH}" "${TP2_WAIT_LTE_TIMEOUT_SEC}" "EPC S1/GTP sockets" \
+  "pgrep -x srsepc >/dev/null && ss -H -lnA sctp | grep -q ':36412' && ss -H -lun | grep -q ':2152'"
+tp2_wait_process_cmd "${TP2_EPC_SSH}" "${TP2_WAIT_SERVICE_TIMEOUT_SEC}" \
+  "EPC running expected srsepc command" "${TP2_EPC_SRSEPC_CMD}"
+
+tp2_log "Starting eNodeB radio"
+tp2_remote_systemctl "${TP2_ENB_SSH}" start "${TP2_ENB_SRSENB_SERVICE}"
+tp2_wait_service_active "${TP2_ENB_SSH}" "${TP2_ENB_SRSENB_SERVICE}"
+tp2_wait_process_cmd "${TP2_ENB_SSH}" "${TP2_WAIT_SERVICE_TIMEOUT_SEC}" \
+  "eNodeB running expected srsenb command" "${TP2_ENB_SRSENB_CMD}"
+tp2_wait_s1 "${TP2_WAIT_LTE_TIMEOUT_SEC}"
+
+tp2_maybe_wait_car_ue "Checking UE/car path"
+
+if [[ "${profile}" == "jetson" && "${TP2_START_JETSON_INFERENCE}" == "1" ]]; then
+  if [[ -z "${TP2_JETSON_SSH}" ]]; then
+    tp2_warn "TP2_JETSON_SSH is empty; skipping direct Jetson start and validating endpoint from EPC"
+  elif tp2_remote_sh "${TP2_JETSON_SSH}" "true" >/dev/null 2>&1; then
+    if tp2_remote_systemctl_is_active "${TP2_JETSON_SSH}" "${TP2_JETSON_INFERENCE_SERVICE}"; then
+      tp2_log "Jetson inference already active; skipping remote start"
+    elif tp2_remote_can_sudo_systemctl "${TP2_JETSON_SSH}" start "${TP2_JETSON_INFERENCE_SERVICE}"; then
+      tp2_log "Starting Jetson inference"
+      tp2_remote_systemctl "${TP2_JETSON_SSH}" start "${TP2_JETSON_INFERENCE_SERVICE}"
+      tp2_wait_service_active "${TP2_JETSON_SSH}" "${TP2_JETSON_INFERENCE_SERVICE}"
+    else
+      tp2_warn "Jetson inference is not active and ${TP2_JETSON_SSH} cannot start ${TP2_JETSON_INFERENCE_SERVICE} without passwordless sudo"
+    fi
+  else
+    tp2_warn "Jetson SSH unavailable; skipping direct Jetson start and validating endpoint from EPC"
+  fi
+elif [[ "${profile}" == "jetson" ]]; then
+  tp2_log "Jetson SSH start skipped; validating inference endpoint from EPC"
+fi
+
+if [[ "${profile}" == "jetson" ]]; then
+  tp2_wait_remote "${TP2_EPC_SSH}" "${TP2_WAIT_HTTP_TIMEOUT_SEC}" "EPC reaches Jetson inference" \
+    "curl -fsS --max-time 8 ${TP2_JETSON_INFERENCE_URL}/openapi.json >/dev/null"
+fi
+
+if [[ "${profile}" != "no-inference" && ( "${profile}" == "local" || "${TP2_START_LOCAL_INFERENCE_FALLBACK}" == "1" ) ]]; then
+  tp2_log "Starting EPC local inference fallback"
+  tp2_remote_systemctl "${TP2_EPC_SSH}" start "${TP2_EPC_LOCAL_INFERENCE_SERVICE}"
+  tp2_wait_service_active "${TP2_EPC_SSH}" "${TP2_EPC_LOCAL_INFERENCE_SERVICE}"
+  if tp2_wait_remote_optional "${TP2_EPC_SSH}" "${TP2_WAIT_HTTP_TIMEOUT_SEC}" "EPC local inference endpoint" \
+    "curl -fsS --max-time 2 http://127.0.0.1:9001/openapi.json >/dev/null"; then
+    :
+  elif [[ "${profile}" == "local" ]]; then
+    tp2_die "EPC local inference endpoint unavailable in local profile"
+  else
+    tp2_warn "EPC local inference fallback unavailable; continuing without local fallback"
+    tp2_remote_systemctl_quiet "${TP2_EPC_SSH}" stop "${TP2_EPC_LOCAL_INFERENCE_SERVICE}"
+  fi
+fi
+
+if [[ "${profile}" == "jetson" ]]; then
+  tp2_log "Setting EPC session inference profile to Jetson"
+  tp2_remote_sh "${TP2_EPC_SSH}" "sudo -n systemctl set-environment TP2_INFERENCE_MODE=local TP2_INFERENCE_TARGET=model ROBOFLOW_LOCAL_API_URL=${TP2_JETSON_INFERENCE_URL} ROBOFLOW_MODEL_ID=${TP2_ROBOFLOW_MODEL_ID}"
+elif [[ "${profile}" == "local" ]]; then
+  tp2_log "Setting EPC session inference profile to local"
+  tp2_remote_sh "${TP2_EPC_SSH}" "sudo -n systemctl set-environment TP2_INFERENCE_MODE=local TP2_INFERENCE_TARGET=model ROBOFLOW_LOCAL_API_URL=http://127.0.0.1:9001 ROBOFLOW_MODEL_ID=${TP2_ROBOFLOW_MODEL_ID}"
+fi
+
+tp2_log "Starting MQTT broker on EPC"
+tp2_remote_systemctl "${TP2_EPC_SSH}" start "${TP2_EPC_MQTT_SERVICE}"
+tp2_wait_service_active "${TP2_EPC_SSH}" "${TP2_EPC_MQTT_SERVICE}"
+
+tp2_log "Starting EPC car control"
+tp2_remote_systemctl "${TP2_EPC_SSH}" start "${TP2_EPC_CAR_CONTROL_SERVICE}"
+tp2_wait_service_active "${TP2_EPC_SSH}" "${TP2_EPC_CAR_CONTROL_SERVICE}"
+tp2_wait_remote "${TP2_EPC_SSH}" "${TP2_WAIT_SERVICE_TIMEOUT_SEC}" "EPC control UDP port" \
+  "ss -H -lun | grep -q ':20001'"
+
+tp2_maybe_wait_car_ue "Checking car UE before publishing AM-Cloud mode"
+
+if [[ "${TP2_CHECK_CAR_WEB}" == "1" ]]; then
+  tp2_log "Checking EPC live video web endpoint"
+  tp2_wait_remote "${TP2_EPC_SSH}" "${TP2_WAIT_HTTP_TIMEOUT_SEC}" "EPC live video web endpoint" \
+    "curl -fsS --max-time 2 ${TP2_CAR_WEB_URL} >/dev/null"
+fi
+
+tp2_log "Publishing car AM-Cloud mode"
+tp2_remote_systemctl "${TP2_EPC_SSH}" start "${TP2_EPC_AM_CLOUD_SERVICE}"
+
+tp2_log "TP2 startup sequence completed"

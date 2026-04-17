@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/tp2-common.sh
+source "${SCRIPT_DIR}/../lib/tp2-common.sh"
+tp2_load_config
+
+target="${1:-all}"
+
+install_remote_sudoers_noninteractive() {
+  local ssh_target="$1"
+  local source_file="$2"
+  local dest_name="$3"
+  local remote_tmp="/tmp/${dest_name}.$$"
+  local sudoers_tmp="/etc/sudoers.d/${dest_name}.tmp"
+  local sudoers_final="/etc/sudoers.d/${dest_name}"
+
+  tp2_log "Installing sudoers ${sudoers_final} on ${ssh_target}"
+  tp2_scp_to "${source_file}" "${ssh_target}" "${remote_tmp}"
+  tp2_remote_sh "${ssh_target}" "sudo -n install -m 0440 ${remote_tmp} ${sudoers_tmp} && sudo -n visudo -cf ${sudoers_tmp} && sudo -n mv ${sudoers_tmp} ${sudoers_final} && sudo -n visudo -cf ${sudoers_final} && rm -f ${remote_tmp}"
+}
+
+install_remote_sudoers_interactive() {
+  local ssh_target="$1"
+  local source_file="$2"
+  local dest_name="$3"
+  local remote_tmp="/tmp/${dest_name}.$$"
+  local sudoers_tmp="/etc/sudoers.d/${dest_name}.tmp"
+  local sudoers_final="/etc/sudoers.d/${dest_name}"
+  local remote_cmd
+
+  printf -v remote_cmd "%q" "sudo -v && sudo install -m 0440 ${remote_tmp} ${sudoers_tmp} && sudo visudo -cf ${sudoers_tmp} && sudo mv ${sudoers_tmp} ${sudoers_final} && sudo visudo -cf ${sudoers_final} && rm -f ${remote_tmp}"
+
+  tp2_log "Installing sudoers ${sudoers_final} on ${ssh_target} (interactive sudo)"
+  tp2_scp_to "${source_file}" "${ssh_target}" "${remote_tmp}"
+
+  if [[ "${ssh_target}" == "${TP2_ENB_SSH}" && -n "${TP2_ENB_SSH_PROXY:-}" ]]; then
+    ssh -tt -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "${TP2_ENB_SSH_PROXY}" \
+      "ssh -tt -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new ${ssh_target} bash -lc ${remote_cmd}"
+    return $?
+  fi
+
+  ssh -tt -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "${ssh_target}" \
+    "bash -lc ${remote_cmd}"
+}
+
+case "${target}" in
+  epc)
+    install_remote_sudoers_interactive "${TP2_EPC_SSH}" "${TP2_OPS_DIR}/sudoers/epc/tp2-lab" "tp2-lab"
+    ;;
+  enb)
+    install_remote_sudoers_noninteractive "${TP2_ENB_SSH}" "${TP2_OPS_DIR}/sudoers/enb/tp2-lab" "tp2-lab"
+    ;;
+  jetson)
+    install_remote_sudoers_interactive "${TP2_JETSON_SSH}" "${TP2_OPS_DIR}/sudoers/jetson/tp2-lab" "tp2-lab"
+    ;;
+  all)
+    install_remote_sudoers_interactive "${TP2_EPC_SSH}" "${TP2_OPS_DIR}/sudoers/epc/tp2-lab" "tp2-lab"
+    install_remote_sudoers_noninteractive "${TP2_ENB_SSH}" "${TP2_OPS_DIR}/sudoers/enb/tp2-lab" "tp2-lab"
+    install_remote_sudoers_interactive "${TP2_JETSON_SSH}" "${TP2_OPS_DIR}/sudoers/jetson/tp2-lab" "tp2-lab"
+    ;;
+  *)
+    tp2_die "Usage: $0 [all|epc|enb|jetson]"
+    ;;
+esac
+
+tp2_log "TP2 sudoers installation completed"

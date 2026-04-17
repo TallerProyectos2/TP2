@@ -6,6 +6,11 @@ Define the real startup, validation, and shutdown sequence for the current opera
 
 ## Startup Order
 
+Recommended operator entrypoint:
+
+- From a MacBook with Tailscale access, run `ops/bin/tp2-up jetson` from the repo root.
+- The launcher reaches EPC and Jetson directly and reaches the eNodeB through EPC as SSH proxy.
+
 1. Validate EPC <-> eNodeB backhaul connectivity (`10.10.10.1` <-> `10.10.10.2`).
 2. Start `srsepc` on EPC.
 3. Start `srsenb` on eNodeB.

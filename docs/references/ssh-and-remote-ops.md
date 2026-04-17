@@ -2,12 +2,15 @@
 
 ## Access Path
 
-- Use the EPC as the primary remote entrypoint.
-- From there, hop to the eNodeB if needed.
+- Run repo orchestration from an operator MacBook with Tailscale access.
+- Use direct SSH from the MacBook to EPC and Jetson.
+- Use EPC as the SSH proxy to the eNodeB.
 - Preferred operator flow:
   - `ssh tp2@100.97.19.112`
-  - `ssh tp2@10.10.10.2`
+  - `ssh grupo4@100.115.99.8`
+  - `ssh -J tp2@100.97.19.112 tp2@10.10.10.2`
 - The `tp2` user on the EPC is configured for key-based SSH to the `tp2` user on the eNodeB, so the second hop should not require an interactive password.
+- The `ops/bin/tp2-up` launcher defaults to the same topology through `TP2_EPC_SSH`, `TP2_JETSON_SSH`, and `TP2_ENB_SSH_PROXY`.
 - Keep passwords out of repository files, docs, scripts, and Jira comments. If credentials change, update the machine access method, not the secret itself.
 
 ## Safety Rules

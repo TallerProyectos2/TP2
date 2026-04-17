@@ -1,0 +1,20 @@
+# TP2 eNodeB automation permissions.
+# No passwords or tokens belong in this file.
+
+Cmnd_Alias TP2_ENB_SYSTEMCTL = \
+    /usr/bin/systemctl start tp2-enb-link.service, \
+    /usr/bin/systemctl stop tp2-enb-link.service, \
+    /usr/bin/systemctl enable tp2-enb-link.service, \
+    /usr/bin/systemctl start tp2-bladerf-fpga.service, \
+    /usr/bin/systemctl stop tp2-bladerf-fpga.service, \
+    /usr/bin/systemctl start tp2-srsenb.service, \
+    /usr/bin/systemctl stop tp2-srsenb.service, \
+    /usr/bin/systemctl daemon-reload
+
+Cmnd_Alias TP2_ENB_INSTALL = \
+    /usr/bin/install -m 0755 /tmp/tp2-enb-load-fpga /usr/local/sbin/tp2-enb-load-fpga, \
+    /usr/bin/install -m 0644 /tmp/tp2-enb-link.service /etc/systemd/system/tp2-enb-link.service, \
+    /usr/bin/install -m 0644 /tmp/tp2-bladerf-fpga.service /etc/systemd/system/tp2-bladerf-fpga.service, \
+    /usr/bin/install -m 0644 /tmp/tp2-srsenb.service /etc/systemd/system/tp2-srsenb.service
+
+tp2 ALL=(root) NOPASSWD: TP2_ENB_SYSTEMCTL, TP2_ENB_INSTALL

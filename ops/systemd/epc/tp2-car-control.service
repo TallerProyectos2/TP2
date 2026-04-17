@@ -1,0 +1,28 @@
+[Unit]
+Description=TP2 EPC car control, video, and live inference runtime
+After=network-online.target tp2-srsepc.service mosquitto.service
+Wants=network-online.target mosquitto.service
+Requires=tp2-srsepc.service
+
+[Service]
+Type=simple
+User=tp2
+WorkingDirectory=/home/tp2/TP2_red4G/servicios
+Environment=PYTHONNOUSERSITE=1
+Environment=DISPLAY=:1
+Environment=XAUTHORITY=/home/tp2/.Xauthority
+Environment=TP2_ENABLE_WEB_VIEW=1
+Environment=TP2_WEB_HOST=0.0.0.0
+Environment=TP2_WEB_PORT=8088
+Environment=TP2_ENABLE_OPENCV_WINDOWS=0
+PassEnvironment=TP2_INFERENCE_MODE TP2_INFERENCE_TARGET ROBOFLOW_LOCAL_API_URL ROBOFLOW_MODEL_ID
+EnvironmentFile=-/home/tp2/.config/tp2/coche-jetson.env
+EnvironmentFile=-/etc/tp2/coche-jetson.env
+EnvironmentFile=-/etc/tp2/car-control.env
+ExecStart=/home/tp2/miniforge3/bin/conda run --no-capture-output -n tp2 python -u /home/tp2/TP2_red4G/servicios/coche.py
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

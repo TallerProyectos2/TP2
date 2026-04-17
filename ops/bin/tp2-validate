@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/tp2-common.sh
+source "${SCRIPT_DIR}/../lib/tp2-common.sh"
+tp2_load_config
+
+tp2_log "Running read-only TP2 validation"
+
+tp2_require_ssh "${TP2_EPC_SSH}"
+tp2_remote_sh "${TP2_EPC_SSH}" "
+test -r /home/tp2/.config/srsran/epc.conf
+command -v srsepc >/dev/null
+command -v mosquitto >/dev/null
+command -v mosquitto_pub >/dev/null
+test -d /home/tp2/TP2_red4G/servicios
+systemctl list-unit-files ${TP2_EPC_SRSEPC_SERVICE} >/dev/null 2>&1
+systemctl list-unit-files ${TP2_EPC_CAR_CONTROL_SERVICE} >/dev/null 2>&1
+"
+tp2_log "EPC config and units: ok"
+
+tp2_remote_can_sudo_systemctl "${TP2_EPC_SSH}" start "${TP2_EPC_SRSEPC_SERVICE}"
+tp2_log "EPC passwordless TP2 sudo: ok"
+
+tp2_require_ssh "${TP2_ENB_SSH}"
+tp2_remote_sh "${TP2_ENB_SSH}" "
+test -x /home/tp2/to_epc_link.sh
+test -r /home/tp2/Descargas/hostedxA9.rbf
+command -v srsenb >/dev/null
+(command -v bladeRF-cli >/dev/null || command -v bladerf-cli >/dev/null)
+systemctl list-unit-files ${TP2_ENB_LINK_SERVICE} >/dev/null 2>&1
+systemctl list-unit-files ${TP2_ENB_FPGA_SERVICE} >/dev/null 2>&1
+systemctl list-unit-files ${TP2_ENB_SRSENB_SERVICE} >/dev/null 2>&1
+"
+tp2_log "eNodeB config and units: ok"
+
+tp2_remote_can_sudo_systemctl "${TP2_ENB_SSH}" start "${TP2_ENB_FPGA_SERVICE}"
+tp2_log "eNodeB passwordless TP2 sudo: ok"
+
+if [[ "${TP2_START_JETSON_INFERENCE}" == "1" && -n "${TP2_JETSON_SSH}" ]] && tp2_remote_sh "${TP2_JETSON_SSH}" "true" >/dev/null 2>&1; then
+  tp2_remote_sh "${TP2_JETSON_SSH}" "
+systemctl list-unit-files ${TP2_JETSON_INFERENCE_SERVICE} >/dev/null 2>&1
+systemctl is-active --quiet ${TP2_JETSON_INFERENCE_SERVICE}
+curl -fsS --max-time 2 http://127.0.0.1:9001/openapi.json >/dev/null
+"
+  tp2_log "Jetson inference: ok"
+else
+  if [[ "${TP2_START_JETSON_INFERENCE}" == "1" && -n "${TP2_JETSON_SSH}" ]]; then
+    tp2_warn "Jetson direct SSH unavailable; falling back to EPC endpoint validation"
+  fi
+  tp2_remote_sh "${TP2_EPC_SSH}" "curl -fsS --max-time 8 ${TP2_JETSON_INFERENCE_URL}/openapi.json >/dev/null"
+  tp2_log "Jetson inference endpoint reachable from EPC: ok"
+fi
+
+tp2_remote_sh "${TP2_EPC_SSH}" "
+if systemctl is-active --quiet ${TP2_EPC_SRSEPC_SERVICE}; then
+  ss -H -lnA sctp | grep -q ':36412'
+  ss -H -lun | grep -q ':2152'
+fi
+"
+tp2_log "LTE socket check: ok or EPC core inactive"
+
+if tp2_remote_sh "${TP2_EPC_SSH}" "systemctl is-active --quiet ${TP2_EPC_SRSEPC_SERVICE}" >/dev/null 2>&1; then
+  tp2_remote_has_process_cmd "${TP2_EPC_SSH}" "${TP2_EPC_SRSEPC_CMD}"
+  tp2_log "EPC srsepc command check: ok"
+fi
+
+if tp2_remote_sh "${TP2_ENB_SSH}" "systemctl is-active --quiet ${TP2_ENB_SRSENB_SERVICE}" >/dev/null 2>&1; then
+  tp2_remote_has_process_cmd "${TP2_ENB_SSH}" "${TP2_ENB_SRSENB_CMD}"
+  tp2_log "eNodeB srsenb command check: ok"
+  tp2_check_bladerf_cli_released_once
+  tp2_log "bladeRF-cli release check: ok"
+fi
+
+if tp2_remote_sh "${TP2_EPC_SSH}" "systemctl is-active --quiet ${TP2_EPC_SRSEPC_SERVICE}" >/dev/null 2>&1 && \
+   tp2_remote_sh "${TP2_ENB_SSH}" "systemctl is-active --quiet ${TP2_ENB_SRSENB_SERVICE}" >/dev/null 2>&1; then
+  tp2_check_s1_once
+  tp2_log "S1 association check: ok"
+fi
+
+tp2_log "Read-only validation completed"

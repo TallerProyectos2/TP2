@@ -11,7 +11,7 @@ from inference_sdk import InferenceHTTPClient
 
 
 DEFAULT_API_URL = os.getenv("ROBOFLOW_API_URL", "https://serverless.roboflow.com")
-DEFAULT_API_KEY = os.getenv("ROBOFLOW_API_KEY", "0tD81VP5ij7wTYq6W7yA")
+DEFAULT_API_KEY = os.getenv("ROBOFLOW_API_KEY", "").strip()
 DEFAULT_WORKSPACE = os.getenv("ROBOFLOW_WORKSPACE", "1-v8mk1")
 DEFAULT_WORKFLOW = os.getenv("ROBOFLOW_WORKFLOW", "custom-workflow-2")
 

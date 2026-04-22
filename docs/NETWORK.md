@@ -33,13 +33,15 @@ This link carries S1 control and user-plane traffic between `srsepc` and `srsenb
 - EPC must return UDP control packets to car.
 - EPC local inference endpoint is usually loopback (`127.0.0.1:9001`), not external by default.
 
-## Jetson Reachability (Pending Integration)
+## Jetson Reachability
 
 - Jetson must be reachable from EPC only.
 - Car should not call Jetson directly.
 - When Jetson inference is enabled, keep EPC local inference as fallback.
 - Current Jetson management IP: `192.168.72.127`
 - Current Jetson Tailscale IP: `100.115.99.8`
+- Last validated inference endpoint from EPC: `http://100.115.99.8:9001`
+- Live status must be checked per session; Jetson was recovered and validated over Tailscale during the `2026-04-13` follow-up.
 - Current SSH path: `ssh grupo4@tp2-jetson`
 - Alternate SSH paths:
   - `ssh grupo4@100.115.99.8`
@@ -52,6 +54,7 @@ This link carries S1 control and user-plane traffic between `srsepc` and `srsenb
 - `53/TCP,UDP`: EPC DNS (optional)
 - `20001/UDP`: car1 control script endpoint
 - `20003/UDP`: car3 control script endpoint
+- `8088/TCP`: EPC live camera/inference/control web view from `coche.py`
 - `9001/TCP`: EPC local inference endpoint
 - `7860/TCP` or `7861/TCP`: inference GUI web (when launched)
 
@@ -63,3 +66,4 @@ This link carries S1 control and user-plane traffic between `srsepc` and `srsenb
 - EPC control script receives UDP payloads from car
 - EPC sends UDP control back to car
 - If local inference is enabled, `127.0.0.1:9001` responds
+- If Jetson inference is enabled, EPC can reach `<JETSON_IP>:9001`

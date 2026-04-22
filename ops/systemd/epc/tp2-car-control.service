@@ -12,8 +12,13 @@ Environment=PYTHONNOUSERSITE=1
 Environment=DISPLAY=:1
 Environment=XAUTHORITY=/home/tp2/.Xauthority
 Environment=TP2_ENABLE_WEB_VIEW=1
+Environment=TP2_ENABLE_WEB_CONTROL=1
+Environment=TP2_WEB_CONTROL_TIMEOUT_SEC=0.5
+Environment=TP2_CONTROL_TX_HZ=20
 Environment=TP2_WEB_HOST=0.0.0.0
 Environment=TP2_WEB_PORT=8088
+Environment=TP2_ENABLE_INFERENCE=1
+Environment=TP2_INFERENCE_MIN_INTERVAL_SEC=0.18
 Environment=TP2_ENABLE_OPENCV_WINDOWS=0
 PassEnvironment=TP2_INFERENCE_MODE TP2_INFERENCE_TARGET ROBOFLOW_LOCAL_API_URL ROBOFLOW_MODEL_ID
 EnvironmentFile=-/home/tp2/.config/tp2/coche-jetson.env

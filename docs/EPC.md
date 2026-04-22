@@ -55,35 +55,31 @@ Machine-specific source of truth for the EPC host under the current script-first
 
 ## Script Runtime Contract On EPC
 
-Operational scripts are stored in repo `servicios/` and validated on EPC under `/home/tp2/TP2_red4G/servicios/`.
+Operational files are stored in repo `servicios/` and validated on EPC under `/home/tp2/TP2_red4G/servicios/`.
 
-- Car control scripts:
-  - `car1_cloud_control_server.py`
-  - `car1_cloud_control_server_real_time_control.py`
-  - `car1_manual_control_server.py`
-  - `prueba.py` (car1 manual control on `172.16.0.1:20001`)
-  - `coche.py` (car1 manual control on `172.16.0.1:20001`, keyboard + PS4, optional Roboflow inference overlay)
-  - `prueba_ps4.py` (compatibility wrapper to `coche.py`)
-  - `car3_cloud_control_server.py`
-  - `car3_cloud_control_server_real_time_control.py`
-  - `car3_manual_control_server.py`
-  - shared logic: `artemis_autonomous_car.py`
-- Inference scripts:
-  - `start_local_inference_server.py` (local endpoint, default `127.0.0.1:9001`)
+- Car web/control runtime:
+  - `coche.py` (`172.16.0.1:20001` UDP, `0.0.0.0:8088` web)
+- Inference files:
+  - `start_local_inference_server.py` (optional EPC local endpoint, default `127.0.0.1:9001`)
   - `inferencia.py` (CLI execution and annotated output)
-  - `inferencia_gui_web.py` (web UI, default `0.0.0.0:7860`)
-  - `inferencia_gui.py` (desktop GUI; requires `tkinter`)
-  - `roboflow_runtime.py` (shared Roboflow client/helpers for CLI, GUI, and live car control)
+  - `roboflow_runtime.py` (shared Roboflow client/helpers for CLI and live car control)
+  - current remote inference profile for `coche.py`: `/home/tp2/.config/tp2/coche-jetson.env` on EPC
+  - current Jetson Roboflow target: direct model inference with `ROBOFLOW_MODEL_ID=tp2-g4-2026/2`
+- Conda runtime:
+  - env name: `tp2`
+  - activation hook: `/home/tp2/miniforge3/envs/tp2/etc/conda/activate.d/tp2-runtime.sh`
+  - shell init: `conda init` applied for `zsh` and `bash`
+  - operator command: `conda activate tp2`
 
 ## Service Port Contract (Current)
 
 - `36412/SCTP`: `srsepc` S1-MME
 - `2152/UDP`: `srsepc` GTP-U
 - `53/TCP,UDP`: optional `dnsmasq`
-- `20001/UDP`: car1 control scripts (as currently hardcoded)
-- `20003/UDP`: car3 control scripts (as currently hardcoded)
+- `20001/UDP`: car control runtime (`coche.py`)
+- `8088/TCP`: live `coche.py` operator web view with camera, browser control, and inference status
 - `9001/TCP`: local inference endpoint (when started)
-- `7860/TCP` or `7861/TCP`: inference GUI web (depending on launch args)
+- Remote inference offload last validated from EPC to Jetson: `100.115.99.8:9001`
 
 ## Storage And Log Paths
 

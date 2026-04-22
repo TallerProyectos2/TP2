@@ -14,9 +14,10 @@ This is not a production autonomous-driving stack. It is a validated lab prototy
 ## What the project does
 
 - connects the vehicle to the lab over LTE
-- receives image, LIDAR, battery, and runtime payloads on the EPC
+- receives image, battery, and runtime payloads on the EPC
 - computes steering and throttle decisions from EPC-side control scripts
 - sends commands back to the car over UDP
+- exposes live camera, inference overlays, and remote manual control from the EPC web view
 - supports local and cloud inference workflows for perception experiments
 - prepares a clean path for Jetson-based inference offload without breaking the validated EPC-centric runtime
 - includes operator runbooks, machine inventory, validation logs, and bring-up automation
@@ -29,7 +30,7 @@ Car (UE)
   -> eNodeB
   -> EPC
 
-Car -> UDP payloads (image / LIDAR / battery / runtime) -> EPC
+Car -> UDP payloads (image / battery / runtime) -> EPC
 EPC -> control decisions (steering / throttle) -> Car
 
 Jetson Orin Nano

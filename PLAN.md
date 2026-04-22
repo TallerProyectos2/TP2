@@ -5,73 +5,73 @@
 Consolidar el sistema real con este criterio:
 
 - EPC, eNodeB y coche ya operativos en LTE.
-- La inferencia y su servicio ya existen en el EPC.
-- La integracion pendiente principal es Jetson.
-- La ruta critica actual no depende de una API nueva ni de una plataforma nueva de backend.
+- El EPC es el gateway unico para UDP del coche, control remoto y vista web.
+- Jetson es el nodo primario de inferencia local Roboflow.
+- El fallback local EPC se conserva solo como perfil operativo opcional.
+- La ruta critica actual no depende de ventanas OpenCV ni de scripts car1/car3 genericos.
 
-Este plan toma como base los scripts ya existentes en `servicios/` y elimina el trabajo no necesario de construir componentes paralelos.
+Este plan toma como base un runtime unico en `servicios/coche.py` y elimina componentes paralelos que no forman parte del flujo automatico.
 
-## 2. Estado real actual (2026-03-10)
+## 2. Estado real actual (2026-04-22)
 
 - LTE:
   - EPC y eNodeB enlazan por `10.10.10.0/24`.
   - El coche adjunta como UE.
   - UE del coche fijado en EPC: `901650000052126 -> 172.16.0.2`.
 - Inferencia:
-  - Modelo y flujo de inferencia disponibles en EPC.
+  - Modelo y flujo de inferencia disponibles en Jetson por HTTP Roboflow.
   - Evidencia en `docs/logs/validations/2026-03-05-epc-inferencia-local.md`.
-- Scripts operativos en repo:
+  - Jetson integrada como endpoint Roboflow remoto en `http://100.115.99.8:9001`, validada el `2026-03-26`.
+  - Estado live del `2026-04-14`: Jetson activa y validada desde EPC con inferencia directa al modelo Roboflow `tp2-g4-2026/2`; ver `docs/logs/validations/2026-04-14-jetson-local-roboflow-model-tp2-g4-2026-2.md`.
+  - Evidencia en `docs/logs/validations/2026-03-26-jetson-remote-inference-epc-control.md`.
+- Ficheros operativos en `servicios/`:
+  - `servicios/coche.py`
+  - `servicios/roboflow_runtime.py`
   - `servicios/inferencia.py`
   - `servicios/start_local_inference_server.py`
-  - `servicios/inferencia_gui_web.py`
-  - `servicios/car*_cloud_control_server*.py`
-  - `servicios/car*_manual_control_server.py`
-  - `servicios/artemis_autonomous_car.py`
+  - `servicios/environment-tp2.yml`
+  - `servicios/test.jpg`
 
-## 3. Arquitectura de trabajo (script-first)
+## 3. Arquitectura de trabajo (web-runtime first)
 
 ## 3.1 Ruta critica actual
 
 1. Coche se conecta por LTE al EPC.
-2. Coche envia datos por UDP al servidor de control en EPC.
-3. EPC procesa imagen/LIDAR con scripts existentes y calcula control.
-4. EPC devuelve comando de control por UDP al coche.
+2. Coche envia `I`, `B` y `D` por UDP a `servicios/coche.py` en el EPC.
+3. EPC decodifica el ultimo frame y lo publica como MJPEG en `8088/TCP`.
+4. EPC envia los frames mas recientes a Jetson para inferencia asincrona y pinta bounding boxes/labels sobre el stream.
+5. El navegador actualiza giro/gas por HTTP; EPC aplica watchdog y envia `C + steering + throttle` por UDP al coche.
 
 ## 3.2 Inferencia actual
 
-- Se ejecuta en EPC.
+- Se ejecuta principalmente en Jetson.
 - Dos modos:
-  - local (`ROBOFLOW_LOCAL_API_URL`, por defecto `127.0.0.1:9001`)
-  - cloud (Roboflow serverless/detect)
-- Puede lanzarse por CLI o GUI web.
+  - Jetson (`ROBOFLOW_LOCAL_API_URL=http://100.115.99.8:9001`)
+  - local EPC (`ROBOFLOW_LOCAL_API_URL=http://127.0.0.1:9001`) como fallback/perfil opcional
+- `inferencia.py` queda como prueba CLI repetible con imagen conocida.
 
-## 3.3 Jetson (pendiente)
+## 3.3 Jetson
 
-- Se integrara como nodo de inferencia adicional, sin romper el flujo ya validado en EPC.
-- El primer objetivo es compatibilidad de contrato para no tocar la ruta de control del coche.
+- Jetson ya esta integrada como nodo de inferencia adicional, sin mover la ruta de control fuera del EPC.
+- La ruta Jetson validada usa el endpoint Roboflow HTTP en `http://100.115.99.8:9001` con `TP2_INFERENCE_TARGET=model` y `ROBOFLOW_MODEL_ID=tp2-g4-2026/2`.
+- La disponibilidad live de Jetson debe comprobarse al inicio de cada sesion.
+- El primer objetivo pendiente tras esta integracion es validar end-to-end que el coche esta enviando frames `I` al runtime web.
 
 ## 4. Cobertura funcional existente en `servicios/`
 
 ## 4.1 Ya cubierto
 
-- Control autonomo por vision/LIDAR:
-  - `car1_cloud_control_server.py`
-  - `car3_cloud_control_server.py`
-  - `artemis_autonomous_car.py`
-- Control autonomo con cambio de modo en tiempo real:
-  - `car1_cloud_control_server_real_time_control.py`
-  - `car3_cloud_control_server_real_time_control.py`
-- Control manual asistido por teclado:
-  - `car1_manual_control_server.py`
-  - `car3_manual_control_server.py`
-- Inferencia:
+- Runtime web del coche:
+  - `coche.py` (UDP del coche, MJPEG, inferencia asincrona, control web y watchdog)
+- Inferencia y validacion:
   - `inferencia.py` (CLI)
-  - `inferencia_gui_web.py` (GUI web)
   - `start_local_inference_server.py` (endpoint local)
+  - `roboflow_runtime.py` (cliente/helper compartido)
 
 ## 4.2 Fuera de la ruta critica actual
 
-- Construccion de una API nueva de backend.
+- Reintroducir scripts car1/car3 genericos.
+- Depender de ventanas OpenCV en el EPC para operar desde MacBook.
 - Construccion de pipeline nueva basada en MQTT/DB para habilitar control basico.
 
 Eso puede existir en el futuro como capa adicional, pero no es requisito para seguir avanzando desde el estado actual.
@@ -94,12 +94,11 @@ Eso puede existir en el futuro como capa adicional, pero no es requisito para se
 
 ## Paso 2. Cerrar contrato operativo EPC <-> coche por scripts (en curso)
 
-- Fijar para cada coche:
-  - script elegido (manual/autonomo/real_time_control)
-  - IP/puerto de escucha UDP
-  - formato de datos esperados (`I`, `L`, `B`, `D`)
-  - formato de control de salida (`C` con giro y acelerador)
-- Documentar el modo recomendado para sesiones normales.
+- Script elegido para sesiones normales: `servicios/coche.py`.
+- IP/puerto de escucha UDP: `172.16.0.1:20001`.
+- Formato de datos esperados: `I`, `B`, `D` con payload `pickle`.
+- Formato de control de salida: `C` con `double` giro y `double` acelerador.
+- Control manual remoto desde navegador con watchdog a neutro.
 
 ## Paso 3. Validacion repetible extremo a extremo sobre EPC (pendiente corta)
 
@@ -107,14 +106,14 @@ Eso puede existir en el futuro como capa adicional, pero no es requisito para se
   - arrancar `srsepc`
   - arrancar `srsenb`
   - confirmar UE `172.16.0.2`
-  - arrancar script de control en EPC
+- arrancar `tp2-car-control.service` en EPC
   - verificar ida y vuelta UDP con el coche
 - Prueba de inferencia:
   - arrancar endpoint local `9001`
   - ejecutar `inferencia.py` con imagen conocida
   - guardar evidencia de salida anotada
 
-## Paso 4. Integrar Jetson sin romper ruta actual (pendiente principal)
+## Paso 4. Integrar Jetson sin romper ruta actual (completado)
 
 - Preparar Jetson solo para inferencia.
 - Exponer endpoint compatible con cliente actual de inferencia.
@@ -133,6 +132,9 @@ Eso puede existir en el futuro como capa adicional, pero no es requisito para se
 ## Paso 6. Cierre para demo operativa (pendiente)
 
 - Checklist unica de arranque/parada.
+- Capa de arranque automatico basada en `ops/bin/tp2-up`, unidades `systemd` por maquina y orquestacion por Tailscale.
+- Vista web live del control del coche en EPC (`8088/TCP`) para ver video e inferencia desde Tailscale sin depender de ventanas OpenCV locales.
+- Control remoto desde la misma vista web, con watchdog a neutro si dejan de llegar comandos.
 - Evidencias minimas por sesion:
   - attach UE
   - control UDP

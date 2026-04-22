@@ -4,6 +4,28 @@
 
 This document explains how to prepare a `NVIDIA Jetson Orin Nano Developer Kit` from zero to the point where it can run the TP2 inference workload as an inference-only node.
 
+Last validated integrated lab state (`2026-03-26`):
+
+- Jetson service: `tp2-roboflow-inference.service`
+- Reachable endpoint from EPC: `http://100.115.99.8:9001`
+- EPC keeps the live UDP control loop on `172.16.0.1:20001`
+- Secrets are stored only on the machine, outside the repository
+
+Current model target (`2026-04-14`):
+
+- EPC calls the Jetson endpoint with `TP2_INFERENCE_TARGET=model`.
+- Active Roboflow model ID: `tp2-g4-2026/2`.
+- Evidence: `docs/logs/validations/2026-04-14-jetson-local-roboflow-model-tp2-g4-2026-2.md`
+
+Current availability note (`2026-04-13`):
+
+- Jetson was temporarily unreachable from EPC over Tailscale and management LAN
+- Jetson was later recovered by starting `tp2-roboflow-inference.service`
+- EPC -> Jetson inference over `http://100.115.99.8:9001` is validated again
+- Evidence:
+  - incident: `docs/logs/incidents/2026-04-13-jetson-unreachable.md`
+  - recovery: `docs/logs/validations/2026-04-13-jetson-remote-inference-restored.md`
+
 Target operating model:
 
 - Jetson runs inference only.

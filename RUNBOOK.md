@@ -11,24 +11,34 @@ Recommended operator entrypoint:
 - From a MacBook with Tailscale access, run `ops/bin/tp2-up jetson` from the repo root.
 - The launcher reaches EPC and Jetson directly and reaches the eNodeB through EPC as SSH proxy.
 
+For automated startup, use `ops/bin/tp2-up` as documented in `docs/AUTOSTART.md`.
+The manual order below remains the operational source for troubleshooting.
+
 1. Validate EPC <-> eNodeB backhaul connectivity (`10.10.10.1` <-> `10.10.10.2`).
-2. Start `srsepc` on EPC.
-3. Start `srsenb` on eNodeB.
-4. Verify S1 setup is established.
-5. Verify car UE attach and IP assignment (`172.16.0.2` expected).
-6. Start required script services on EPC:
-   - control server script (manual/autonomous/real-time variant)
+2. Verify eNodeB can reach EPC over the backhaul. `tp2-enb-link.service` runs `/home/tp2/to_epc_link.sh` automatically at eNodeB boot and is not part of the session startup flow.
+3. On eNodeB, verify `bladeRF` is connected and load `/home/tp2/Descargas/hostedxA9.rbf` with `bladeRF-cli`.
+4. Start `srsepc` on EPC.
+5. Start `srsenb` on eNodeB.
+6. Verify S1 setup is established.
+7. Verify car UE attach and IP assignment (`172.16.0.2` expected) when troubleshooting. The automated `tp2-up` path does not block on this check by default.
+8. Start required services on EPC:
+   - `mosquitto`
+   - `tp2-car-control.service` (`servicios/coche.py`)
    - inference endpoint (`start_local_inference_server.py`) if local inference path is needed
-7. Optionally start inference GUI web (`inferencia_gui_web.py`) for batch checks.
-8. If testing Jetson integration, start Jetson inference service last and enable it via script config.
+   - live video/control web view from `coche.py` on `0.0.0.0:8088`
+9. Publish the current car mode when required:
+   - `mosquitto_pub -q 1 -r -h 172.16.0.1 -p 1883 -t 1/command -m "AM-Cloud"`
+10. Open the live operator view from Tailscale at `http://100.97.19.112:8088/`.
+11. If using Jetson offload, first verify Jetson reachability and `tp2-roboflow-inference.service`; then point EPC to `http://100.115.99.8:9001` (or the current reachable Jetson IP) with `TP2_INFERENCE_TARGET=model` and `ROBOFLOW_MODEL_ID=tp2-g4-2026/2`.
 
 ## Shutdown Order
 
 1. Stop car activity.
-2. Stop EPC script services (control server, optional inference GUI/server).
+2. Stop EPC services (car control runtime and optional local inference server).
 3. Stop `srsenb`.
 4. Stop `srsepc`.
-5. Collect logs and validation evidence if session changed system state.
+5. Keep Jetson inference running unless it was started only for this session and `TP2_STOP_JETSON_ON_DOWN=1`.
+6. Collect logs and validation evidence if session changed system state.
 
 ## Default Validation Sequence
 
@@ -42,7 +52,9 @@ Recommended operator entrypoint:
 ## Script Control Validation
 
 - Selected control script binds its UDP port.
-- Script receives car payloads (`I`, `L`, `B`, `D`).
+- `coche.py` exposes the live operator web view on `8088/TCP` when used as the control runtime.
+- `coche.py` accepts remote manual control over the web view and falls back to neutral when web commands stop.
+- Script receives car payloads (`I`, `B`, `D`).
 - Script sends control packets (`C`) back to car.
 - Car behavior matches command stream.
 
@@ -50,12 +62,13 @@ Recommended operator entrypoint:
 
 - Local inference endpoint reachable when enabled (default `127.0.0.1:9001`).
 - `inferencia.py` runs with a known image and writes annotated output.
-- Optional GUI web can process selected images without runtime errors.
+- `coche.py` reports the configured inference backend on `/status.json`.
 
 ## Jetson Validation (when enabled)
 
-- EPC can reach Jetson inference endpoint.
-- Script configuration can switch to Jetson target.
+- EPC can reach Jetson inference endpoint (`100.115.99.8:9001` in the last validated lab state).
+- Script configuration can switch to Jetson model target without moving UDP control off EPC.
+- `inferencia.py` on EPC completes successfully against the Jetson endpoint.
 - Fallback to EPC local inference is validated.
 
 ## Operational Rules

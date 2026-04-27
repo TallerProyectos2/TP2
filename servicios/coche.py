@@ -271,11 +271,10 @@ class RuntimeState:
         throttle: Any,
         *,
         source: str,
-        armed: bool,
     ) -> dict[str, Any]:
         with self.lock:
             self.web_control_posts += 1
-            if not ENABLE_WEB_CONTROL or not armed:
+            if not ENABLE_WEB_CONTROL:
                 self.control_armed = False
                 self.control_source = "neutral"
                 self.steering = NEUTRAL_STEERING
@@ -428,23 +427,44 @@ def decode_pickle_payload(payload: bytes) -> Any:
     return pickle.loads(payload, encoding="latin1")
 
 
+def normalize_decoded_frame(frame: np.ndarray | None) -> np.ndarray | None:
+    if frame is None:
+        return None
+    if frame.dtype != np.uint8:
+        frame = frame.astype(np.uint8)
+    if frame.ndim == 2:
+        return cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+    if frame.ndim == 3 and frame.shape[2] == 4:
+        return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    if frame.ndim == 3 and frame.shape[2] == 3:
+        return frame.copy()
+    return None
+
+
+def decode_compressed_image(data: np.ndarray) -> np.ndarray | None:
+    if data.size == 0:
+        return None
+    if data.dtype != np.uint8:
+        data = data.astype(np.uint8)
+    compressed = np.ascontiguousarray(data.reshape(-1))
+    return normalize_decoded_frame(cv2.imdecode(compressed, cv2.IMREAD_COLOR))
+
+
 def decode_image_payload(value: Any) -> np.ndarray | None:
     if isinstance(value, np.ndarray):
-        if value.dtype != np.uint8:
-            value = value.astype(np.uint8)
-        if value.ndim == 1:
-            return cv2.imdecode(value, cv2.IMREAD_COLOR)
-        if value.ndim in {2, 3}:
-            return value.copy()
+        frame = decode_compressed_image(value)
+        if frame is not None:
+            return frame
+        return normalize_decoded_frame(value)
     if isinstance(value, (bytes, bytearray, memoryview)):
         data = np.frombuffer(bytes(value), dtype=np.uint8)
-        return cv2.imdecode(data, cv2.IMREAD_COLOR)
+        return decode_compressed_image(data)
     if isinstance(value, (list, tuple)):
         data = np.asarray(value, dtype=np.uint8)
-        if data.ndim == 1:
-            return cv2.imdecode(data, cv2.IMREAD_COLOR)
-        if data.ndim in {2, 3}:
-            return data.copy()
+        frame = decode_compressed_image(data)
+        if frame is not None:
+            return frame
+        return normalize_decoded_frame(data)
     if isinstance(value, dict):
         for key in ("image", "frame", "jpg", "jpeg", "data"):
             if key in value:
@@ -739,7 +759,6 @@ class LiveHandler(BaseHTTPRequestHandler):
                 payload.get("steering", NEUTRAL_STEERING),
                 payload.get("throttle", NEUTRAL_THROTTLE),
                 source="web",
-                armed=bool(payload.get("armed", True)),
             )
         self.send_json({"ok": True, "control": control})
 
@@ -1041,7 +1060,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       border-width: 1px 0 0 0;
       border-radius: 0;
       display: grid;
-      grid-template-columns: auto auto 1fr;
+      grid-template-columns: 1fr;
       align-items: center;
       gap: 14px;
       padding: 16px;
@@ -1192,8 +1211,6 @@ LIVE_VIEW_HTML = r"""<!doctype html>
           </div>
         </div>
         <div class="control-panel">
-          <button class="primary" id="arm">ARMAR</button>
-          <button class="danger" id="neutral">NEUTRO</button>
           <div class="axis-grid">
             <div class="axis">
               <label><span>Giro</span><strong id="steer-value">0.25</strong></label>
@@ -1242,8 +1259,6 @@ LIVE_VIEW_HTML = r"""<!doctype html>
 
   <script>
     const els = {
-      arm: document.getElementById('arm'),
-      neutral: document.getElementById('neutral'),
       steerValue: document.getElementById('steer-value'),
       throttleValue: document.getElementById('throttle-value'),
       steerFill: document.getElementById('steer-fill'),
@@ -1274,7 +1289,6 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       raw: document.getElementById('raw'),
     };
 
-    let armed = false;
     let keys = new Set();
     let lastControl = {steering: 0.25, throttle: 0.0};
 
@@ -1309,7 +1323,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         const res = await fetch('/control', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({...control, armed}),
+          body: JSON.stringify(control),
           cache: 'no-store',
         });
         if (!res.ok) throw new Error(`http ${res.status}`);
@@ -1319,9 +1333,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     }
 
     async function neutral() {
-      armed = false;
       keys.clear();
-      els.arm.textContent = 'ARMAR';
       setPill(els.pillControl, 'bad');
       lastControl = {steering: 0.25, throttle: 0.0};
       renderAxis(lastControl);
@@ -1330,20 +1342,10 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       } catch (_) {}
     }
 
-    els.arm.addEventListener('click', () => {
-      armed = !armed;
-      els.arm.textContent = armed ? 'ARMADO' : 'ARMAR';
-      setPill(els.pillControl, armed ? 'ok' : 'bad');
-      document.body.focus();
-      if (!armed) neutral();
-    });
-
-    els.neutral.addEventListener('click', neutral);
-
     window.addEventListener('keydown', (event) => {
       const key = event.key.toLowerCase();
       if (['w','a','s','d','x',' ','arrowup','arrowdown','arrowleft','arrowright'].includes(key)) {
-        if (armed) event.preventDefault();
+        event.preventDefault();
         keys.add(key);
       }
     });
@@ -1358,7 +1360,6 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     });
 
     setInterval(() => {
-      if (!armed) return;
       lastControl = axisFromKeys();
       renderAxis(lastControl);
       postControl(lastControl);

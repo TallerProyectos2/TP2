@@ -58,6 +58,7 @@ The manual order below remains the operational source for troubleshooting.
 - `coche.py` exposes the live operator web view on `8088/TCP` when used as the control runtime.
 - `coche.py` accepts direct remote manual control over the web view and falls back to neutral when web commands stop.
 - `coche.py` exposes `POST /mode` for `manual`/`autonomous`; autonomous mode falls back to neutral when frames or inference become stale.
+- Autonomous forward movement defaults to positive throttle `+0.50`; reverse throttle is not emitted by the autonomous controller.
 - `coche.py` exposes `POST /recording` and `GET /recording.json` for session capture; recordings include candidate frames, predictions, autonomous estimates, and selected controls.
 - Script receives car payloads (`I`, `B`, `D`).
 - Script sends control packets (`C`) back to car.

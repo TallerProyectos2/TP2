@@ -49,11 +49,11 @@ class AutonomousConfig:
     center_right: float = 0.60
     neutral_steering: float = 0.25
     neutral_throttle: float = 0.0
-    crawl_throttle: float = 0.12
-    slow_throttle: float = 0.18
-    turn_throttle: float = 0.22
-    cruise_throttle: float = 0.34
-    fast_throttle: float = 0.48
+    crawl_throttle: float = 0.50
+    slow_throttle: float = 0.50
+    turn_throttle: float = 0.50
+    cruise_throttle: float = 0.50
+    fast_throttle: float = 0.50
     left_steering: float = 0.84
     right_steering: float = -0.84
     confirm_frames: int = 2
@@ -248,12 +248,12 @@ class CommandFilter:
     def __init__(self, config: AutonomousConfig) -> None:
         self.config = config
         self.last_steering = config.neutral_steering
-        self.last_throttle = config.neutral_throttle
+        self.last_throttle = max(0.0, config.neutral_throttle)
         self.last_time: float | None = None
 
     def reset(self, now: float | None = None) -> None:
         self.last_steering = self.config.neutral_steering
-        self.last_throttle = self.config.neutral_throttle
+        self.last_throttle = max(0.0, self.config.neutral_throttle)
         self.last_time = now
 
     def apply(
@@ -265,7 +265,7 @@ class CommandFilter:
         urgent: bool = False,
     ) -> tuple[float, float]:
         steering = clamp(steering, -1.0, 1.0)
-        throttle = clamp(throttle, -1.0, 1.0)
+        throttle = clamp(throttle, 0.0, 1.0)
         if self.last_time is None or urgent:
             self.last_steering = steering
             self.last_throttle = throttle
@@ -572,7 +572,7 @@ class AutonomousController:
             self.state = state
             self.state_since = now
         raw_steering = clamp(steering, -1.0, 1.0)
-        raw_throttle = clamp(throttle, -1.0, 1.0)
+        raw_throttle = clamp(throttle, 0.0, 1.0)
         filtered_steering, filtered_throttle = self.filter.apply(
             raw_steering,
             raw_throttle,
@@ -602,9 +602,9 @@ class AutonomousController:
         return AutonomousDecision(
             active=False,
             steering=round(self.config.neutral_steering, 3),
-            throttle=round(self.config.neutral_throttle, 3),
+            throttle=round(max(0.0, self.config.neutral_throttle), 3),
             raw_steering=self.config.neutral_steering,
-            raw_throttle=self.config.neutral_throttle,
+            raw_throttle=max(0.0, self.config.neutral_throttle),
             action="safe-neutral",
             state=STATE_SAFE,
             reason=reason,

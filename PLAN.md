@@ -106,6 +106,7 @@ Eso puede existir en el futuro como capa adicional, pero no es requisito para se
 - Selector web manual/autonomo:
   - manual: navegador publica giro/gas y watchdog vuelve a neutro si deja de publicar.
   - autonomo: EPC decide desde detecciones Roboflow recientes, priorizando señales persistentes y cercanas por area de bounding box, zona izquierda/centro/derecha y estado de maniobra.
+  - throttle autonomo: las acciones de avance usan `+0.50`; las paradas, ambiguedad o fallbacks por datos obsoletos usan neutro.
   - tracking/FSM: confirma señales durante varios frames, mantiene `STOP`, ejecuta giros durante una ventana controlada y aplica cooldown para no repetir la misma señal.
   - fallback: sin frame o inferencia fresca, EPC manda neutro.
   - dataset: la web puede activar grabacion de frames y `manifest.jsonl` para curar falsos positivos/negativos antes de reentrenar.

@@ -104,11 +104,11 @@ AUTONOMOUS_CONFIG = AutonomousConfig(
     center_right=env_float("TP2_AUTONOMOUS_CENTER_RIGHT", 0.60),
     neutral_steering=NEUTRAL_STEERING,
     neutral_throttle=NEUTRAL_THROTTLE,
-    crawl_throttle=env_float("TP2_AUTONOMOUS_CRAWL_THROTTLE", 0.12),
-    slow_throttle=env_float("TP2_AUTONOMOUS_SLOW_THROTTLE", 0.18),
-    turn_throttle=env_float("TP2_AUTONOMOUS_TURN_THROTTLE", 0.22),
-    cruise_throttle=env_float("TP2_AUTONOMOUS_CRUISE_THROTTLE", 0.34),
-    fast_throttle=env_float("TP2_AUTONOMOUS_FAST_THROTTLE", 0.48),
+    crawl_throttle=env_float("TP2_AUTONOMOUS_CRAWL_THROTTLE", 0.50),
+    slow_throttle=env_float("TP2_AUTONOMOUS_SLOW_THROTTLE", 0.50),
+    turn_throttle=env_float("TP2_AUTONOMOUS_TURN_THROTTLE", 0.50),
+    cruise_throttle=env_float("TP2_AUTONOMOUS_CRUISE_THROTTLE", 0.50),
+    fast_throttle=env_float("TP2_AUTONOMOUS_FAST_THROTTLE", 0.50),
     left_steering=env_float("TP2_AUTONOMOUS_LEFT_STEERING", 0.84),
     right_steering=env_float("TP2_AUTONOMOUS_RIGHT_STEERING", -0.84),
     confirm_frames=env_int("TP2_AUTONOMOUS_CONFIRM_FRAMES", 2),
@@ -512,7 +512,7 @@ class RuntimeState:
         with self.lock:
             self.drive_mode = normalize_drive_mode(mode)
             if self.drive_mode == "autonomous":
-                self.autonomous_controller.filter.reset(wall_time())
+                self.autonomous_controller.filter.reset()
                 self._apply_autonomous_control_locked()
             else:
                 self.control_armed = False
@@ -688,6 +688,11 @@ class RuntimeState:
                         "max_frame_age_sec": AUTONOMOUS_CONFIG.max_frame_age_sec,
                         "min_area_ratio": AUTONOMOUS_CONFIG.min_area_ratio,
                         "near_area_ratio": AUTONOMOUS_CONFIG.near_area_ratio,
+                        "crawl_throttle": AUTONOMOUS_CONFIG.crawl_throttle,
+                        "slow_throttle": AUTONOMOUS_CONFIG.slow_throttle,
+                        "turn_throttle": AUTONOMOUS_CONFIG.turn_throttle,
+                        "cruise_throttle": AUTONOMOUS_CONFIG.cruise_throttle,
+                        "fast_throttle": AUTONOMOUS_CONFIG.fast_throttle,
                         "confirm_frames": AUTONOMOUS_CONFIG.confirm_frames,
                         "safety_confirm_frames": AUTONOMOUS_CONFIG.safety_confirm_frames,
                         "stop_hold_sec": AUTONOMOUS_CONFIG.stop_hold_sec,

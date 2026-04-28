@@ -87,12 +87,15 @@ class AutonomousDriverTest(unittest.TestCase):
         self.assertEqual(decision.action, "turn-right")
         self.assertEqual(decision.target.zone, "right")
 
-    def test_speed_signs_change_throttle(self):
+    def test_speed_signs_keep_autonomous_forward_throttle(self):
         slow = self.decide_confirmed([prediction(SIGN_SPEED_30, x=320, width=150, height=150)])
         fast = self.decide_confirmed([prediction(SIGN_SPEED_90, x=320, width=150, height=150)])
         self.assertEqual(slow.action, "speed-30")
         self.assertEqual(fast.action, "speed-90")
-        self.assertLess(slow.throttle, fast.throttle)
+        self.assertEqual(slow.raw_throttle, 0.5)
+        self.assertEqual(fast.raw_throttle, 0.5)
+        self.assertEqual(slow.throttle, 0.5)
+        self.assertEqual(fast.throttle, 0.5)
 
     def test_far_stop_approaches_instead_of_full_stop(self):
         decision = self.decide([prediction(SIGN_STOP, x=320, width=50, height=50)])
@@ -107,6 +110,40 @@ class AutonomousDriverTest(unittest.TestCase):
         )
         self.assertEqual(decision.action, "continue")
         self.assertGreater(decision.throttle, self.config.neutral_throttle)
+        self.assertEqual(decision.raw_throttle, 0.5)
+
+    def test_forward_autonomous_actions_use_positive_half_throttle(self):
+        decisions = [
+            self.decide([]),
+            self.decide([prediction(SIGN_STOP, x=320, width=50, height=50)]),
+            self.decide_confirmed([prediction(SIGN_TURN_LEFT, x=160, width=180, height=180)]),
+            self.decide_confirmed([prediction(SIGN_SPEED_90, x=320, width=150, height=150)]),
+        ]
+        for decision in decisions:
+            self.assertGreater(decision.raw_throttle, 0.0)
+            self.assertEqual(decision.raw_throttle, 0.5)
+            self.assertGreaterEqual(decision.throttle, 0.0)
+
+    def test_negative_autonomous_throttle_config_never_reverses(self):
+        config = AutonomousConfig(
+            crawl_throttle=-0.4,
+            slow_throttle=-0.4,
+            turn_throttle=-0.4,
+            cruise_throttle=-0.4,
+            fast_throttle=-0.4,
+        )
+        decision = decide_autonomous_control(
+            [],
+            frame_shape=FRAME_SHAPE,
+            now=NOW,
+            frame_time=NOW - 0.1,
+            predictions_time=NOW - 0.1,
+            config=config,
+            prediction_seq=1,
+        )
+        self.assertEqual(decision.action, "continue")
+        self.assertEqual(decision.raw_throttle, 0.0)
+        self.assertEqual(decision.throttle, 0.0)
 
     def test_conflicting_confirmed_turns_go_ambiguous(self):
         controller = AutonomousController(self.config)

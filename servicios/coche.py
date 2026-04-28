@@ -1015,474 +1015,892 @@ LIVE_VIEW_HTML = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TP2 Live Control</title>
+  <title>TP2 · Coche 4G</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <style>
     :root {
       color-scheme: dark;
-      --bg: #0b0d0e;
-      --panel: #141719;
-      --panel-2: #1a1e20;
-      --line: #2d3438;
-      --text: #eef3ef;
-      --muted: #98a39d;
-      --green: #46d482;
-      --amber: #f2be4b;
-      --red: #ff5f57;
-      --cyan: #62c7d9;
-      --shadow: rgba(0, 0, 0, 0.28);
+      --bg-0: #0a0907;
+      --bg-1: #11100d;
+      --bg-2: #16140f;
+      --line: #2b261c;
+      --line-soft: #1d1a14;
+      --ink: #f4ede0;
+      --ink-2: #c8bfa8;
+      --muted: #7d7460;
+      --amber: #f5b942;
+      --amber-soft: rgba(245,185,66,0.18);
+      --teal: #5cd6c2;
+      --red: #ff6452;
+      --green: #66d28a;
+      --shadow: 0 32px 60px rgba(0,0,0,0.45);
+      --display: "Anton", "Bebas Neue", Impact, sans-serif;
+      --body: "Manrope", -apple-system, BlinkMacSystemFont, sans-serif;
+      --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     }
 
     * { box-sizing: border-box; }
 
     html, body {
+      margin: 0;
       width: 100%;
       height: 100%;
-      margin: 0;
       background:
-        linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px),
-        var(--bg);
-      background-size: 40px 40px;
-      color: var(--text);
-      font: 14px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        radial-gradient(1100px 600px at 80% -10%, rgba(245,185,66,0.06), transparent 60%),
+        radial-gradient(900px 500px at -10% 110%, rgba(92,214,194,0.04), transparent 60%),
+        var(--bg-0);
+      color: var(--ink);
+      font-family: var(--body);
+      font-size: 13.5px;
+      font-weight: 500;
+      letter-spacing: 0.005em;
       overflow: hidden;
     }
-
-    button {
-      height: 42px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #202529;
-      color: var(--text);
-      padding: 0 14px;
-      font-weight: 800;
-      letter-spacing: 0;
-      cursor: pointer;
-    }
-
-    button:hover { border-color: #526068; }
-    button:active { transform: translateY(1px); }
-    button.primary { background: #1d6f47; border-color: #2b9c66; }
-    button.danger { background: #6f2525; border-color: #b94842; }
-    button.active { background: #e8f1e6; border-color: #e8f1e6; color: #101315; }
 
     .app {
       height: 100%;
       display: grid;
-      grid-template-rows: 74px 1fr;
-      gap: 14px;
-      padding: 18px;
+      grid-template-rows: auto 1fr;
+      gap: 18px;
+      padding: 20px 22px 22px;
     }
 
+    /* HEADER ----------------------------------------------------------- */
     header {
       display: grid;
-      grid-template-columns: minmax(220px, 1fr) auto;
-      align-items: end;
-      gap: 18px;
-      border-bottom: 1px solid var(--line);
+      grid-template-columns: minmax(240px, auto) 1fr auto;
+      align-items: center;
+      gap: 22px;
       padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
     }
 
-    h1 {
+    .brand { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+    .brand h1 {
       margin: 0;
-      font-size: clamp(28px, 4vw, 52px);
-      line-height: 0.95;
-      letter-spacing: 0;
-      font-weight: 900;
+      font-family: var(--display);
+      font-weight: 400;
+      font-size: 38px;
+      line-height: 1;
+      letter-spacing: 0.04em;
+      color: var(--ink);
     }
-
-    .subtitle {
+    .brand h1 .accent { color: var(--amber); margin: 0 6px; }
+    .brand h1 .sub {
+      font-size: 0.58em;
+      letter-spacing: 0.18em;
+      color: var(--ink-2);
+    }
+    .brand .meta {
+      font-family: var(--mono);
+      font-size: 11px;
       color: var(--muted);
-      margin-top: 8px;
-      font-weight: 650;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
     }
 
-    .status-row {
+    .pills {
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
-      justify-content: flex-end;
+      justify-content: center;
     }
-
     .pill {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      min-height: 34px;
-      padding: 0 11px;
+      gap: 9px;
+      height: 30px;
+      padding: 0 13px;
       border: 1px solid var(--line);
       border-radius: 999px;
-      background: rgba(20, 23, 25, 0.82);
-      box-shadow: 0 12px 28px var(--shadow);
-      color: var(--muted);
+      background: rgba(22,20,15,0.65);
+      color: var(--ink-2);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      font-weight: 700;
       white-space: nowrap;
-      font-weight: 800;
     }
-
-    .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 99px;
+    .pill .label { color: var(--muted); }
+    .pill .val { font-family: var(--mono); font-weight: 700; color: var(--ink); }
+    .pill .dot {
+      width: 7px; height: 7px; border-radius: 99px;
       background: var(--muted);
-      box-shadow: 0 0 16px currentColor;
+      box-shadow: 0 0 14px currentColor;
     }
+    .pill.ok   { color: var(--green); } .pill.ok   .dot, .pill.ok .val   { color: var(--green); background: var(--green); }
+    .pill.ok   .val { background: transparent; }
+    .pill.warn { color: var(--amber); } .pill.warn .dot { background: var(--amber); color: var(--amber); }
+    .pill.warn .val { color: var(--amber); }
+    .pill.bad  { color: var(--red); }   .pill.bad  .dot { background: var(--red);   color: var(--red);   }
+    .pill.bad  .val { color: var(--red); }
 
-    .ok .dot { background: var(--green); color: var(--green); }
-    .warn .dot { background: var(--amber); color: var(--amber); }
-    .bad .dot { background: var(--red); color: var(--red); }
+    .session {
+      display: flex; align-items: center; gap: 22px;
+      font-family: var(--mono);
+      letter-spacing: 0.04em;
+    }
+    .session .group { display: flex; flex-direction: column; align-items: flex-end; }
+    .session .label {
+      color: var(--muted);
+      font-size: 9.5px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+    }
+    .session .clock {
+      font-size: 22px;
+      color: var(--ink);
+      font-weight: 500;
+      line-height: 1.1;
+    }
+    .session .clock.amber { color: var(--amber); }
 
+    /* MAIN GRID -------------------------------------------------------- */
     main {
       min-height: 0;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 360px;
-      gap: 18px;
+      grid-template-columns: minmax(0, 1fr) 380px;
+      gap: 20px;
     }
 
-    .video-shell, .side-panel, .control-panel {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: rgba(20, 23, 25, 0.9);
-      box-shadow: 0 24px 60px rgba(0,0,0,0.32);
-    }
-
-    .video-shell {
-      min-width: 0;
+    /* LEFT COLUMN: video + deck --------------------------------------- */
+    .stage {
       min-height: 0;
       display: grid;
-      grid-template-rows: 1fr 112px;
-      overflow: hidden;
+      grid-template-rows: 1fr auto;
+      gap: 16px;
     }
 
-    .video-frame {
+    .video {
       position: relative;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #050403;
+      overflow: hidden;
+      box-shadow: var(--shadow);
       min-height: 0;
-      background: #030404;
-      display: grid;
-      place-items: center;
     }
-
-    .video-frame img {
-      width: 100%;
-      height: 100%;
+    .video img {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
       object-fit: contain;
       display: block;
     }
-
-    .video-badge {
-      position: absolute;
-      left: 18px;
-      bottom: 18px;
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
+    .video::after {
+      content: "";
+      position: absolute; inset: 14px;
+      border: 1px solid rgba(245,185,66,0.06);
+      border-radius: 8px;
+      pointer-events: none;
+      background:
+        linear-gradient(to right, var(--amber) 0 14px, transparent 14px) top left/14px 1px no-repeat,
+        linear-gradient(to bottom, var(--amber) 0 14px, transparent 14px) top left/1px 14px no-repeat,
+        linear-gradient(to left, var(--amber) 0 14px, transparent 14px) top right/14px 1px no-repeat,
+        linear-gradient(to bottom, var(--amber) 0 14px, transparent 14px) top right/1px 14px no-repeat,
+        linear-gradient(to right, var(--amber) 0 14px, transparent 14px) bottom left/14px 1px no-repeat,
+        linear-gradient(to top, var(--amber) 0 14px, transparent 14px) bottom left/1px 14px no-repeat,
+        linear-gradient(to left, var(--amber) 0 14px, transparent 14px) bottom right/14px 1px no-repeat,
+        linear-gradient(to top, var(--amber) 0 14px, transparent 14px) bottom right/1px 14px no-repeat;
+      opacity: 0.7;
     }
 
-    .badge {
-      background: rgba(5, 8, 8, 0.74);
-      border: 1px solid rgba(255,255,255,0.13);
-      border-radius: 6px;
-      padding: 8px 10px;
-      color: var(--text);
-      font-weight: 900;
+    .rec {
+      position: absolute; right: 18px; top: 18px;
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px;
+      background: rgba(8,7,5,0.82);
+      border: 1px solid rgba(255,100,82,0.4);
+      border-radius: 4px;
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      color: var(--red);
+    }
+    .rec .blink {
+      width: 8px; height: 8px; border-radius: 99px;
+      background: var(--red);
+      box-shadow: 0 0 14px var(--red);
+      animation: blink 1.4s ease-in-out infinite;
+    }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    .hud {
+      position: absolute; left: 18px; bottom: 18px;
+      display: flex; gap: 8px; flex-wrap: wrap;
+      pointer-events: none;
+    }
+    .hud .chip {
+      background: rgba(8,7,5,0.78);
+      border: 1px solid rgba(245,185,66,0.22);
+      border-radius: 4px;
+      padding: 6px 10px;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      letter-spacing: 0.04em;
+      color: var(--ink);
+      display: inline-flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+    .hud .chip span {
+      color: var(--amber);
+      text-transform: uppercase;
+      font-size: 9.5px;
+      letter-spacing: 0.18em;
     }
 
-    .control-panel {
-      border-width: 1px 0 0 0;
-      border-radius: 0;
+    /* DECK: wheel + keys + throttle + actions */
+    .deck {
       display: grid;
-      grid-template-columns: minmax(240px, 1fr) auto;
+      grid-template-columns: auto 1fr auto;
+      grid-template-rows: 1fr auto;
+      column-gap: 22px;
+      row-gap: 12px;
       align-items: center;
-      gap: 14px;
-      padding: 16px;
-      background: var(--panel-2);
+      padding: 16px 18px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(34,30,22,0.5), rgba(17,16,13,0.55));
+      border-radius: 14px;
+    }
+    .deck .group { display: flex; flex-direction: column; gap: 10px; }
+    .deck h3 {
+      margin: 0;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      font-weight: 500;
     }
 
-    .drive-strip {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      justify-content: flex-end;
-      min-width: 0;
+    .wheel-wrap { display: flex; align-items: center; gap: 16px; }
+    .wheel {
+      width: 104px; height: 104px;
+      filter: drop-shadow(0 6px 14px rgba(245,185,66,0.12));
+    }
+    .wheel svg {
+      width: 100%; height: 100%;
+      transition: transform 90ms linear;
+    }
+    .axis-data { font-family: var(--mono); display: flex; flex-direction: column; gap: 2px; }
+    .axis-data .v {
+      font-size: 26px;
+      color: var(--amber);
+      font-weight: 700;
+      line-height: 1;
+    }
+    .axis-data .l {
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+    .axis-data .l.dir { color: var(--ink-2); letter-spacing: 0.06em; text-transform: none; font-size: 12px; }
+
+    .keys-wrap {
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      align-self: center; justify-self: center;
+    }
+    .keys {
+      display: grid;
+      grid-template-columns: repeat(3, 38px);
+      grid-template-rows: 38px 38px;
+      gap: 4px;
+    }
+    .key {
+      border: 1px solid var(--line);
+      background: var(--bg-2);
+      border-radius: 6px;
+      display: grid; place-items: center;
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: 12px;
+      color: var(--ink-2);
+      letter-spacing: 0;
+      transition: all 80ms ease;
+    }
+    .key.empty { border-color: transparent; background: transparent; }
+    .key.k-w { grid-column: 2; grid-row: 1; }
+    .key.k-a { grid-column: 1; grid-row: 2; }
+    .key.k-s { grid-column: 2; grid-row: 2; }
+    .key.k-d { grid-column: 3; grid-row: 2; }
+    .key.active {
+      background: var(--amber);
+      color: #1c1408;
+      border-color: var(--amber);
+      box-shadow: 0 0 18px rgba(245,185,66,0.45);
+      transform: translateY(1px);
+    }
+    .key.brake {
+      background: linear-gradient(180deg, #4a1812, #2a0e0a);
+      color: var(--red);
+      border-color: rgba(255,100,82,0.45);
+      box-shadow: 0 0 18px rgba(255,100,82,0.35);
+    }
+    .keys-caption {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .keys-caption .kbd {
+      display: inline-block;
+      padding: 1px 6px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      color: var(--ink-2);
+      margin: 0 1px;
     }
 
+    .throttle-wrap { display: flex; align-items: center; gap: 16px; flex-direction: row-reverse; }
+    .throttle-meter {
+      width: 30px; height: 110px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(180deg, rgba(255,100,82,0.06), transparent 50%, rgba(102,210,138,0.06));
+      position: relative;
+      overflow: hidden;
+    }
+    .throttle-meter .mid {
+      position: absolute; left: -2px; right: -2px; top: 50%;
+      height: 1px;
+      background: var(--line);
+      box-shadow: 0 0 0 0.5px rgba(245,185,66,0.18);
+    }
+    .throttle-meter .tick {
+      position: absolute; left: 0; right: 0;
+      height: 1px;
+      background: rgba(245,185,66,0.12);
+    }
+    .throttle-meter .fill-fwd {
+      position: absolute; left: 4px; right: 4px; bottom: 50%;
+      height: 0%;
+      background: linear-gradient(0deg, var(--green), #aef0c2);
+      border-radius: 4px 4px 0 0;
+      transition: height 90ms ease;
+    }
+    .throttle-meter .fill-rev {
+      position: absolute; left: 4px; right: 4px; top: 50%;
+      height: 0%;
+      background: linear-gradient(180deg, var(--red), #ffb1a4);
+      border-radius: 0 0 4px 4px;
+      transition: height 90ms ease;
+    }
+    .throttle-wrap .axis-data { align-items: flex-start; }
+
+    .deck-actions {
+      grid-column: 1 / -1;
+      display: flex; gap: 12px; align-items: center;
+      justify-content: space-between;
+      padding-top: 12px;
+      border-top: 1px solid var(--line-soft);
+    }
     .mode-toggle {
       display: inline-grid;
       grid-template-columns: 1fr 1fr;
-      gap: 4px;
-      padding: 4px;
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: #0d1112;
+      padding: 4px;
+      background: var(--bg-1);
+      gap: 4px;
     }
-
     .mode-toggle button {
-      height: 34px;
-      min-width: 82px;
-      border-radius: 5px;
-      padding: 0 10px;
-    }
-
-    .stop-button {
-      min-width: 78px;
-      height: 42px;
-    }
-
-    .axis-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      min-width: 0;
-    }
-
-    .axis label {
-      display: flex;
-      justify-content: space-between;
-      color: var(--muted);
+      height: 36px; min-width: 120px; padding: 0 18px;
+      border: 0; border-radius: 5px;
+      background: transparent;
+      color: var(--ink-2);
+      cursor: pointer;
+      font-family: var(--body);
+      font-weight: 700;
       font-size: 12px;
-      font-weight: 900;
+      letter-spacing: 0.12em;
       text-transform: uppercase;
-      margin-bottom: 6px;
+      transition: all 100ms ease;
+    }
+    .mode-toggle button:hover { color: var(--ink); }
+    .mode-toggle button.active {
+      background: var(--amber);
+      color: #1c1408;
+      box-shadow: 0 0 24px rgba(245,185,66,0.25);
     }
 
-    .bar {
-      height: 12px;
-      border-radius: 999px;
-      border: 1px solid var(--line);
-      background: #0b0e0f;
-      overflow: hidden;
+    button.stop {
+      height: 44px; padding: 0 26px;
+      border: 1px solid rgba(255,100,82,0.5);
+      background: linear-gradient(180deg, #4a1812, #2a0e0a);
+      color: var(--red);
+      font-family: var(--display);
+      font-size: 18px;
+      letter-spacing: 0.22em;
+      border-radius: 8px;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: all 120ms ease;
     }
-
-    .fill {
-      height: 100%;
-      width: 50%;
-      background: linear-gradient(90deg, var(--cyan), var(--green));
-      transform-origin: left;
+    button.stop:hover {
+      background: linear-gradient(180deg, #6b2018, #3a1310);
+      box-shadow: 0 0 24px rgba(255,100,82,0.25);
     }
+    button.stop:active { transform: translateY(1px); }
 
-    .side-panel {
+    /* RIGHT COLUMN: telemetry stack ----------------------------------- */
+    .side {
       min-height: 0;
-      overflow: auto;
-      padding: 16px;
+      overflow-y: auto;
       display: grid;
       align-content: start;
-      gap: 12px;
+      gap: 14px;
+      padding-right: 4px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--line) transparent;
     }
+    .side::-webkit-scrollbar { width: 6px; }
+    .side::-webkit-scrollbar-track { background: transparent; }
+    .side::-webkit-scrollbar-thumb { background: var(--line); border-radius: 99px; }
 
-    .section {
-      border-top: 1px solid var(--line);
-      padding-top: 13px;
+    .card {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(22,20,15,0.7), rgba(17,16,13,0.7));
+      border-radius: 12px;
+      padding: 16px 16px 14px;
     }
-
-    .section:first-child {
-      border-top: 0;
-      padding-top: 0;
-    }
-
-    .section-title {
+    .card h2 {
+      margin: 0 0 12px 0;
+      font-family: var(--mono);
+      font-weight: 500;
+      font-size: 10px;
       color: var(--muted);
-      font-size: 12px;
-      font-weight: 950;
+      letter-spacing: 0.28em;
       text-transform: uppercase;
-      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .card h2 .tag {
+      color: var(--amber);
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: 10px;
+      letter-spacing: 0.18em;
+    }
+    .card h3 {
+      margin: 14px 0 8px;
+      font-family: var(--mono);
+      font-weight: 500;
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.24em;
+      text-transform: uppercase;
     }
 
-    .metric {
+    .row {
       display: grid;
       grid-template-columns: 1fr auto;
-      gap: 12px;
-      padding: 7px 0;
-      border-bottom: 1px solid rgba(255,255,255,0.055);
+      gap: 10px;
+      align-items: baseline;
+      padding: 6px 0;
+      border-bottom: 1px dashed var(--line-soft);
     }
-
-    .metric span:first-child {
+    .row:last-child { border-bottom: 0; }
+    .row .k {
       color: var(--muted);
-      font-weight: 700;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-size: 11px;
     }
-
-    .metric span:last-child {
-      font-variant-numeric: tabular-nums;
-      font-weight: 900;
+    .row .v {
+      font-family: var(--mono);
+      color: var(--ink);
+      font-weight: 500;
       text-align: right;
+      font-size: 12.5px;
+      font-variant-numeric: tabular-nums;
+    }
+    .row .v.amber { color: var(--amber); }
+    .row .v.green { color: var(--green); }
+    .row .v.red { color: var(--red); }
+    .row .v.muted { color: var(--muted); }
+
+    /* battery */
+    .battery .gauge {
+      height: 10px;
+      border-radius: 4px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: var(--bg-2);
+      position: relative;
+      margin-top: 4px;
+    }
+    .battery .gauge .fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, var(--green), #aef0c2);
+      transition: width 240ms ease, background 240ms ease;
     }
 
-    .detections {
+    /* sparkline */
+    .spark-wrap {
       display: grid;
-      gap: 6px;
-      max-height: 160px;
-      overflow: auto;
+      grid-template-columns: 1fr auto;
+      align-items: end;
+      gap: 14px;
+      padding: 8px 0 4px;
+    }
+    .spark {
+      height: 38px;
+      width: 100%;
+    }
+    .spark path { fill: none; stroke: var(--amber); stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
+    .spark .area { fill: rgba(245,185,66,0.13); stroke: none; }
+    .spark .grid { stroke: var(--line-soft); stroke-width: 1; stroke-dasharray: 2 4; }
+    .spark.teal path { stroke: var(--teal); }
+    .spark.teal .area { fill: rgba(92,214,194,0.12); }
+
+    .spark-data { font-family: var(--mono); text-align: right; }
+    .spark-data .v {
+      font-size: 20px;
+      color: var(--ink);
+      font-weight: 700;
+      line-height: 1;
+    }
+    .spark-data .v small {
+      font-size: 0.55em;
+      color: var(--muted);
+      font-weight: 500;
+      margin-left: 3px;
+    }
+    .spark-data .l {
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      margin-top: 4px;
     }
 
+    /* detection list */
+    .detections { display: grid; gap: 6px; max-height: 200px; overflow: auto; padding-right: 2px; }
+    .detections::-webkit-scrollbar { width: 4px; }
+    .detections::-webkit-scrollbar-thumb { background: var(--line); border-radius: 99px; }
     .det {
       display: grid;
       grid-template-columns: 1fr auto;
-      gap: 8px;
-      padding: 8px 9px;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 10px;
       border: 1px solid var(--line);
       border-radius: 6px;
-      background: #101315;
-      font-weight: 800;
+      background: rgba(8,7,5,0.4);
+    }
+    .det .name {
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      font-size: 12.5px;
+      color: var(--ink);
+    }
+    .det .conf {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--ink);
+    }
+    .det .conf .meter {
+      width: 56px; height: 4px;
+      background: var(--line);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .det .conf .meter .fill {
+      height: 100%;
+      background: var(--amber);
+      width: 0%;
+      transition: width 240ms ease;
+    }
+    .det.empty {
+      text-align: center;
+      color: var(--muted);
+      font-style: italic;
+      font-size: 12px;
+      border-style: dashed;
+      grid-template-columns: 1fr;
     }
 
-    .raw {
-      margin: 0;
-      white-space: pre-wrap;
-      word-break: break-word;
-      color: #74e89a;
-      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      max-height: 210px;
-      overflow: auto;
-    }
-
-    @media (max-width: 980px) {
+    /* responsive */
+    @media (max-width: 1080px) {
       html, body { overflow: auto; }
       .app { height: auto; min-height: 100%; }
-      header { grid-template-columns: 1fr; align-items: start; }
-      .status-row { justify-content: flex-start; }
+      header { grid-template-columns: 1fr; gap: 14px; }
+      .pills { justify-content: flex-start; }
+      .session { justify-content: flex-start; gap: 18px; }
+      .session .group { align-items: flex-start; }
       main { grid-template-columns: 1fr; }
-      .video-shell { min-height: 62vh; }
-      .control-panel { grid-template-columns: 1fr; }
-      .drive-strip { justify-content: flex-start; flex-wrap: wrap; }
-      .axis-grid { grid-template-columns: 1fr; }
+      .video { aspect-ratio: 16 / 9; }
+      .side { max-height: none; overflow: visible; }
+    }
+    @media (max-width: 720px) {
+      .deck { grid-template-columns: 1fr; row-gap: 18px; }
+      .deck .group { align-items: center; }
+      .deck-actions { flex-direction: column; align-items: stretch; }
+      .mode-toggle button { min-width: 0; }
+      .brand h1 { font-size: 30px; }
     }
   </style>
 </head>
 <body>
   <div class="app">
     <header>
-      <div>
-        <h1>TP2 Live Control</h1>
-        <div class="subtitle">EPC gateway · Jetson inference · browser control</div>
+      <div class="brand">
+        <h1>TP2<span class="accent">·</span><span class="sub">COCHE 4G</span></h1>
+        <span class="meta">EPC · Roboflow · UDP 20001</span>
       </div>
-      <div class="status-row">
-        <div class="pill warn" id="pill-video"><span class="dot"></span><span>VIDEO</span><strong id="top-video">--</strong></div>
-        <div class="pill warn" id="pill-ai"><span class="dot"></span><span>IA</span><strong id="top-ai">--</strong></div>
-        <div class="pill warn" id="pill-car"><span class="dot"></span><span>COCHE</span><strong id="top-car">--</strong></div>
-        <div class="pill bad" id="pill-control"><span class="dot"></span><span>CTRL</span><strong id="top-control">OFF</strong></div>
+
+      <div class="pills">
+        <div class="pill warn" id="pill-link"><span class="dot"></span><span class="label">4G</span><span class="val" id="pill-link-val">--</span></div>
+        <div class="pill warn" id="pill-video"><span class="dot"></span><span class="label">Vídeo</span><span class="val" id="pill-video-val">--</span></div>
+        <div class="pill warn" id="pill-ai"><span class="dot"></span><span class="label">IA</span><span class="val" id="pill-ai-val">--</span></div>
+        <div class="pill bad" id="pill-control"><span class="dot"></span><span class="label">Control</span><span class="val" id="pill-control-val">OFF</span></div>
+      </div>
+
+      <div class="session">
+        <div class="group">
+          <span class="label">Sesión</span>
+          <span class="clock amber" id="session-clock">00:00:00</span>
+        </div>
+        <div class="group">
+          <span class="label">Hora</span>
+          <span class="clock" id="wall-clock">--:--:--</span>
+        </div>
       </div>
     </header>
 
     <main>
-      <section class="video-shell">
-        <div class="video-frame">
-          <img id="video" src="/video.mjpg" alt="TP2 live video">
-          <div class="video-badge">
-            <div class="badge" id="badge-frame">frame --</div>
-            <div class="badge" id="badge-latency">lat --</div>
-            <div class="badge" id="badge-det">det --</div>
+      <section class="stage">
+        <div class="video">
+          <img id="video" src="/video.mjpg" alt="Cámara del coche">
+          <div class="rec"><span class="blink"></span><span>EN VIVO</span></div>
+          <div class="hud">
+            <div class="chip"><span>FPS</span><strong id="hud-fps">--</strong></div>
+            <div class="chip"><span>Lat</span><strong id="hud-lat">-- ms</strong></div>
+            <div class="chip"><span>Det</span><strong id="hud-det">--</strong></div>
+            <div class="chip"><span>Frame</span><strong id="hud-frame">--</strong></div>
           </div>
         </div>
-        <div class="control-panel">
-          <div class="axis-grid">
-            <div class="axis">
-              <label><span>Giro</span><strong id="steer-value">0.25</strong></label>
-              <div class="bar"><div class="fill" id="steer-fill"></div></div>
+
+        <div class="deck">
+          <div class="group wheel-wrap">
+            <div class="wheel">
+              <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" id="wheel-svg" aria-hidden="true">
+                <defs>
+                  <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#3a342a"/>
+                    <stop offset="100%" stop-color="#1a1610"/>
+                  </linearGradient>
+                </defs>
+                <circle cx="50" cy="50" r="45" fill="url(#rim)" stroke="#2b261c" stroke-width="2"/>
+                <circle cx="50" cy="50" r="36" fill="none" stroke="#0e0c08" stroke-width="3"/>
+                <g stroke="#f5b942" stroke-width="3" stroke-linecap="round">
+                  <line x1="50" y1="50" x2="50" y2="14"/>
+                  <line x1="50" y1="50" x2="20" y2="68"/>
+                  <line x1="50" y1="50" x2="80" y2="68"/>
+                </g>
+                <circle cx="50" cy="50" r="9" fill="#0e0c08" stroke="#f5b942" stroke-width="2"/>
+                <circle cx="50" cy="14" r="2.5" fill="#f5b942"/>
+              </svg>
             </div>
-            <div class="axis">
-              <label><span>Gas</span><strong id="throttle-value">0.00</strong></label>
-              <div class="bar"><div class="fill" id="throttle-fill"></div></div>
+            <div class="axis-data">
+              <span class="l">Giro</span>
+              <span class="v" id="steer-val">0.25</span>
+              <span class="l dir" id="steer-dir">centrado</span>
             </div>
           </div>
-          <div class="drive-strip">
-            <div class="mode-toggle" role="group" aria-label="Modo de conduccion">
-              <button type="button" id="mode-manual" class="active">Manual</button>
-              <button type="button" id="mode-auto">Auto</button>
+
+          <div class="group keys-wrap">
+            <h3>Teclas</h3>
+            <div class="keys">
+              <div class="key empty"></div>
+              <div class="key k-w" data-key="w">W</div>
+              <div class="key empty"></div>
+              <div class="key k-a" data-key="a">A</div>
+              <div class="key k-s" data-key="s">S</div>
+              <div class="key k-d" data-key="d">D</div>
             </div>
-            <button type="button" id="stop" class="danger stop-button">Stop</button>
+            <div class="keys-caption">freno <span class="kbd">␣</span><span class="kbd">X</span></div>
+          </div>
+
+          <div class="group throttle-wrap">
+            <div class="throttle-meter" aria-label="Acelerador">
+              <div class="tick" style="top:25%"></div>
+              <div class="mid"></div>
+              <div class="tick" style="top:75%"></div>
+              <div class="fill-fwd" id="thr-fwd"></div>
+              <div class="fill-rev" id="thr-rev"></div>
+            </div>
+            <div class="axis-data">
+              <span class="l">Acelerador</span>
+              <span class="v" id="thr-val">0.00</span>
+              <span class="l dir" id="thr-dir">parado</span>
+            </div>
+          </div>
+
+          <div class="deck-actions">
+            <div class="mode-toggle" role="group" aria-label="Modo de conducción">
+              <button type="button" id="mode-manual" class="active">Manual</button>
+              <button type="button" id="mode-auto">Autónomo</button>
+            </div>
+            <button type="button" class="stop" id="stop">Stop</button>
           </div>
         </div>
       </section>
 
-      <aside class="side-panel">
-        <section class="section">
-          <div class="section-title">Enlace</div>
-          <div class="metric"><span>UDP</span><span id="udp-bind">--</span></div>
-          <div class="metric"><span>Cliente</span><span id="client">--</span></div>
-          <div class="metric"><span>Ultimo paquete</span><span id="last-packet">--</span></div>
-          <div class="metric"><span>RX</span><span id="packets">--</span></div>
-          <div class="metric"><span>TX</span><span id="tx">--</span></div>
+      <aside class="side">
+        <section class="card">
+          <h2>Inferencia <span class="tag" id="ai-tag">--</span></h2>
+          <div class="row"><span class="k">Backend</span><span class="v muted" id="ai-backend">--</span></div>
+          <div class="row"><span class="k">Modelo</span><span class="v muted" id="ai-model">--</span></div>
+          <div class="row"><span class="k">Estado</span><span class="v" id="ai-status">--</span></div>
+
+          <div class="spark-wrap">
+            <svg class="spark" id="spark-lat" viewBox="0 0 200 38" preserveAspectRatio="none">
+              <line class="grid" x1="0" y1="19" x2="200" y2="19"/>
+              <path class="area" d=""/>
+              <path d=""/>
+            </svg>
+            <div class="spark-data">
+              <div class="v"><span id="ai-latency">--</span><small>ms</small></div>
+              <div class="l">Latencia IA</div>
+            </div>
+          </div>
+          <div class="spark-wrap">
+            <svg class="spark teal" id="spark-fps" viewBox="0 0 200 38" preserveAspectRatio="none">
+              <line class="grid" x1="0" y1="19" x2="200" y2="19"/>
+              <path class="area" d=""/>
+              <path d=""/>
+            </svg>
+            <div class="spark-data">
+              <div class="v"><span id="ai-fps">--</span><small>fps</small></div>
+              <div class="l">Vídeo</div>
+            </div>
+          </div>
+
+          <h3>Detecciones</h3>
+          <div class="detections" id="detections">
+            <div class="det empty"><span>Esperando inferencia…</span></div>
+          </div>
         </section>
 
-        <section class="section">
-          <div class="section-title">Inferencia</div>
-          <div class="metric"><span>Estado</span><span id="ai-status">--</span></div>
-          <div class="metric"><span>Backend</span><span id="backend">--</span></div>
-          <div class="metric"><span>Latencia</span><span id="latency">--</span></div>
-          <div class="detections" id="detections"></div>
+        <section class="card">
+          <h2>Autonomía</h2>
+          <div class="row"><span class="k">Modo</span><span class="v amber" id="auto-mode">--</span></div>
+          <div class="row"><span class="k">Acción</span><span class="v" id="auto-action">--</span></div>
+          <div class="row"><span class="k">Señal</span><span class="v" id="auto-target">--</span></div>
+          <div class="row"><span class="k">Zona / Distancia</span><span class="v muted" id="auto-zone">--</span></div>
+          <div class="row"><span class="k">Motivo</span><span class="v muted" id="auto-reason">--</span></div>
         </section>
 
-        <section class="section">
-          <div class="section-title">Autonomia</div>
-          <div class="metric"><span>Modo</span><span id="drive-mode">--</span></div>
-          <div class="metric"><span>Accion</span><span id="auto-action">--</span></div>
-          <div class="metric"><span>Senal</span><span id="auto-target">--</span></div>
-          <div class="metric"><span>Zona</span><span id="auto-zone">--</span></div>
-          <div class="metric"><span>Motivo</span><span id="auto-reason">--</span></div>
+        <section class="card">
+          <h2>Enlace 4G</h2>
+          <div class="row"><span class="k">UDP</span><span class="v muted" id="link-bind">--</span></div>
+          <div class="row"><span class="k">Cliente</span><span class="v" id="link-client">--</span></div>
+          <div class="row"><span class="k">Último paquete</span><span class="v" id="link-last">--</span></div>
+          <div class="row"><span class="k">RX</span><span class="v" id="link-rx">--</span></div>
+          <div class="row"><span class="k">TX</span><span class="v" id="link-tx">--</span></div>
+          <div class="row"><span class="k">Errores</span><span class="v" id="link-err">0</span></div>
         </section>
 
-        <section class="section">
-          <div class="section-title">Coche</div>
-          <div class="metric"><span>Bateria</span><span id="battery">--</span></div>
-          <div class="metric"><span>Control</span><span id="control-source">--</span></div>
-          <div class="metric"><span>Watchdog</span><span id="watchdog">--</span></div>
-        </section>
-
-        <section class="section">
-          <div class="section-title">Estado</div>
-          <pre class="raw" id="raw">{}</pre>
+        <section class="card">
+          <h2>Coche</h2>
+          <div class="battery">
+            <div class="row" style="border:0; padding-bottom: 4px;">
+              <span class="k">Batería</span><span class="v amber" id="bat-val">--</span>
+            </div>
+            <div class="gauge"><div class="fill" id="bat-fill"></div></div>
+          </div>
+          <div class="row" style="margin-top: 12px;"><span class="k">Origen control</span><span class="v" id="ctrl-source">--</span></div>
+          <div class="row"><span class="k">Watchdog</span><span class="v" id="ctrl-watch">--</span></div>
+          <div class="row"><span class="k">Stream activo</span><span class="v" id="stream-clients">--</span></div>
+          <div class="row"><span class="k">Posts control</span><span class="v" id="control-posts">--</span></div>
         </section>
       </aside>
     </main>
   </div>
 
   <script>
+    const $ = (id) => document.getElementById(id);
     const els = {
-      steerValue: document.getElementById('steer-value'),
-      throttleValue: document.getElementById('throttle-value'),
-      steerFill: document.getElementById('steer-fill'),
-      throttleFill: document.getElementById('throttle-fill'),
-      modeManual: document.getElementById('mode-manual'),
-      modeAuto: document.getElementById('mode-auto'),
-      stop: document.getElementById('stop'),
-      topVideo: document.getElementById('top-video'),
-      topAi: document.getElementById('top-ai'),
-      topCar: document.getElementById('top-car'),
-      topControl: document.getElementById('top-control'),
-      pillVideo: document.getElementById('pill-video'),
-      pillAi: document.getElementById('pill-ai'),
-      pillCar: document.getElementById('pill-car'),
-      pillControl: document.getElementById('pill-control'),
-      frame: document.getElementById('badge-frame'),
-      badgeLatency: document.getElementById('badge-latency'),
-      badgeDet: document.getElementById('badge-det'),
-      udpBind: document.getElementById('udp-bind'),
-      client: document.getElementById('client'),
-      lastPacket: document.getElementById('last-packet'),
-      packets: document.getElementById('packets'),
-      tx: document.getElementById('tx'),
-      aiStatus: document.getElementById('ai-status'),
-      backend: document.getElementById('backend'),
-      latency: document.getElementById('latency'),
-      detections: document.getElementById('detections'),
-      driveMode: document.getElementById('drive-mode'),
-      autoAction: document.getElementById('auto-action'),
-      autoTarget: document.getElementById('auto-target'),
-      autoZone: document.getElementById('auto-zone'),
-      autoReason: document.getElementById('auto-reason'),
-      battery: document.getElementById('battery'),
-      controlSource: document.getElementById('control-source'),
-      watchdog: document.getElementById('watchdog'),
-      raw: document.getElementById('raw'),
+      pillLink: $('pill-link'),    pillLinkVal: $('pill-link-val'),
+      pillVideo: $('pill-video'),  pillVideoVal: $('pill-video-val'),
+      pillAi: $('pill-ai'),        pillAiVal: $('pill-ai-val'),
+      pillCtrl: $('pill-control'), pillCtrlVal: $('pill-control-val'),
+      sessionClock: $('session-clock'),
+      wallClock: $('wall-clock'),
+
+      hudFps: $('hud-fps'), hudLat: $('hud-lat'), hudDet: $('hud-det'), hudFrame: $('hud-frame'),
+
+      wheelSvg: $('wheel-svg'),
+      steerVal: $('steer-val'), steerDir: $('steer-dir'),
+      thrFwd: $('thr-fwd'), thrRev: $('thr-rev'),
+      thrVal: $('thr-val'), thrDir: $('thr-dir'),
+
+      modeManual: $('mode-manual'), modeAuto: $('mode-auto'), stop: $('stop'),
+
+      aiTag: $('ai-tag'),
+      aiBackend: $('ai-backend'), aiModel: $('ai-model'), aiStatus: $('ai-status'),
+      aiLatency: $('ai-latency'), aiFps: $('ai-fps'),
+      sparkLat: $('spark-lat'), sparkFps: $('spark-fps'),
+      detections: $('detections'),
+
+      autoMode: $('auto-mode'), autoAction: $('auto-action'),
+      autoTarget: $('auto-target'), autoZone: $('auto-zone'), autoReason: $('auto-reason'),
+
+      linkBind: $('link-bind'), linkClient: $('link-client'), linkLast: $('link-last'),
+      linkRx: $('link-rx'), linkTx: $('link-tx'), linkErr: $('link-err'),
+
+      batVal: $('bat-val'), batFill: $('bat-fill'),
+      ctrlSource: $('ctrl-source'), ctrlWatch: $('ctrl-watch'),
+      streamClients: $('stream-clients'), controlPosts: $('control-posts'),
     };
 
-    let keys = new Set();
-    let lastControl = {steering: 0.25, throttle: 0.0};
+    /* state */
+    const NEUTRAL_STEERING = 0.25;
+    const KEY_CODES = ['w','a','s','d','x',' ','arrowup','arrowdown','arrowleft','arrowright'];
+    const keys = new Set();
     let driveMode = 'manual';
+    let lastSent = { steering: NEUTRAL_STEERING, throttle: 0.0 };
+    let viewControl = { steering: NEUTRAL_STEERING, throttle: 0.0 };
 
-    function setPill(el, state) {
-      el.classList.remove('ok', 'warn', 'bad');
+    /* sparkline buffers */
+    const LAT_BUF = [], FPS_BUF = [];
+    const BUF_LEN = 60;
+    let lastFrames = null, lastFramesAt = null, fpsEma = 0;
+
+    /* ---------- utilities ---------- */
+    function setPillState(el, state) {
+      el.classList.remove('ok','warn','bad');
       el.classList.add(state);
     }
+    function fmtTime(seconds) {
+      seconds = Math.max(0, Math.floor(seconds));
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = seconds % 60;
+      return [h, m, s].map(n => String(n).padStart(2,'0')).join(':');
+    }
+    function clampNum(v, a, b) { return Math.max(a, Math.min(b, v)); }
+    function nfmt(v, d=2) { return v == null || Number.isNaN(+v) ? '--' : Number(v).toFixed(d); }
 
+    function tickWallClock() {
+      const d = new Date();
+      els.wallClock.textContent = [d.getHours(), d.getMinutes(), d.getSeconds()]
+        .map(n => String(n).padStart(2,'0')).join(':');
+    }
+    setInterval(tickWallClock, 1000); tickWallClock();
+
+    /* ---------- mode + control ---------- */
     function renderMode(mode) {
       driveMode = mode === 'autonomous' ? 'autonomous' : 'manual';
       els.modeManual.classList.toggle('active', driveMode === 'manual');
@@ -1494,20 +1912,46 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       if (keys.has('w') || keys.has('arrowup')) throttle = 0.6;
       if (keys.has('s') || keys.has('arrowdown')) throttle = -0.5;
       if (keys.has('x') || keys.has(' ')) throttle = -0.9;
-
-      let steering = 0.25;
+      let steering = NEUTRAL_STEERING;
       const left = keys.has('a') || keys.has('arrowleft');
       const right = keys.has('d') || keys.has('arrowright');
       if (left && !right) steering = 1.0;
       if (right && !left) steering = -1.0;
-      return {steering, throttle};
+      return { steering, throttle };
     }
 
-    function renderAxis(control) {
-      els.steerValue.textContent = Number(control.steering).toFixed(2);
-      els.throttleValue.textContent = Number(control.throttle).toFixed(2);
-      els.steerFill.style.width = `${((Number(control.steering) + 1) / 2) * 100}%`;
-      els.throttleFill.style.width = `${((Number(control.throttle) + 1) / 2) * 100}%`;
+    function renderControl(steering, throttle) {
+      const offset = clampNum(steering - NEUTRAL_STEERING, -1, 1);
+      const rot = -offset * 130;
+      els.wheelSvg.style.transform = `rotate(${rot.toFixed(1)}deg)`;
+      els.steerVal.textContent = nfmt(steering, 2);
+      els.steerDir.textContent =
+        offset > 0.05  ? 'izquierda · ' + Math.round(offset * 100) + '%'
+      : offset < -0.05 ? 'derecha · '   + Math.round(-offset * 100) + '%'
+      :                  'centrado';
+
+      const fwd = clampNum(Math.max(0, throttle), 0, 1);
+      const rev = clampNum(Math.max(0, -throttle), 0, 1);
+      els.thrFwd.style.height = (fwd * 50).toFixed(1) + '%';
+      els.thrRev.style.height = (rev * 50).toFixed(1) + '%';
+      els.thrVal.textContent = nfmt(throttle, 2);
+      els.thrDir.textContent =
+        throttle >  0.05 ? 'avanza · ' + Math.round(throttle * 100) + '%'
+      : throttle < -0.05 ? (throttle < -0.7 ? 'freno fuerte' : 'retroceder · ' + Math.round(-throttle * 100) + '%')
+      :                    'parado';
+    }
+
+    /* highlight WASD on keypress */
+    function paintKeys() {
+      document.querySelectorAll('.key[data-key]').forEach(k => {
+        const isBrake = (k.dataset.key === 's') && (keys.has(' ') || keys.has('x'));
+        const pressed = keys.has(k.dataset.key) || (k.dataset.key === 'w' && keys.has('arrowup'))
+          || (k.dataset.key === 'a' && keys.has('arrowleft'))
+          || (k.dataset.key === 's' && keys.has('arrowdown'))
+          || (k.dataset.key === 'd' && keys.has('arrowright'));
+        k.classList.toggle('active', pressed && !isBrake);
+        k.classList.toggle('brake', isBrake);
+      });
     }
 
     async function postControl(control) {
@@ -1519,15 +1963,15 @@ LIVE_VIEW_HTML = r"""<!doctype html>
           body: JSON.stringify(control),
           cache: 'no-store',
         });
-        if (!res.ok) throw new Error(`http ${res.status}`);
-      } catch (err) {
-        setPill(els.pillControl, 'bad');
+        if (!res.ok) throw new Error('http ' + res.status);
+      } catch (_) {
+        setPillState(els.pillCtrl, 'bad');
       }
     }
 
     async function postMode(mode) {
       renderMode(mode);
-      keys.clear();
+      keys.clear(); paintKeys();
       try {
         const res = await fetch('/mode', {
           method: 'POST',
@@ -1535,128 +1979,247 @@ LIVE_VIEW_HTML = r"""<!doctype html>
           body: JSON.stringify({mode}),
           cache: 'no-store',
         });
-        if (!res.ok) throw new Error(`http ${res.status}`);
-      } catch (err) {
-        setPill(els.pillControl, 'bad');
+        if (!res.ok) throw new Error('http ' + res.status);
+      } catch (_) {
+        setPillState(els.pillCtrl, 'bad');
       }
     }
 
     async function neutral() {
-      keys.clear();
+      keys.clear(); paintKeys();
       renderMode('manual');
-      setPill(els.pillControl, 'bad');
-      lastControl = {steering: 0.25, throttle: 0.0};
-      renderAxis(lastControl);
-      try {
-        await fetch('/control/neutral', {method: 'POST', cache: 'no-store'});
-      } catch (_) {}
+      lastSent = { steering: NEUTRAL_STEERING, throttle: 0.0 };
+      renderControl(NEUTRAL_STEERING, 0.0);
+      setPillState(els.pillCtrl, 'bad');
+      els.pillCtrlVal.textContent = 'OFF';
+      try { await fetch('/control/neutral', { method: 'POST', cache: 'no-store' }); } catch (_) {}
     }
 
     window.addEventListener('keydown', (event) => {
       const key = event.key.toLowerCase();
-      if (['w','a','s','d','x',' ','arrowup','arrowdown','arrowleft','arrowright'].includes(key)) {
+      if (KEY_CODES.includes(key)) {
         event.preventDefault();
         keys.add(key);
+        paintKeys();
       }
     });
-
     window.addEventListener('keyup', (event) => {
       keys.delete(event.key.toLowerCase());
+      paintKeys();
     });
-
     window.addEventListener('blur', neutral);
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) neutral();
-    });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) neutral(); });
 
     els.modeManual.addEventListener('click', () => postMode('manual'));
     els.modeAuto.addEventListener('click', () => postMode('autonomous'));
     els.stop.addEventListener('click', neutral);
 
+    /* manual control loop */
     setInterval(() => {
       if (driveMode === 'manual') {
-        lastControl = axisFromKeys();
-        renderAxis(lastControl);
-        postControl(lastControl);
+        const c = axisFromKeys();
+        lastSent = c;
+        renderControl(c.steering, c.throttle);
+        postControl(c);
       }
     }, 50);
 
+    /* ---------- sparklines ---------- */
+    function pushBuf(buf, val) {
+      buf.push(val);
+      if (buf.length > BUF_LEN) buf.shift();
+    }
+    function drawSpark(svg, values, opts) {
+      const opts2 = opts || {};
+      const W = 200, H = 38;
+      const paths = svg.querySelectorAll('path');
+      const area = paths[0], line = paths[1];
+      if (!values.length) {
+        area.setAttribute('d',''); line.setAttribute('d',''); return;
+      }
+      const fixedMax = opts2.fixedMax ? opts2.fixedMax : Math.max(...values, opts2.minMax || 1);
+      const max = fixedMax * 1.1;
+      const n = values.length;
+      const pts = values.map((v, i) => {
+        const x = n > 1 ? (i / (n - 1)) * W : W;
+        const y = H - clampNum(v / max, 0, 1) * (H - 4) - 2;
+        return [x, y];
+      });
+      const d = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+      const a = d + ' L' + W + ',' + H + ' L0,' + H + ' Z';
+      line.setAttribute('d', d);
+      area.setAttribute('d', a);
+    }
+
+    /* ---------- status polling ---------- */
     async function pollStatus() {
       try {
-        const res = await fetch('/status.json', {cache: 'no-store'});
+        const res = await fetch('/status.json', { cache: 'no-store' });
         const data = await res.json();
+        const now = performance.now() / 1000;
 
-        const videoAge = data.video.age_sec;
-        const videoOk = data.video.has_video && (videoAge === null || videoAge < 1.5);
-        els.topVideo.textContent = videoOk ? `${data.video.frames}` : 'SIN';
-        setPill(els.pillVideo, videoOk ? 'ok' : 'warn');
+        /* link */
+        const pktAge = data.udp.last_packet_age_sec;
+        const linkOk = pktAge !== null && pktAge < 1.2;
+        const linkWarn = pktAge !== null && pktAge < 3.0;
+        setPillState(els.pillLink, linkOk ? 'ok' : (linkWarn ? 'warn' : 'bad'));
+        els.pillLinkVal.textContent = linkOk ? 'ONLINE' : (linkWarn ? 'LENTO' : 'SIN RX');
 
-        const aiOk = ['ready', 'running', 'waiting-frame'].includes(data.inference.status);
-        els.topAi.textContent = data.inference.status;
-        setPill(els.pillAi, aiOk ? 'ok' : 'warn');
+        /* video + fps */
+        const vid = data.video;
+        const videoAge = vid.age_sec;
+        const videoOk = vid.has_video && (videoAge === null || videoAge < 1.5);
+        setPillState(els.pillVideo, videoOk ? 'ok' : 'warn');
+        els.pillVideoVal.textContent = videoOk ? vid.frames : 'SIN';
 
-        const carOk = data.udp.last_packet_age_sec !== null && data.udp.last_packet_age_sec < 3.0;
-        els.topCar.textContent = carOk ? 'ONLINE' : 'SIN RX';
-        setPill(els.pillCar, carOk ? 'ok' : 'warn');
+        if (lastFrames !== null && lastFramesAt !== null) {
+          const dt = now - lastFramesAt;
+          if (dt > 0.2) {
+            const inst = (vid.frames - lastFrames) / dt;
+            fpsEma = fpsEma === 0 ? inst : (0.65 * fpsEma + 0.35 * inst);
+            pushBuf(FPS_BUF, Math.max(0, fpsEma));
+            lastFrames = vid.frames; lastFramesAt = now;
+          }
+        } else {
+          lastFrames = vid.frames; lastFramesAt = now;
+        }
+        const fpsShown = videoOk ? fpsEma : 0;
+        els.aiFps.textContent = fpsShown ? fpsShown.toFixed(1) : '--';
+        els.hudFps.textContent = fpsShown ? fpsShown.toFixed(0) : '--';
+        drawSpark(els.sparkFps, FPS_BUF, { minMax: 30 });
 
-        renderMode(data.control.mode || 'manual');
-        const autoDecision = data.autonomy?.decision || {};
-        const autoActive = data.control.mode === 'autonomous' && autoDecision.active;
-        els.topControl.textContent = data.control.mode === 'autonomous' ? (autoActive ? 'AUTO' : 'SAFE') : (data.control.armed ? 'ON' : 'OFF');
-        setPill(els.pillControl, data.control.armed ? 'ok' : (data.control.mode === 'autonomous' ? 'warn' : 'bad'));
+        /* inference */
+        const inf = data.inference;
+        const aiOk = ['ready','running','waiting-frame'].includes(inf.status);
+        setPillState(els.pillAi, aiOk ? 'ok' : (inf.status === 'starting' ? 'warn' : 'bad'));
+        const statusEs = {
+          'ready': 'lista', 'running': 'analizando', 'waiting-frame': 'esperando',
+          'starting': 'iniciando', 'offline': 'offline',
+          'disabled': 'deshabilitada', 'error': 'error',
+        }[inf.status] || inf.status;
+        els.pillAiVal.textContent = statusEs;
+        els.aiTag.textContent = inf.detections + ' obj';
+        els.aiStatus.textContent = inf.error || statusEs;
+        els.aiBackend.textContent = (inf.backend && inf.backend.api_url) || '--';
+        els.aiModel.textContent = (inf.backend && inf.backend.model_id) || '--';
+        if (inf.latency_ms != null) {
+          pushBuf(LAT_BUF, inf.latency_ms);
+          els.aiLatency.textContent = inf.latency_ms;
+          els.hudLat.textContent = inf.latency_ms + ' ms';
+        } else {
+          els.aiLatency.textContent = '--';
+          els.hudLat.textContent = '-- ms';
+        }
+        drawSpark(els.sparkLat, LAT_BUF, { minMax: 200 });
 
-        els.frame.textContent = `frame ${data.video.frames}`;
-        els.badgeLatency.textContent = `lat ${data.inference.latency_ms ?? '--'}ms`;
-        els.badgeDet.textContent = `det ${data.inference.detections}`;
+        els.hudDet.textContent = inf.detections;
+        els.hudFrame.textContent = vid.frames;
 
-        els.udpBind.textContent = data.udp.bind;
-        els.client.textContent = data.udp.last_client || '--';
-        els.lastPacket.textContent = `${data.udp.last_packet_type || '--'} · ${data.udp.last_packet_age_sec ?? '--'}s`;
-        els.packets.textContent = JSON.stringify(data.udp.packets);
-        els.tx.textContent = `${data.udp.tx_packets}`;
-
-        els.aiStatus.textContent = data.inference.error || data.inference.status;
-        els.backend.textContent = data.inference.backend.api_url || '--';
-        els.latency.textContent = data.inference.latency_ms === null ? '--' : `${data.inference.latency_ms} ms`;
-
+        /* detections list */
         els.detections.innerHTML = '';
-        const preds = data.inference.predictions || [];
-        if (preds.length === 0) {
+        const preds = inf.predictions || [];
+        if (!preds.length) {
           const empty = document.createElement('div');
-          empty.className = 'det';
-          empty.innerHTML = '<span>sin detecciones</span><span>--</span>';
+          empty.className = 'det empty';
+          empty.innerHTML = '<span>Sin detecciones</span>';
           els.detections.appendChild(empty);
         } else {
-          for (const pred of preds) {
+          for (const p of preds.slice(0, 8)) {
+            const conf = p.confidence === undefined ? 0 : Number(p.confidence);
             const row = document.createElement('div');
             row.className = 'det';
-            const conf = pred.confidence === undefined ? '--' : Number(pred.confidence).toFixed(2);
-            row.innerHTML = `<span>${pred.class || 'objeto'}</span><span>${conf}</span>`;
+            row.innerHTML =
+              '<span class="name">' + (p.class || 'objeto') + '</span>' +
+              '<span class="conf">' +
+                '<span class="meter"><span class="fill" style="width:' + (conf * 100).toFixed(0) + '%"></span></span>' +
+                '<span>' + (conf * 100).toFixed(0) + '%</span>' +
+              '</span>';
             els.detections.appendChild(row);
           }
         }
 
-        els.battery.textContent = data.car.battery === null ? '--' : Number(data.car.battery).toFixed(2);
-        const auto = autoDecision;
-        const target = auto.target || null;
-        els.driveMode.textContent = data.control.mode || '--';
-        els.autoAction.textContent = auto.action || '--';
-        els.autoTarget.textContent = target ? target.class : '--';
-        els.autoZone.textContent = target ? `${target.zone} · ${target.distance}` : '--';
-        els.autoReason.textContent = auto.reason || '--';
+        /* control + autonomy pills + values */
+        renderMode(data.control.mode || 'manual');
+        const autoDecision = (data.autonomy && data.autonomy.decision) || {};
+        const autoActive = data.control.mode === 'autonomous' && autoDecision.active;
+        if (data.control.mode === 'autonomous') {
+          setPillState(els.pillCtrl, autoActive ? 'ok' : 'warn');
+          els.pillCtrlVal.textContent = autoActive ? 'AUTO' : 'SAFE';
+        } else {
+          setPillState(els.pillCtrl, data.control.armed ? 'ok' : 'bad');
+          els.pillCtrlVal.textContent = data.control.armed ? 'ON' : 'OFF';
+        }
 
-        els.controlSource.textContent = `${data.control.source} · ${Number(data.control.steering).toFixed(2)} / ${Number(data.control.throttle).toFixed(2)}`;
-        els.watchdog.textContent = `${Number(data.control.updated_age_sec).toFixed(2)}s`;
-        renderAxis(data.control.mode === 'manual' && data.control.armed ? lastControl : data.control);
-        els.raw.textContent = JSON.stringify(data, null, 2);
+        const remoteSteer = Number(data.control.steering);
+        const remoteThr = Number(data.control.throttle);
+        if (driveMode === 'manual' && data.control.armed) {
+          renderControl(lastSent.steering, lastSent.throttle);
+        } else {
+          renderControl(remoteSteer, remoteThr);
+        }
+
+        /* autonomy card */
+        els.autoMode.textContent = data.control.mode === 'autonomous' ? 'autónomo' : 'manual';
+        const actionEs = {
+          'continue': 'avanzar',
+          'turn-left': 'girar izquierda', 'turn-right': 'girar derecha',
+          'prepare-left': 'preparar izquierda', 'prepare-right': 'preparar derecha',
+          'safe-neutral': 'neutro seguro', 'crawl': 'avance lento',
+          'slow': 'lento', 'cruise': 'crucero', 'stop': 'detenido',
+          'brake': 'frenar',
+        }[autoDecision.action] || (autoDecision.action || '--');
+        els.autoAction.textContent = actionEs;
+        const tgt = autoDecision.target;
+        els.autoTarget.textContent = tgt ? (tgt.class + ' · ' + (Number(tgt.confidence)*100).toFixed(0) + '%') : '--';
+        els.autoZone.textContent = tgt ? (tgt.zone + ' · ' + tgt.distance) : '--';
+        els.autoReason.textContent = autoDecision.reason || '--';
+
+        /* link card */
+        els.linkBind.textContent = data.udp.bind;
+        els.linkClient.textContent = data.udp.last_client || '--';
+        const types = data.udp.last_packet_type || '--';
+        const ageS = data.udp.last_packet_age_sec;
+        els.linkLast.textContent = ageS == null ? types : (types + ' · ' + Number(ageS).toFixed(2) + ' s');
+        const pkts = data.udp.packets || {};
+        const totalRx = Object.values(pkts).reduce((a, b) => a + (Number(b) || 0), 0);
+        const breakdown = Object.entries(pkts).map(([k, v]) => k + ':' + v).join(' ');
+        els.linkRx.textContent = totalRx + (breakdown ? ' · ' + breakdown : '');
+        els.linkTx.textContent = data.udp.tx_packets;
+        els.linkErr.textContent = (data.udp.bad_packets || 0) + (vid.decode_errors ? ' · ' + vid.decode_errors + ' dec' : '');
+
+        /* car card */
+        const bat = data.car && data.car.battery;
+        if (bat == null) {
+          els.batVal.textContent = '--';
+          els.batFill.style.width = '0%';
+        } else {
+          const b = Number(bat);
+          els.batVal.textContent = b.toFixed(2);
+          const pct = b > 1 ? clampNum(b, 0, 100) : clampNum(b * 100, 0, 100);
+          els.batFill.style.width = pct.toFixed(0) + '%';
+          els.batFill.style.background = pct < 20
+            ? 'linear-gradient(90deg, #ff6452, #ffb1a4)'
+            : pct < 45
+            ? 'linear-gradient(90deg, #f5b942, #ffd98a)'
+            : 'linear-gradient(90deg, #66d28a, #aef0c2)';
+        }
+
+        els.ctrlSource.textContent =
+          data.control.source + ' · ' + nfmt(remoteSteer, 2) + ' / ' + nfmt(remoteThr, 2);
+        els.ctrlWatch.textContent = nfmt(data.control.updated_age_sec, 2) + ' s';
+        els.streamClients.textContent = (data.web && data.web.stream_clients) || 0;
+        els.controlPosts.textContent = (data.web && data.web.control_posts) || 0;
+
+        els.sessionClock.textContent = fmtTime(data.uptime_sec || 0);
       } catch (err) {
-        setPill(els.pillCar, 'bad');
-        setPill(els.pillVideo, 'bad');
+        setPillState(els.pillLink, 'bad'); els.pillLinkVal.textContent = 'ERR';
+        setPillState(els.pillVideo, 'bad'); els.pillVideoVal.textContent = '--';
       }
     }
 
     pollStatus();
-    setInterval(pollStatus, 500);
+    setInterval(pollStatus, 250);
+    renderControl(NEUTRAL_STEERING, 0.0);
   </script>
 </body>
 </html>

@@ -63,4 +63,20 @@ Checks:
 
 - No firmware changes were made.
 - No Roboflow secrets or SSH passwords were written to repository files.
-- This validation was local only; EPC deployment should re-run the Python tests after pull.
+- Pushed commit `b918559` to `origin/main`.
+- EPC fast-forwarded to `b918559`.
+- EPC `tp2-car-control.service` was `inactive`; it was not restarted.
+- EPC Python validation after pull:
+
+```bash
+ssh tp2@100.97.19.112 'cd /home/tp2/TP2_red4G && bash -lc "source /home/tp2/miniforge3/etc/profile.d/conda.sh && conda activate tp2 && PYTHONPATH=servicios python -m py_compile servicios/coche.py servicios/session_replayer.py tests/test_session_replayer.py && PYTHONPATH=servicios python -m unittest discover -s tests"'
+```
+
+Result:
+
+```text
+Ran 25 tests in 0.515s
+OK
+```
+
+- EPC worktree showed an unrelated local deletion of `servicios/test.jpg`; it was not modified.

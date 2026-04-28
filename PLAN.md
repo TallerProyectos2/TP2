@@ -65,7 +65,8 @@ Este plan toma como base un runtime unico en `servicios/coche.py` y elimina comp
 
 - Runtime web del coche:
   - `coche.py` (UDP del coche, MJPEG, inferencia asincrona, control web, modo autonomo y watchdog manual)
-  - `autonomous_driver.py` (politica determinista para señales del modelo: seguir, girar, parar y limitar velocidad)
+  - `autonomous_driver.py` (control autonomo determinista con normalizacion de detecciones, tracking temporal, estimacion de distancia por area, FSM de maniobras, cooldowns y filtrado de comandos)
+  - grabador de sesion/dataset desde `coche.py` para guardar frames, predicciones, estimaciones autonomas y comandos como candidatos de reentrenamiento Roboflow
 - Inferencia y validacion:
   - `inferencia.py` (CLI)
   - `start_local_inference_server.py` (endpoint local)
@@ -104,8 +105,10 @@ Eso puede existir en el futuro como capa adicional, pero no es requisito para se
 - Control manual remoto directo desde navegador con watchdog a neutro.
 - Selector web manual/autonomo:
   - manual: navegador publica giro/gas y watchdog vuelve a neutro si deja de publicar.
-  - autonomo: EPC decide desde detecciones Roboflow recientes, priorizando señales mas cercanas por area de bounding box y modulando la accion por zona izquierda/centro/derecha.
+  - autonomo: EPC decide desde detecciones Roboflow recientes, priorizando señales persistentes y cercanas por area de bounding box, zona izquierda/centro/derecha y estado de maniobra.
+  - tracking/FSM: confirma señales durante varios frames, mantiene `STOP`, ejecuta giros durante una ventana controlada y aplica cooldown para no repetir la misma señal.
   - fallback: sin frame o inferencia fresca, EPC manda neutro.
+  - dataset: la web puede activar grabacion de frames y `manifest.jsonl` para curar falsos positivos/negativos antes de reentrenar.
 
 ## Paso 3. Validacion repetible extremo a extremo sobre EPC (pendiente corta)
 

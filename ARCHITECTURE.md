@@ -77,7 +77,8 @@ This path works without introducing a new backend API layer.
 - Operator visibility:
   - `coche.py` exposes annotated live video, remote manual control, autonomous mode, and inference/control status from EPC on `8088/TCP`
   - browser control updates EPC state only; EPC remains the only host that sends UDP commands to the car
-  - autonomous driving is an EPC-local decision layer over Roboflow detections; it does not move orchestration to Jetson or the car
+  - autonomous driving is an EPC-local decision layer over Roboflow detections; it performs temporal tracking, sign selection, stateful maneuvers, and command smoothing without moving orchestration to Jetson or the car
+  - session recording is also EPC-local and stores candidate frames/estimates for dataset improvement under the configured recording directory
 - Inference transport:
   - local HTTP endpoint (default `127.0.0.1:9001`) for Roboflow-compatible runtime
   - optional Jetson HTTP endpoint (`100.115.99.8:9001` when reachable)
@@ -88,7 +89,7 @@ This path works without introducing a new backend API layer.
 Inference is consumed by EPC through:
 
 - `coche.py` (live frame sender and annotation owner)
-- `autonomous_driver.py` (deterministic traffic-sign policy used by `coche.py`)
+- `autonomous_driver.py` (deterministic traffic-sign controller used by `coche.py`: tracker, distance proxy, FSM, safety fallback)
 - `inferencia.py` (CLI test and annotated output)
 - `start_local_inference_server.py` (optional EPC local fallback endpoint)
 

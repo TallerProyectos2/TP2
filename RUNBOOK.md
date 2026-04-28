@@ -31,6 +31,7 @@ The manual order below remains the operational source for troubleshooting.
 10. Open the live operator view from Tailscale at `http://100.97.19.112:8088/`.
     - Keep manual mode selected for initial safety checks.
     - Switch to autonomous mode only after live frames and fresh inference status are visible.
+    - Enable dataset recording only when disk space and scene setup are intentional for the session.
 11. If using Jetson offload, first verify Jetson reachability and `tp2-roboflow-inference.service`; then point EPC to `http://100.115.99.8:9001` (or the current reachable Jetson IP) with `TP2_INFERENCE_TARGET=model` and `ROBOFLOW_MODEL_ID=tp2-g4-2026/2`.
 
 ## Shutdown Order
@@ -57,6 +58,7 @@ The manual order below remains the operational source for troubleshooting.
 - `coche.py` exposes the live operator web view on `8088/TCP` when used as the control runtime.
 - `coche.py` accepts direct remote manual control over the web view and falls back to neutral when web commands stop.
 - `coche.py` exposes `POST /mode` for `manual`/`autonomous`; autonomous mode falls back to neutral when frames or inference become stale.
+- `coche.py` exposes `POST /recording` and `GET /recording.json` for session capture; recordings include candidate frames, predictions, autonomous estimates, and selected controls.
 - Script receives car payloads (`I`, `B`, `D`).
 - Script sends control packets (`C`) back to car.
 - Car behavior matches command stream.

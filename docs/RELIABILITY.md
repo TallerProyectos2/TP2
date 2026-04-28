@@ -28,6 +28,13 @@
 - If autonomous mode loses fresh frames or inference:
   - return steering/throttle to neutral and surface `autonomous-safe` in web status.
 
+- If autonomous detections are ambiguous:
+  - hold neutral or crawl rather than choosing a conflicting maneuver.
+  - expose the selected state/reason in `/status.json` for operator diagnosis.
+
+- If dataset recording fails:
+  - keep control runtime alive and surface recorder `last_error`; recording is diagnostic, not part of the control safety path.
+
 - If UDP control loop breaks:
   - car must fall back to safe stop behavior.
 

@@ -60,7 +60,8 @@ Operational files are stored in repo `servicios/` and validated on EPC under `/h
 
 - Car web/control runtime:
   - `coche.py` (`172.16.0.1:20001` UDP, `0.0.0.0:8088` web)
-  - `autonomous_driver.py` deterministic autonomous policy used by `coche.py`
+  - `autonomous_driver.py` deterministic autonomous controller used by `coche.py`
+  - optional session recorder under `TP2_SESSION_RECORD_DIR` for dataset candidates
 - Inference files:
   - `start_local_inference_server.py` (optional EPC local endpoint, default `127.0.0.1:9001`)
   - `inferencia.py` (CLI execution and annotated output)
@@ -81,12 +82,15 @@ Operational files are stored in repo `servicios/` and validated on EPC under `/h
 - `20001/UDP`: car control runtime (`coche.py`)
 - `8088/TCP`: live `coche.py` operator web view with camera, browser control, and inference status
   - `POST /mode`: switch between `manual` and `autonomous`
+  - `POST /recording`: start/stop dataset capture
+  - `GET /recording.json`: inspect current recording state
 - `9001/TCP`: local inference endpoint (when started)
 - Remote inference offload last validated from EPC to Jetson: `100.115.99.8:9001`
 
 ## Storage And Log Paths
 
 - `/srv/tp2/frames`
+  - default base for autonomous dataset captures: `/srv/tp2/frames/autonomous`
 - `/srv/tp2/logs`
 - `/srv/tp2/docker`
 - `/srv/tp2/config`

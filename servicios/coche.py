@@ -12,6 +12,7 @@ import threading
 import time
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -27,8 +28,8 @@ os.environ.setdefault("ROBOFLOW_MODEL_ID", "tp2-g4-2026/2")
 
 from autonomous_driver import (  # noqa: E402
     AutonomousConfig,
+    AutonomousController,
     AutonomousDecision,
-    decide_autonomous_control,
 )
 from roboflow_runtime import (  # noqa: E402
     InferenceConfig,
@@ -110,7 +111,28 @@ AUTONOMOUS_CONFIG = AutonomousConfig(
     fast_throttle=env_float("TP2_AUTONOMOUS_FAST_THROTTLE", 0.48),
     left_steering=env_float("TP2_AUTONOMOUS_LEFT_STEERING", 0.84),
     right_steering=env_float("TP2_AUTONOMOUS_RIGHT_STEERING", -0.84),
+    confirm_frames=env_int("TP2_AUTONOMOUS_CONFIRM_FRAMES", 2),
+    safety_confirm_frames=env_int("TP2_AUTONOMOUS_SAFETY_CONFIRM_FRAMES", 1),
+    max_track_age_sec=env_float("TP2_AUTONOMOUS_MAX_TRACK_AGE_SEC", 1.2),
+    track_memory_sec=env_float("TP2_AUTONOMOUS_TRACK_MEMORY_SEC", 0.45),
+    match_iou=env_float("TP2_AUTONOMOUS_MATCH_IOU", 0.14),
+    match_center_distance=env_float("TP2_AUTONOMOUS_MATCH_CENTER_DISTANCE", 0.18),
+    ambiguous_score_ratio=env_float("TP2_AUTONOMOUS_AMBIGUOUS_SCORE_RATIO", 0.82),
+    stop_hold_sec=env_float("TP2_AUTONOMOUS_STOP_HOLD_SEC", 1.15),
+    turn_hold_sec=env_float("TP2_AUTONOMOUS_TURN_HOLD_SEC", 0.75),
+    cooldown_sec=env_float("TP2_AUTONOMOUS_COOLDOWN_SEC", 0.85),
+    distance_scale=env_float("TP2_AUTONOMOUS_DISTANCE_SCALE", 0.32),
+    steering_rate_per_sec=env_float("TP2_AUTONOMOUS_STEERING_RATE_PER_SEC", 2.4),
+    throttle_rate_per_sec=env_float("TP2_AUTONOMOUS_THROTTLE_RATE_PER_SEC", 1.0),
+    brake_rate_per_sec=env_float("TP2_AUTONOMOUS_BRAKE_RATE_PER_SEC", 3.0),
+    dry_run=env_bool("TP2_AUTONOMOUS_DRY_RUN", False),
 )
+
+SESSION_RECORD_DIR = Path(os.getenv("TP2_SESSION_RECORD_DIR", "/srv/tp2/frames/autonomous")).expanduser()
+SESSION_RECORD_AUTOSTART = env_bool("TP2_SESSION_RECORD_AUTOSTART", False)
+SESSION_RECORD_IMAGES = env_bool("TP2_SESSION_RECORD_IMAGES", True)
+SESSION_RECORD_MIN_INTERVAL_SEC = env_float("TP2_SESSION_RECORD_MIN_INTERVAL_SEC", 0.45)
+SESSION_RECORD_JPEG_QUALITY = min(95, max(35, env_int("TP2_SESSION_RECORD_JPEG_QUALITY", 82)))
 
 EXIT_EVENT = threading.Event()
 
@@ -140,6 +162,145 @@ class FrameContext:
     predictions_time: float | None
     inference_status: str
     inference_latency_ms: int | None
+
+
+class SessionRecorder:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        autostart: bool,
+        save_images: bool,
+        min_interval_sec: float,
+        jpeg_quality: int,
+    ) -> None:
+        self.root = root
+        self.save_images = save_images
+        self.min_interval_sec = max(0.0, min_interval_sec)
+        self.jpeg_quality = jpeg_quality
+        self.lock = threading.RLock()
+        self.enabled = False
+        self.session_dir: Path | None = None
+        self.images_dir: Path | None = None
+        self.manifest_path: Path | None = None
+        self.started_at: float | None = None
+        self.last_record_at = 0.0
+        self.records = 0
+        self.images = 0
+        self.last_error: str | None = None
+        if autostart:
+            self.start()
+
+    def start(self) -> dict[str, Any]:
+        with self.lock:
+            if self.enabled:
+                return self.snapshot()
+            session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+            self.session_dir = self.root / session_id
+            self.images_dir = self.session_dir / "images"
+            self.manifest_path = self.session_dir / "manifest.jsonl"
+            try:
+                self.session_dir.mkdir(parents=True, exist_ok=True)
+                if self.save_images:
+                    self.images_dir.mkdir(parents=True, exist_ok=True)
+                (self.session_dir / "README.txt").write_text(
+                    "TP2 autonomous session capture.\n"
+                    "manifest.jsonl contains frame metadata, Roboflow predictions, "
+                    "autonomous estimates, and selected controls.\n",
+                    encoding="utf-8",
+                )
+                self.enabled = True
+                self.started_at = wall_time()
+                self.last_record_at = 0.0
+                self.records = 0
+                self.images = 0
+                self.last_error = None
+            except OSError as exc:
+                self.enabled = False
+                self.last_error = str(exc)
+            return self.snapshot()
+
+    def stop(self) -> dict[str, Any]:
+        with self.lock:
+            self.enabled = False
+            return self.snapshot()
+
+    def set_enabled(self, enabled: bool) -> dict[str, Any]:
+        return self.start() if enabled else self.stop()
+
+    def record(
+        self,
+        *,
+        frame: np.ndarray,
+        frame_seq: int,
+        predictions: list[dict[str, Any]],
+        inference_payload: Any,
+        decision: AutonomousDecision,
+        inference_latency_ms: int,
+        inference_backend: dict[str, Any],
+        control: dict[str, Any],
+    ) -> None:
+        with self.lock:
+            if not self.enabled or self.session_dir is None or self.manifest_path is None:
+                return
+            now = wall_time()
+            if now - self.last_record_at < self.min_interval_sec:
+                return
+            self.last_record_at = now
+
+            image_rel: str | None = None
+            if self.save_images and self.images_dir is not None:
+                image_rel = f"images/frame_{frame_seq:08d}.jpg"
+                image_path = self.session_dir / image_rel
+                try:
+                    ok = cv2.imwrite(
+                        str(image_path),
+                        frame,
+                        [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality],
+                    )
+                    if not ok:
+                        raise RuntimeError("cv2.imwrite returned false")
+                    self.images += 1
+                except Exception as exc:
+                    self.last_error = f"image: {exc}"
+                    image_rel = None
+
+            item = {
+                "ts": round(now, 3),
+                "iso_time": datetime.now().isoformat(timespec="milliseconds"),
+                "frame_seq": frame_seq,
+                "image": image_rel,
+                "predictions": sanitize_predictions(predictions),
+                "raw_prediction_count": len(predictions),
+                "inference_payload": summarize_payload(inference_payload),
+                "inference_latency_ms": inference_latency_ms,
+                "inference_backend": inference_backend,
+                "autonomy": decision.to_status(),
+                "control": control,
+                "roboflow_retrain_note": "candidate-estimates-not-ground-truth",
+            }
+            try:
+                with self.manifest_path.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(item, ensure_ascii=True, separators=(",", ":")) + "\n")
+                self.records += 1
+                self.last_error = None
+            except OSError as exc:
+                self.last_error = f"manifest: {exc}"
+
+    def snapshot(self) -> dict[str, Any]:
+        with self.lock:
+            now = wall_time()
+            return {
+                "enabled": self.enabled,
+                "root": str(self.root),
+                "session_dir": None if self.session_dir is None else str(self.session_dir),
+                "records": self.records,
+                "images": self.images,
+                "age_sec": None if self.started_at is None else rounded(now - self.started_at),
+                "min_interval_sec": self.min_interval_sec,
+                "save_images": self.save_images,
+                "last_error": self.last_error,
+            }
 
 
 class RuntimeState:
@@ -180,17 +341,29 @@ class RuntimeState:
         self.control_updated_at = wall_time()
         self.control_seq = 0
         self.drive_mode = normalize_drive_mode(DEFAULT_DRIVE_MODE)
+        self.autonomous_controller = AutonomousController(AUTONOMOUS_CONFIG)
         self.autonomous_decision = AutonomousDecision(
             active=False,
             steering=NEUTRAL_STEERING,
             throttle=NEUTRAL_THROTTLE,
+            raw_steering=NEUTRAL_STEERING,
+            raw_throttle=NEUTRAL_THROTTLE,
             action="safe-neutral",
+            state="safe",
             reason="not-evaluated",
             target=None,
             candidates=(),
         )
         if self.drive_mode == "autonomous":
             self.control_source = "autonomous"
+
+        self.recorder = SessionRecorder(
+            SESSION_RECORD_DIR,
+            autostart=SESSION_RECORD_AUTOSTART,
+            save_images=SESSION_RECORD_IMAGES,
+            min_interval_sec=SESSION_RECORD_MIN_INTERVAL_SEC,
+            jpeg_quality=SESSION_RECORD_JPEG_QUALITY,
+        )
 
         self.web_stream_clients = 0
         self.web_control_posts = 0
@@ -283,6 +456,9 @@ class RuntimeState:
         seq: int,
         predictions: list[dict[str, Any]],
         latency_ms: int,
+        *,
+        frame: np.ndarray | None = None,
+        inference_payload: Any = None,
     ) -> None:
         with self.lock:
             self.predictions = predictions
@@ -292,17 +468,32 @@ class RuntimeState:
             self.inference_error = None
             self.inference_latency_ms = latency_ms
             self.inference_frames += 1
+            decision = self._evaluate_autonomous_locked()
+            control = self.control_snapshot_locked()
+            backend = dict(self.inference_backend)
+
+        if frame is not None:
+            self.recorder.record(
+                frame=frame,
+                frame_seq=seq,
+                predictions=predictions,
+                inference_payload=inference_payload,
+                decision=decision,
+                inference_latency_ms=latency_ms,
+                inference_backend=backend,
+                control=control,
+            )
 
     def _evaluate_autonomous_locked(self) -> AutonomousDecision:
         now = wall_time()
         frame_shape = None if self.latest_frame is None else self.latest_frame.shape
-        decision = decide_autonomous_control(
+        decision = self.autonomous_controller.decide(
             list(self.predictions),
             frame_shape=frame_shape,
             now=now,
             frame_time=self.latest_frame_at,
             predictions_time=self.predictions_at,
-            config=AUTONOMOUS_CONFIG,
+            prediction_seq=self.predictions_seq,
         )
         self.autonomous_decision = decision
         return decision
@@ -321,6 +512,7 @@ class RuntimeState:
         with self.lock:
             self.drive_mode = normalize_drive_mode(mode)
             if self.drive_mode == "autonomous":
+                self.autonomous_controller.filter.reset(wall_time())
                 self._apply_autonomous_control_locked()
             else:
                 self.control_armed = False
@@ -470,8 +662,15 @@ class RuntimeState:
                         "max_frame_age_sec": AUTONOMOUS_CONFIG.max_frame_age_sec,
                         "min_area_ratio": AUTONOMOUS_CONFIG.min_area_ratio,
                         "near_area_ratio": AUTONOMOUS_CONFIG.near_area_ratio,
+                        "confirm_frames": AUTONOMOUS_CONFIG.confirm_frames,
+                        "safety_confirm_frames": AUTONOMOUS_CONFIG.safety_confirm_frames,
+                        "stop_hold_sec": AUTONOMOUS_CONFIG.stop_hold_sec,
+                        "turn_hold_sec": AUTONOMOUS_CONFIG.turn_hold_sec,
+                        "cooldown_sec": AUTONOMOUS_CONFIG.cooldown_sec,
+                        "dry_run": AUTONOMOUS_CONFIG.dry_run,
                     },
                 },
+                "recording": self.recorder.snapshot(),
                 "car": {
                     "battery": self.battery,
                     "telemetry": self.telemetry,
@@ -702,39 +901,27 @@ def build_stream_frame(state: RuntimeState) -> bytes:
 def build_placeholder(snapshot: dict[str, Any]) -> np.ndarray:
     width, height = 1280, 720
     canvas = np.zeros((height, width, 3), dtype=np.uint8)
-    canvas[:, :] = (12, 14, 15)
+    canvas[:, :] = (16, 12, 8)  # BGR for ~#080c10 — deep navy base
 
-    for x in range(0, width, 80):
-        cv2.line(canvas, (x, 0), (x, height), (22, 26, 28), 1)
-    for y in range(0, height, 80):
-        cv2.line(canvas, (0, y), (width, y), (22, 26, 28), 1)
+    cx, cy = width // 2, height // 2
+    cv2.circle(canvas, (cx, cy - 30), 26, (255, 166, 78), 2, cv2.LINE_AA)
+    cv2.circle(canvas, (cx, cy - 30), 6, (255, 166, 78), -1, cv2.LINE_AA)
 
-    udp = snapshot["udp"]
-    video = snapshot["video"]
-    inf = snapshot["inference"]
-    lines = [
-        "SIN FRAME DE CAMARA",
-        f"escuchando UDP {udp['bind']}",
-        f"cliente {udp['last_client'] or '-'}  ultimo paquete {udp['last_packet_type'] or '-'}",
-        f"paquetes {udp['packets']}  frames {video['frames']}",
-        f"inferencia {inf['status']}  detecciones {inf['detections']}",
-    ]
-    y = 250
-    for idx, line in enumerate(lines):
-        scale = 1.15 if idx == 0 else 0.72
-        color = (238, 244, 240) if idx == 0 else (158, 172, 165)
-        thickness = 2 if idx == 0 else 1
-        cv2.putText(
-            canvas,
-            line,
-            (80, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            scale,
-            color,
-            thickness,
-            cv2.LINE_AA,
-        )
-        y += 54
+    title = "SIN SENAL"
+    meta = f"UDP {snapshot['udp']['bind']}"
+
+    (tw, th), _ = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 0.95, 2)
+    cv2.putText(
+        canvas, title,
+        (cx - tw // 2, cy + 30),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.95, (232, 239, 255), 2, cv2.LINE_AA,
+    )
+    (mw, mh), _ = cv2.getTextSize(meta, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
+    cv2.putText(
+        canvas, meta,
+        (cx - mw // 2, cy + 70),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (140, 152, 180), 1, cv2.LINE_AA,
+    )
     return canvas
 
 
@@ -783,7 +970,13 @@ def inference_loop(state: RuntimeState) -> None:
                     payload = infer_one_image(client, temp_path, config)
                     predictions = extract_predictions(payload)
                     latency = monotonic_ms() - started_ms
-                    state.set_predictions(seq, predictions, latency)
+                    state.set_predictions(
+                        seq,
+                        predictions,
+                        latency,
+                        frame=frame,
+                        inference_payload=payload,
+                    )
                 finally:
                     if temp_path is not None:
                         try:
@@ -837,6 +1030,8 @@ class LiveHandler(BaseHTTPRequestHandler):
             self.send_image(build_stream_frame(self.state))
         elif path == "/video.mjpg":
             self.stream_video()
+        elif path == "/recording.json":
+            self.send_json({"ok": True, "recording": self.state.recorder.snapshot()})
         elif path == "/healthz":
             self.send_json({"ok": True})
         elif path == "/favicon.ico":
@@ -861,6 +1056,25 @@ class LiveHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "missing mode"}, status=400)
                 return
             self.send_json({"ok": True, **self.state.set_drive_mode(str(mode))})
+            return
+        if path in {"/recording", "/session-recording"}:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            raw = self.rfile.read(min(length, 8192)) if length > 0 else b"{}"
+            try:
+                payload = json.loads(raw.decode("utf-8") or "{}")
+            except json.JSONDecodeError:
+                self.send_json({"ok": False, "error": "invalid json"}, status=400)
+                return
+            action = str(payload.get("action", "")).strip().lower()
+            if action in {"start", "on", "enable"}:
+                status = self.state.recorder.start()
+            elif action in {"stop", "off", "disable"}:
+                status = self.state.recorder.stop()
+            elif "enabled" in payload:
+                status = self.state.recorder.set_enabled(bool(payload.get("enabled")))
+            else:
+                status = self.state.recorder.set_enabled(not self.state.recorder.snapshot()["enabled"])
+            self.send_json({"ok": status.get("last_error") is None, "recording": status})
             return
         if path in {"/control/neutral", "/neutral"}:
             self.send_json({"ok": True, "control": self.state.neutral("neutral")})
@@ -1018,27 +1232,27 @@ LIVE_VIEW_HTML = r"""<!doctype html>
   <title>TP2 · Coche 4G</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
       color-scheme: dark;
-      --bg-0: #0a0907;
-      --bg-1: #11100d;
-      --bg-2: #16140f;
-      --line: #2b261c;
-      --line-soft: #1d1a14;
-      --ink: #f4ede0;
-      --ink-2: #c8bfa8;
-      --muted: #7d7460;
-      --amber: #f5b942;
-      --amber-soft: rgba(245,185,66,0.18);
-      --teal: #5cd6c2;
-      --red: #ff6452;
-      --green: #66d28a;
-      --shadow: 0 32px 60px rgba(0,0,0,0.45);
-      --display: "Anton", "Bebas Neue", Impact, sans-serif;
-      --body: "Manrope", -apple-system, BlinkMacSystemFont, sans-serif;
-      --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      --bg-0: #060912;
+      --bg-1: #0b1022;
+      --bg-2: #11172d;
+      --line: #1d2543;
+      --line-soft: #141a32;
+      --ink: #e8efff;
+      --ink-2: #a8b4cc;
+      --muted: #5e6a85;
+      --blue: #4ea6ff;
+      --blue-soft: rgba(78,166,255,0.16);
+      --blue-deep: #1a3a78;
+      --cyan: #7dd3fc;
+      --amber: #fbbf24;
+      --red: #f87171;
+      --shadow: 0 32px 60px rgba(2,6,18,0.55);
+      --body: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     }
 
     * { box-sizing: border-box; }
@@ -1048,14 +1262,16 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       width: 100%;
       height: 100%;
       background:
-        radial-gradient(1100px 600px at 80% -10%, rgba(245,185,66,0.06), transparent 60%),
-        radial-gradient(900px 500px at -10% 110%, rgba(92,214,194,0.04), transparent 60%),
+        radial-gradient(1100px 600px at 82% -10%, rgba(78,166,255,0.10), transparent 60%),
+        radial-gradient(900px 500px at -10% 110%, rgba(125,211,252,0.06), transparent 60%),
         var(--bg-0);
       color: var(--ink);
       font-family: var(--body);
       font-size: 13.5px;
-      font-weight: 500;
-      letter-spacing: 0.005em;
+      font-weight: 400;
+      letter-spacing: 0;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
       overflow: hidden;
     }
 
@@ -1077,28 +1293,41 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       border-bottom: 1px solid var(--line);
     }
 
-    .brand { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .brand .mark {
+      width: 36px; height: 36px;
+      border-radius: 8px;
+      background:
+        linear-gradient(135deg, var(--blue) 0%, var(--blue-deep) 100%);
+      display: grid;
+      place-items: center;
+      box-shadow: 0 6px 18px rgba(78,166,255,0.28), inset 0 1px 0 rgba(255,255,255,0.12);
+      flex-shrink: 0;
+    }
+    .brand .mark svg { width: 18px; height: 18px; color: #ffffff; }
+    .brand-text { display: flex; flex-direction: column; gap: 2px; }
     .brand h1 {
       margin: 0;
-      font-family: var(--display);
-      font-weight: 400;
-      font-size: 38px;
-      line-height: 1;
-      letter-spacing: 0.04em;
+      font-family: var(--body);
+      font-weight: 600;
+      font-size: 19px;
+      line-height: 1.1;
+      letter-spacing: -0.005em;
       color: var(--ink);
     }
-    .brand h1 .accent { color: var(--amber); margin: 0 6px; }
-    .brand h1 .sub {
-      font-size: 0.58em;
-      letter-spacing: 0.18em;
-      color: var(--ink-2);
-    }
+    .brand h1 .accent { color: var(--blue); margin: 0 4px; font-weight: 400; }
+    .brand h1 .sub { color: var(--ink-2); font-weight: 500; }
     .brand .meta {
       font-family: var(--mono);
-      font-size: 11px;
+      font-size: 10.5px;
       color: var(--muted);
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 400;
     }
 
     .pills {
@@ -1115,47 +1344,52 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       padding: 0 13px;
       border: 1px solid var(--line);
       border-radius: 999px;
-      background: rgba(22,20,15,0.65);
+      background: rgba(11,16,34,0.7);
       color: var(--ink-2);
-      font-size: 11px;
-      letter-spacing: 0.1em;
+      font-size: 10.5px;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
-      font-weight: 700;
+      font-weight: 600;
       white-space: nowrap;
     }
-    .pill .label { color: var(--muted); }
-    .pill .val { font-family: var(--mono); font-weight: 700; color: var(--ink); }
+    .pill .label { color: var(--muted); font-weight: 500; }
+    .pill .val {
+      font-family: var(--mono);
+      font-weight: 500;
+      color: var(--ink);
+      letter-spacing: 0;
+    }
     .pill .dot {
       width: 7px; height: 7px; border-radius: 99px;
       background: var(--muted);
-      box-shadow: 0 0 14px currentColor;
+      box-shadow: 0 0 12px currentColor;
     }
-    .pill.ok   { color: var(--green); } .pill.ok   .dot, .pill.ok .val   { color: var(--green); background: var(--green); }
-    .pill.ok   .val { background: transparent; }
-    .pill.warn { color: var(--amber); } .pill.warn .dot { background: var(--amber); color: var(--amber); }
-    .pill.warn .val { color: var(--amber); }
-    .pill.bad  { color: var(--red); }   .pill.bad  .dot { background: var(--red);   color: var(--red);   }
-    .pill.bad  .val { color: var(--red); }
+    .pill.ok   { color: var(--cyan); }  .pill.ok   .dot { background: var(--cyan);  color: var(--cyan);  } .pill.ok   .val { color: var(--cyan); }
+    .pill.warn { color: var(--amber); } .pill.warn .dot { background: var(--amber); color: var(--amber); } .pill.warn .val { color: var(--amber); }
+    .pill.bad  { color: var(--red); }   .pill.bad  .dot { background: var(--red);   color: var(--red);   } .pill.bad  .val { color: var(--red); }
 
     .session {
       display: flex; align-items: center; gap: 22px;
       font-family: var(--mono);
-      letter-spacing: 0.04em;
+      letter-spacing: 0;
     }
-    .session .group { display: flex; flex-direction: column; align-items: flex-end; }
+    .session .group { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
     .session .label {
       color: var(--muted);
       font-size: 9.5px;
-      letter-spacing: 0.22em;
+      letter-spacing: 0.18em;
       text-transform: uppercase;
+      font-family: var(--body);
+      font-weight: 500;
     }
     .session .clock {
-      font-size: 22px;
+      font-size: 20px;
       color: var(--ink);
       font-weight: 500;
       line-height: 1.1;
+      font-variant-numeric: tabular-nums;
     }
-    .session .clock.amber { color: var(--amber); }
+    .session .clock.accent { color: var(--blue); }
 
     /* MAIN GRID -------------------------------------------------------- */
     main {
@@ -1177,7 +1411,8 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       position: relative;
       border: 1px solid var(--line);
       border-radius: 14px;
-      background: #050403;
+      background:
+        radial-gradient(120% 80% at 50% 50%, #0a1226 0%, #050810 100%);
       overflow: hidden;
       box-shadow: var(--shadow);
       min-height: 0;
@@ -1187,39 +1422,115 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       width: 100%; height: 100%;
       object-fit: contain;
       display: block;
+      transition: opacity 200ms ease;
     }
+    .video.no-feed img { opacity: 0; }
     .video::after {
       content: "";
       position: absolute; inset: 14px;
-      border: 1px solid rgba(245,185,66,0.06);
       border-radius: 8px;
       pointer-events: none;
       background:
-        linear-gradient(to right, var(--amber) 0 14px, transparent 14px) top left/14px 1px no-repeat,
-        linear-gradient(to bottom, var(--amber) 0 14px, transparent 14px) top left/1px 14px no-repeat,
-        linear-gradient(to left, var(--amber) 0 14px, transparent 14px) top right/14px 1px no-repeat,
-        linear-gradient(to bottom, var(--amber) 0 14px, transparent 14px) top right/1px 14px no-repeat,
-        linear-gradient(to right, var(--amber) 0 14px, transparent 14px) bottom left/14px 1px no-repeat,
-        linear-gradient(to top, var(--amber) 0 14px, transparent 14px) bottom left/1px 14px no-repeat,
-        linear-gradient(to left, var(--amber) 0 14px, transparent 14px) bottom right/14px 1px no-repeat,
-        linear-gradient(to top, var(--amber) 0 14px, transparent 14px) bottom right/1px 14px no-repeat;
-      opacity: 0.7;
+        linear-gradient(to right, var(--blue) 0 14px, transparent 14px) top left/14px 1px no-repeat,
+        linear-gradient(to bottom, var(--blue) 0 14px, transparent 14px) top left/1px 14px no-repeat,
+        linear-gradient(to left, var(--blue) 0 14px, transparent 14px) top right/14px 1px no-repeat,
+        linear-gradient(to bottom, var(--blue) 0 14px, transparent 14px) top right/1px 14px no-repeat,
+        linear-gradient(to right, var(--blue) 0 14px, transparent 14px) bottom left/14px 1px no-repeat,
+        linear-gradient(to top, var(--blue) 0 14px, transparent 14px) bottom left/1px 14px no-repeat,
+        linear-gradient(to left, var(--blue) 0 14px, transparent 14px) bottom right/14px 1px no-repeat,
+        linear-gradient(to top, var(--blue) 0 14px, transparent 14px) bottom right/1px 14px no-repeat;
+      opacity: 0.55;
+    }
+
+    /* Minimal "no feed" overlay — fits the live window, only visible when needed */
+    .no-feed-overlay {
+      position: absolute; inset: 14px;
+      display: none;
+      place-items: center;
+      pointer-events: none;
+      z-index: 2;
+    }
+    .video.no-feed .no-feed-overlay { display: grid; }
+    .no-feed-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      padding: 20px 28px;
+      max-width: 80%;
+      text-align: center;
+    }
+    .no-feed-card .pulse {
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      border: 1.5px solid var(--blue);
+      position: relative;
+      display: grid;
+      place-items: center;
+    }
+    .no-feed-card .pulse::before,
+    .no-feed-card .pulse::after {
+      content: "";
+      position: absolute;
+      inset: -1.5px;
+      border-radius: 50%;
+      border: 1.5px solid var(--blue);
+      opacity: 0;
+      animation: pulse-ring 2.4s cubic-bezier(0.2,0.6,0.3,1) infinite;
+    }
+    .no-feed-card .pulse::after { animation-delay: 1.2s; }
+    .no-feed-card .pulse .core {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--blue);
+      box-shadow: 0 0 12px var(--blue);
+    }
+    @keyframes pulse-ring {
+      0%   { transform: scale(0.85); opacity: 0.55; }
+      80%  { transform: scale(2.2);  opacity: 0; }
+      100% { transform: scale(2.2);  opacity: 0; }
+    }
+    .no-feed-title {
+      font-family: var(--body);
+      font-weight: 500;
+      font-size: 14px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--ink);
+      margin: 0;
+    }
+    .no-feed-meta {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+      margin: 0;
     }
 
     .rec {
       position: absolute; right: 18px; top: 18px;
       display: flex; align-items: center; gap: 8px;
       padding: 6px 10px;
-      background: rgba(8,7,5,0.82);
-      border: 1px solid rgba(255,100,82,0.4);
+      background: rgba(11,16,34,0.75);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(78,166,255,0.28);
       border-radius: 4px;
       font-family: var(--mono);
-      font-size: 11px;
-      letter-spacing: 0.18em;
-      color: var(--red);
+      font-size: 10.5px;
+      letter-spacing: 0.16em;
+      color: var(--blue);
+      z-index: 3;
     }
     .rec .blink {
-      width: 8px; height: 8px; border-radius: 99px;
+      width: 7px; height: 7px; border-radius: 99px;
+      background: var(--blue);
+      box-shadow: 0 0 12px var(--blue);
+    }
+    .rec.active {
+      border-color: rgba(248,113,113,0.5);
+      color: var(--red);
+    }
+    .rec.active .blink {
       background: var(--red);
       box-shadow: 0 0 14px var(--red);
       animation: blink 1.4s ease-in-out infinite;
@@ -1230,25 +1541,30 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       position: absolute; left: 18px; bottom: 18px;
       display: flex; gap: 8px; flex-wrap: wrap;
       pointer-events: none;
+      z-index: 3;
     }
     .hud .chip {
-      background: rgba(8,7,5,0.78);
-      border: 1px solid rgba(245,185,66,0.22);
+      background: rgba(11,16,34,0.78);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(78,166,255,0.20);
       border-radius: 4px;
       padding: 6px 10px;
       font-family: var(--mono);
-      font-size: 11.5px;
-      letter-spacing: 0.04em;
+      font-size: 11px;
+      letter-spacing: 0;
       color: var(--ink);
       display: inline-flex;
       align-items: baseline;
       gap: 6px;
+      font-variant-numeric: tabular-nums;
     }
     .hud .chip span {
-      color: var(--amber);
+      color: var(--blue);
       text-transform: uppercase;
-      font-size: 9.5px;
-      letter-spacing: 0.18em;
+      font-size: 9px;
+      letter-spacing: 0.16em;
+      font-family: var(--body);
+      font-weight: 500;
     }
 
     /* DECK: wheel + keys + throttle + actions */
@@ -1261,16 +1577,16 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       align-items: center;
       padding: 16px 18px;
       border: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(34,30,22,0.5), rgba(17,16,13,0.55));
+      background: linear-gradient(180deg, rgba(17,23,45,0.7), rgba(11,16,34,0.7));
       border-radius: 14px;
     }
     .deck .group { display: flex; flex-direction: column; gap: 10px; }
     .deck h3 {
       margin: 0;
-      font-family: var(--mono);
+      font-family: var(--body);
       font-size: 10px;
       color: var(--muted);
-      letter-spacing: 0.22em;
+      letter-spacing: 0.18em;
       text-transform: uppercase;
       font-weight: 500;
     }
@@ -1278,26 +1594,36 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     .wheel-wrap { display: flex; align-items: center; gap: 16px; }
     .wheel {
       width: 104px; height: 104px;
-      filter: drop-shadow(0 6px 14px rgba(245,185,66,0.12));
+      filter: drop-shadow(0 6px 14px rgba(78,166,255,0.18));
     }
     .wheel svg {
       width: 100%; height: 100%;
       transition: transform 90ms linear;
     }
-    .axis-data { font-family: var(--mono); display: flex; flex-direction: column; gap: 2px; }
+    .axis-data { font-family: var(--mono); display: flex; flex-direction: column; gap: 3px; }
     .axis-data .v {
-      font-size: 26px;
-      color: var(--amber);
-      font-weight: 700;
+      font-size: 24px;
+      color: var(--blue);
+      font-weight: 500;
       line-height: 1;
+      font-variant-numeric: tabular-nums;
     }
     .axis-data .l {
       font-size: 10px;
       color: var(--muted);
-      letter-spacing: 0.18em;
+      letter-spacing: 0.16em;
       text-transform: uppercase;
+      font-family: var(--body);
+      font-weight: 500;
     }
-    .axis-data .l.dir { color: var(--ink-2); letter-spacing: 0.06em; text-transform: none; font-size: 12px; }
+    .axis-data .l.dir {
+      color: var(--ink-2);
+      letter-spacing: 0;
+      text-transform: none;
+      font-size: 12px;
+      font-weight: 400;
+      font-family: var(--mono);
+    }
 
     .keys-wrap {
       display: flex; flex-direction: column; align-items: center; gap: 8px;
@@ -1315,7 +1641,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       border-radius: 6px;
       display: grid; place-items: center;
       font-family: var(--mono);
-      font-weight: 700;
+      font-weight: 500;
       font-size: 12px;
       color: var(--ink-2);
       letter-spacing: 0;
@@ -1327,24 +1653,26 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     .key.k-s { grid-column: 2; grid-row: 2; }
     .key.k-d { grid-column: 3; grid-row: 2; }
     .key.active {
-      background: var(--amber);
-      color: #1c1408;
-      border-color: var(--amber);
-      box-shadow: 0 0 18px rgba(245,185,66,0.45);
+      background: var(--blue);
+      color: #061226;
+      border-color: var(--blue);
+      box-shadow: 0 0 18px rgba(78,166,255,0.5);
       transform: translateY(1px);
+      font-weight: 600;
     }
     .key.brake {
-      background: linear-gradient(180deg, #4a1812, #2a0e0a);
+      background: linear-gradient(180deg, #3a1820, #240e14);
       color: var(--red);
-      border-color: rgba(255,100,82,0.45);
-      box-shadow: 0 0 18px rgba(255,100,82,0.35);
+      border-color: rgba(248,113,113,0.45);
+      box-shadow: 0 0 18px rgba(248,113,113,0.32);
     }
     .keys-caption {
-      font-family: var(--mono);
+      font-family: var(--body);
       font-size: 10px;
       color: var(--muted);
       letter-spacing: 0.12em;
       text-transform: uppercase;
+      font-weight: 500;
     }
     .keys-caption .kbd {
       display: inline-block;
@@ -1353,6 +1681,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       border-radius: 3px;
       color: var(--ink-2);
       margin: 0 1px;
+      font-family: var(--mono);
     }
 
     .throttle-wrap { display: flex; align-items: center; gap: 16px; flex-direction: row-reverse; }
@@ -1361,7 +1690,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       border-radius: 8px;
       border: 1px solid var(--line);
       background:
-        linear-gradient(180deg, rgba(255,100,82,0.06), transparent 50%, rgba(102,210,138,0.06));
+        linear-gradient(180deg, rgba(248,113,113,0.06), transparent 50%, rgba(78,166,255,0.06));
       position: relative;
       overflow: hidden;
     }
@@ -1369,24 +1698,24 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       position: absolute; left: -2px; right: -2px; top: 50%;
       height: 1px;
       background: var(--line);
-      box-shadow: 0 0 0 0.5px rgba(245,185,66,0.18);
+      box-shadow: 0 0 0 0.5px rgba(78,166,255,0.20);
     }
     .throttle-meter .tick {
       position: absolute; left: 0; right: 0;
       height: 1px;
-      background: rgba(245,185,66,0.12);
+      background: rgba(78,166,255,0.12);
     }
     .throttle-meter .fill-fwd {
       position: absolute; left: 4px; right: 4px; bottom: 50%;
       height: 0%;
-      background: linear-gradient(0deg, var(--green), #aef0c2);
+      background: linear-gradient(0deg, var(--blue), #a8d0ff);
       border-radius: 4px 4px 0 0;
       transition: height 90ms ease;
     }
     .throttle-meter .fill-rev {
       position: absolute; left: 4px; right: 4px; top: 50%;
       height: 0%;
-      background: linear-gradient(180deg, var(--red), #ffb1a4);
+      background: linear-gradient(180deg, var(--red), #fca5a5);
       border-radius: 0 0 4px 4px;
       transition: height 90ms ease;
     }
@@ -1415,37 +1744,59 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       color: var(--ink-2);
       cursor: pointer;
       font-family: var(--body);
-      font-weight: 700;
+      font-weight: 500;
       font-size: 12px;
-      letter-spacing: 0.12em;
+      letter-spacing: 0.06em;
       text-transform: uppercase;
       transition: all 100ms ease;
     }
     .mode-toggle button:hover { color: var(--ink); }
     .mode-toggle button.active {
-      background: var(--amber);
-      color: #1c1408;
-      box-shadow: 0 0 24px rgba(245,185,66,0.25);
+      background: var(--blue);
+      color: #061226;
+      font-weight: 600;
+      box-shadow: 0 4px 18px rgba(78,166,255,0.28), inset 0 1px 0 rgba(255,255,255,0.16);
     }
 
     button.stop {
       height: 44px; padding: 0 26px;
-      border: 1px solid rgba(255,100,82,0.5);
-      background: linear-gradient(180deg, #4a1812, #2a0e0a);
+      border: 1px solid rgba(248,113,113,0.5);
+      background: linear-gradient(180deg, #3a1820, #240e14);
       color: var(--red);
-      font-family: var(--display);
-      font-size: 18px;
-      letter-spacing: 0.22em;
+      font-family: var(--body);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.18em;
       border-radius: 8px;
       cursor: pointer;
       text-transform: uppercase;
       transition: all 120ms ease;
     }
     button.stop:hover {
-      background: linear-gradient(180deg, #6b2018, #3a1310);
-      box-shadow: 0 0 24px rgba(255,100,82,0.25);
+      background: linear-gradient(180deg, #4a1d28, #2e1218);
+      box-shadow: 0 0 24px rgba(248,113,113,0.28);
     }
     button.stop:active { transform: translateY(1px); }
+
+    button.record {
+      height: 44px; padding: 0 18px;
+      border: 1px solid rgba(78,166,255,0.4);
+      background: rgba(78,166,255,0.08);
+      color: var(--blue);
+      font-family: var(--body);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      border-radius: 8px;
+      cursor: pointer;
+      text-transform: uppercase;
+    }
+    button.record.active {
+      background: rgba(248,113,113,0.16);
+      color: var(--red);
+      border-color: rgba(248,113,113,0.55);
+      box-shadow: 0 0 20px rgba(248,113,113,0.20);
+    }
 
     /* RIGHT COLUMN: telemetry stack ----------------------------------- */
     .side {
@@ -1464,36 +1815,38 @@ LIVE_VIEW_HTML = r"""<!doctype html>
 
     .card {
       border: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(22,20,15,0.7), rgba(17,16,13,0.7));
+      background:
+        linear-gradient(180deg, rgba(17,23,45,0.65), rgba(11,16,34,0.7));
       border-radius: 12px;
       padding: 16px 16px 14px;
     }
     .card h2 {
       margin: 0 0 12px 0;
-      font-family: var(--mono);
-      font-weight: 500;
-      font-size: 10px;
-      color: var(--muted);
-      letter-spacing: 0.28em;
+      font-family: var(--body);
+      font-weight: 600;
+      font-size: 11px;
+      color: var(--ink);
+      letter-spacing: 0.16em;
       text-transform: uppercase;
       display: flex;
       justify-content: space-between;
       align-items: center;
     }
     .card h2 .tag {
-      color: var(--amber);
-      font-family: var(--mono);
-      font-weight: 700;
-      font-size: 10px;
-      letter-spacing: 0.18em;
-    }
-    .card h3 {
-      margin: 14px 0 8px;
+      color: var(--blue);
       font-family: var(--mono);
       font-weight: 500;
       font-size: 10px;
+      letter-spacing: 0.06em;
+      text-transform: none;
+    }
+    .card h3 {
+      margin: 14px 0 8px;
+      font-family: var(--body);
+      font-weight: 500;
+      font-size: 10px;
       color: var(--muted);
-      letter-spacing: 0.24em;
+      letter-spacing: 0.16em;
       text-transform: uppercase;
     }
 
@@ -1502,33 +1855,35 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       grid-template-columns: 1fr auto;
       gap: 10px;
       align-items: baseline;
-      padding: 6px 0;
-      border-bottom: 1px dashed var(--line-soft);
+      padding: 7px 0;
+      border-bottom: 1px solid var(--line-soft);
     }
     .row:last-child { border-bottom: 0; }
     .row .k {
       color: var(--muted);
-      font-weight: 600;
-      letter-spacing: 0.06em;
+      font-weight: 500;
+      letter-spacing: 0.04em;
       text-transform: uppercase;
-      font-size: 11px;
+      font-size: 10.5px;
+      font-family: var(--body);
     }
     .row .v {
       font-family: var(--mono);
       color: var(--ink);
-      font-weight: 500;
+      font-weight: 400;
       text-align: right;
-      font-size: 12.5px;
+      font-size: 12px;
       font-variant-numeric: tabular-nums;
     }
+    .row .v.accent { color: var(--blue); }
+    .row .v.cyan { color: var(--cyan); }
     .row .v.amber { color: var(--amber); }
-    .row .v.green { color: var(--green); }
     .row .v.red { color: var(--red); }
     .row .v.muted { color: var(--muted); }
 
     /* battery */
     .battery .gauge {
-      height: 10px;
+      height: 8px;
       border-radius: 4px;
       overflow: hidden;
       border: 1px solid var(--line);
@@ -1538,7 +1893,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     }
     .battery .gauge .fill {
       height: 100%; width: 0%;
-      background: linear-gradient(90deg, var(--green), #aef0c2);
+      background: linear-gradient(90deg, var(--blue), #a8d0ff);
       transition: width 240ms ease, background 240ms ease;
     }
 
@@ -1554,31 +1909,34 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       height: 38px;
       width: 100%;
     }
-    .spark path { fill: none; stroke: var(--amber); stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
-    .spark .area { fill: rgba(245,185,66,0.13); stroke: none; }
+    .spark path { fill: none; stroke: var(--blue); stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
+    .spark .area { fill: rgba(78,166,255,0.14); stroke: none; }
     .spark .grid { stroke: var(--line-soft); stroke-width: 1; stroke-dasharray: 2 4; }
-    .spark.teal path { stroke: var(--teal); }
-    .spark.teal .area { fill: rgba(92,214,194,0.12); }
+    .spark.cyan path { stroke: var(--cyan); }
+    .spark.cyan .area { fill: rgba(125,211,252,0.13); }
 
     .spark-data { font-family: var(--mono); text-align: right; }
     .spark-data .v {
-      font-size: 20px;
+      font-size: 18px;
       color: var(--ink);
-      font-weight: 700;
+      font-weight: 500;
       line-height: 1;
+      font-variant-numeric: tabular-nums;
     }
     .spark-data .v small {
-      font-size: 0.55em;
+      font-size: 0.6em;
       color: var(--muted);
-      font-weight: 500;
+      font-weight: 400;
       margin-left: 3px;
     }
     .spark-data .l {
       font-size: 10px;
       color: var(--muted);
-      letter-spacing: 0.16em;
+      letter-spacing: 0.12em;
       text-transform: uppercase;
       margin-top: 4px;
+      font-family: var(--body);
+      font-weight: 500;
     }
 
     /* detection list */
@@ -1593,21 +1951,23 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       padding: 8px 10px;
       border: 1px solid var(--line);
       border-radius: 6px;
-      background: rgba(8,7,5,0.4);
+      background: rgba(11,16,34,0.5);
     }
     .det .name {
-      font-weight: 700;
-      letter-spacing: 0.02em;
+      font-weight: 500;
+      letter-spacing: 0;
       font-size: 12.5px;
       color: var(--ink);
+      font-family: var(--body);
     }
     .det .conf {
       display: flex;
       align-items: center;
       gap: 8px;
       font-family: var(--mono);
-      font-size: 12px;
-      color: var(--ink);
+      font-size: 11.5px;
+      color: var(--ink-2);
+      font-variant-numeric: tabular-nums;
     }
     .det .conf .meter {
       width: 56px; height: 4px;
@@ -1617,7 +1977,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     }
     .det .conf .meter .fill {
       height: 100%;
-      background: var(--amber);
+      background: linear-gradient(90deg, var(--blue), var(--cyan));
       width: 0%;
       transition: width 240ms ease;
     }
@@ -1647,7 +2007,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       .deck .group { align-items: center; }
       .deck-actions { flex-direction: column; align-items: stretch; }
       .mode-toggle button { min-width: 0; }
-      .brand h1 { font-size: 30px; }
+      .brand h1 { font-size: 17px; }
     }
   </style>
 </head>
@@ -1655,8 +2015,16 @@ LIVE_VIEW_HTML = r"""<!doctype html>
   <div class="app">
     <header>
       <div class="brand">
-        <h1>TP2<span class="accent">·</span><span class="sub">COCHE 4G</span></h1>
-        <span class="meta">EPC · Roboflow · UDP 20001</span>
+        <div class="mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="9"/>
+            <path d="M12 3v9l5.5 3.2"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>TP2<span class="accent">/</span><span class="sub">Coche 4G</span></h1>
+          <span class="meta">EPC · Roboflow · UDP 20001</span>
+        </div>
       </div>
 
       <div class="pills">
@@ -1664,12 +2032,13 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         <div class="pill warn" id="pill-video"><span class="dot"></span><span class="label">Vídeo</span><span class="val" id="pill-video-val">--</span></div>
         <div class="pill warn" id="pill-ai"><span class="dot"></span><span class="label">IA</span><span class="val" id="pill-ai-val">--</span></div>
         <div class="pill bad" id="pill-control"><span class="dot"></span><span class="label">Control</span><span class="val" id="pill-control-val">OFF</span></div>
+        <div class="pill warn" id="pill-recording"><span class="dot"></span><span class="label">Dataset</span><span class="val" id="pill-recording-val">OFF</span></div>
       </div>
 
       <div class="session">
         <div class="group">
           <span class="label">Sesión</span>
-          <span class="clock amber" id="session-clock">00:00:00</span>
+          <span class="clock accent" id="session-clock">00:00:00</span>
         </div>
         <div class="group">
           <span class="label">Hora</span>
@@ -1680,9 +2049,16 @@ LIVE_VIEW_HTML = r"""<!doctype html>
 
     <main>
       <section class="stage">
-        <div class="video">
+        <div class="video" id="video-shell">
           <img id="video" src="/video.mjpg" alt="Cámara del coche">
-          <div class="rec"><span class="blink"></span><span>EN VIVO</span></div>
+          <div class="no-feed-overlay" aria-hidden="true">
+            <div class="no-feed-card">
+              <div class="pulse"><span class="core"></span></div>
+              <p class="no-feed-title">Sin señal</p>
+              <p class="no-feed-meta" id="no-feed-meta">Esperando cuadro de cámara…</p>
+            </div>
+          </div>
+          <div class="rec" id="rec-badge"><span class="blink"></span><span id="rec-badge-text">EN VIVO</span></div>
           <div class="hud">
             <div class="chip"><span>FPS</span><strong id="hud-fps">--</strong></div>
             <div class="chip"><span>Lat</span><strong id="hud-lat">-- ms</strong></div>
@@ -1697,19 +2073,19 @@ LIVE_VIEW_HTML = r"""<!doctype html>
               <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" id="wheel-svg" aria-hidden="true">
                 <defs>
                   <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stop-color="#3a342a"/>
-                    <stop offset="100%" stop-color="#1a1610"/>
+                    <stop offset="0%" stop-color="#1f2742"/>
+                    <stop offset="100%" stop-color="#0c1124"/>
                   </linearGradient>
                 </defs>
-                <circle cx="50" cy="50" r="45" fill="url(#rim)" stroke="#2b261c" stroke-width="2"/>
-                <circle cx="50" cy="50" r="36" fill="none" stroke="#0e0c08" stroke-width="3"/>
-                <g stroke="#f5b942" stroke-width="3" stroke-linecap="round">
+                <circle cx="50" cy="50" r="45" fill="url(#rim)" stroke="#1d2543" stroke-width="2"/>
+                <circle cx="50" cy="50" r="36" fill="none" stroke="#080c18" stroke-width="3"/>
+                <g stroke="#4ea6ff" stroke-width="3" stroke-linecap="round">
                   <line x1="50" y1="50" x2="50" y2="14"/>
                   <line x1="50" y1="50" x2="20" y2="68"/>
                   <line x1="50" y1="50" x2="80" y2="68"/>
                 </g>
-                <circle cx="50" cy="50" r="9" fill="#0e0c08" stroke="#f5b942" stroke-width="2"/>
-                <circle cx="50" cy="14" r="2.5" fill="#f5b942"/>
+                <circle cx="50" cy="50" r="9" fill="#080c18" stroke="#4ea6ff" stroke-width="2"/>
+                <circle cx="50" cy="14" r="2.5" fill="#4ea6ff"/>
               </svg>
             </div>
             <div class="axis-data">
@@ -1752,6 +2128,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
               <button type="button" id="mode-manual" class="active">Manual</button>
               <button type="button" id="mode-auto">Autónomo</button>
             </div>
+            <button type="button" class="record" id="record">Grabar dataset</button>
             <button type="button" class="stop" id="stop">Stop</button>
           </div>
         </div>
@@ -1776,7 +2153,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
             </div>
           </div>
           <div class="spark-wrap">
-            <svg class="spark teal" id="spark-fps" viewBox="0 0 200 38" preserveAspectRatio="none">
+            <svg class="spark cyan" id="spark-fps" viewBox="0 0 200 38" preserveAspectRatio="none">
               <line class="grid" x1="0" y1="19" x2="200" y2="19"/>
               <path class="area" d=""/>
               <path d=""/>
@@ -1795,11 +2172,19 @@ LIVE_VIEW_HTML = r"""<!doctype html>
 
         <section class="card">
           <h2>Autonomía</h2>
-          <div class="row"><span class="k">Modo</span><span class="v amber" id="auto-mode">--</span></div>
+          <div class="row"><span class="k">Modo</span><span class="v accent" id="auto-mode">--</span></div>
           <div class="row"><span class="k">Acción</span><span class="v" id="auto-action">--</span></div>
           <div class="row"><span class="k">Señal</span><span class="v" id="auto-target">--</span></div>
           <div class="row"><span class="k">Zona / Distancia</span><span class="v muted" id="auto-zone">--</span></div>
           <div class="row"><span class="k">Motivo</span><span class="v muted" id="auto-reason">--</span></div>
+        </section>
+
+        <section class="card">
+          <h2>Dataset <span class="tag" id="rec-tag">OFF</span></h2>
+          <div class="row"><span class="k">Sesión</span><span class="v muted" id="rec-session">--</span></div>
+          <div class="row"><span class="k">Registros</span><span class="v" id="rec-records">0</span></div>
+          <div class="row"><span class="k">Imágenes</span><span class="v" id="rec-images">0</span></div>
+          <div class="row"><span class="k">Error</span><span class="v muted" id="rec-error">--</span></div>
         </section>
 
         <section class="card">
@@ -1816,7 +2201,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
           <h2>Coche</h2>
           <div class="battery">
             <div class="row" style="border:0; padding-bottom: 4px;">
-              <span class="k">Batería</span><span class="v amber" id="bat-val">--</span>
+              <span class="k">Batería</span><span class="v accent" id="bat-val">--</span>
             </div>
             <div class="gauge"><div class="fill" id="bat-fill"></div></div>
           </div>
@@ -1836,17 +2221,20 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       pillVideo: $('pill-video'),  pillVideoVal: $('pill-video-val'),
       pillAi: $('pill-ai'),        pillAiVal: $('pill-ai-val'),
       pillCtrl: $('pill-control'), pillCtrlVal: $('pill-control-val'),
+      pillRec: $('pill-recording'), pillRecVal: $('pill-recording-val'),
       sessionClock: $('session-clock'),
       wallClock: $('wall-clock'),
+      recBadge: $('rec-badge'), recBadgeText: $('rec-badge-text'),
 
       hudFps: $('hud-fps'), hudLat: $('hud-lat'), hudDet: $('hud-det'), hudFrame: $('hud-frame'),
+      videoShell: $('video-shell'), noFeedMeta: $('no-feed-meta'),
 
       wheelSvg: $('wheel-svg'),
       steerVal: $('steer-val'), steerDir: $('steer-dir'),
       thrFwd: $('thr-fwd'), thrRev: $('thr-rev'),
       thrVal: $('thr-val'), thrDir: $('thr-dir'),
 
-      modeManual: $('mode-manual'), modeAuto: $('mode-auto'), stop: $('stop'),
+      modeManual: $('mode-manual'), modeAuto: $('mode-auto'), stop: $('stop'), record: $('record'),
 
       aiTag: $('ai-tag'),
       aiBackend: $('ai-backend'), aiModel: $('ai-model'), aiStatus: $('ai-status'),
@@ -1856,6 +2244,9 @@ LIVE_VIEW_HTML = r"""<!doctype html>
 
       autoMode: $('auto-mode'), autoAction: $('auto-action'),
       autoTarget: $('auto-target'), autoZone: $('auto-zone'), autoReason: $('auto-reason'),
+
+      recTag: $('rec-tag'), recSession: $('rec-session'), recRecords: $('rec-records'),
+      recImages: $('rec-images'), recError: $('rec-error'),
 
       linkBind: $('link-bind'), linkClient: $('link-client'), linkLast: $('link-last'),
       linkRx: $('link-rx'), linkTx: $('link-tx'), linkErr: $('link-err'),
@@ -1985,6 +2376,20 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       }
     }
 
+    async function toggleRecording() {
+      try {
+        const res = await fetch('/recording', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({action: 'toggle'}),
+          cache: 'no-store',
+        });
+        if (!res.ok) throw new Error('http ' + res.status);
+      } catch (_) {
+        setPillState(els.pillRec, 'bad');
+      }
+    }
+
     async function neutral() {
       keys.clear(); paintKeys();
       renderMode('manual');
@@ -2013,6 +2418,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     els.modeManual.addEventListener('click', () => postMode('manual'));
     els.modeAuto.addEventListener('click', () => postMode('autonomous'));
     els.stop.addEventListener('click', neutral);
+    els.record.addEventListener('click', toggleRecording);
 
     /* manual control loop */
     setInterval(() => {
@@ -2071,6 +2477,16 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         const videoOk = vid.has_video && (videoAge === null || videoAge < 1.5);
         setPillState(els.pillVideo, videoOk ? 'ok' : 'warn');
         els.pillVideoVal.textContent = videoOk ? vid.frames : 'SIN';
+
+        /* no-feed overlay */
+        if (els.videoShell) {
+          els.videoShell.classList.toggle('no-feed', !videoOk);
+          if (els.noFeedMeta) {
+            els.noFeedMeta.textContent = vid.has_video
+              ? 'Cuadro retrasado · ' + (videoAge != null ? videoAge.toFixed(1) + ' s' : 'sin datos')
+              : 'Esperando cuadro de cámara · UDP ' + (data.udp.bind || '');
+          }
+        }
 
         if (lastFrames !== null && lastFramesAt !== null) {
           const dt = now - lastFramesAt;
@@ -2164,15 +2580,37 @@ LIVE_VIEW_HTML = r"""<!doctype html>
           'continue': 'avanzar',
           'turn-left': 'girar izquierda', 'turn-right': 'girar derecha',
           'prepare-left': 'preparar izquierda', 'prepare-right': 'preparar derecha',
+          'approach-stop': 'aproximar stop',
+          'stop-hold': 'mantener stop',
+          'confirming': 'confirmando',
+          'ambiguous': 'ambiguo',
+          'cooldown': 'enfriamiento',
+          'speed-30': 'velocidad 30',
+          'speed-90': 'velocidad 90',
           'safe-neutral': 'neutro seguro', 'crawl': 'avance lento',
           'slow': 'lento', 'cruise': 'crucero', 'stop': 'detenido',
           'brake': 'frenar',
         }[autoDecision.action] || (autoDecision.action || '--');
         els.autoAction.textContent = actionEs;
         const tgt = autoDecision.target;
-        els.autoTarget.textContent = tgt ? (tgt.class + ' · ' + (Number(tgt.confidence)*100).toFixed(0) + '%') : '--';
-        els.autoZone.textContent = tgt ? (tgt.zone + ' · ' + tgt.distance) : '--';
-        els.autoReason.textContent = autoDecision.reason || '--';
+        els.autoTarget.textContent = tgt ? ('#' + (tgt.track_id ?? '-') + ' · ' + tgt.class + ' · ' + (Number(tgt.confidence)*100).toFixed(0) + '%') : '--';
+        els.autoZone.textContent = tgt ? (tgt.zone + ' · ' + tgt.distance + ' · ' + (tgt.estimated_distance == null ? '--' : Number(tgt.estimated_distance).toFixed(2))) : '--';
+        els.autoReason.textContent = (autoDecision.state ? autoDecision.state + ' · ' : '') + (autoDecision.reason || '--');
+
+        /* recorder */
+        const rec = data.recording || {};
+        const recOn = !!rec.enabled;
+        setPillState(els.pillRec, recOn ? 'ok' : 'warn');
+        els.pillRecVal.textContent = recOn ? 'ON' : 'OFF';
+        els.record.classList.toggle('active', recOn);
+        els.record.textContent = recOn ? 'Detener dataset' : 'Grabar dataset';
+        els.recBadge.classList.toggle('active', recOn);
+        els.recBadgeText.textContent = recOn ? 'REC DATASET' : 'EN VIVO';
+        els.recTag.textContent = recOn ? 'REC' : 'OFF';
+        els.recSession.textContent = rec.session_dir || '--';
+        els.recRecords.textContent = rec.records ?? 0;
+        els.recImages.textContent = rec.images ?? 0;
+        els.recError.textContent = rec.last_error || '--';
 
         /* link card */
         els.linkBind.textContent = data.udp.bind;
@@ -2198,10 +2636,10 @@ LIVE_VIEW_HTML = r"""<!doctype html>
           const pct = b > 1 ? clampNum(b, 0, 100) : clampNum(b * 100, 0, 100);
           els.batFill.style.width = pct.toFixed(0) + '%';
           els.batFill.style.background = pct < 20
-            ? 'linear-gradient(90deg, #ff6452, #ffb1a4)'
+            ? 'linear-gradient(90deg, #f87171, #fca5a5)'
             : pct < 45
-            ? 'linear-gradient(90deg, #f5b942, #ffd98a)'
-            : 'linear-gradient(90deg, #66d28a, #aef0c2)';
+            ? 'linear-gradient(90deg, #fbbf24, #fde68a)'
+            : 'linear-gradient(90deg, #4ea6ff, #a8d0ff)';
         }
 
         els.ctrlSource.textContent =

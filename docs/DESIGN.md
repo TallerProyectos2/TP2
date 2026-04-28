@@ -50,6 +50,9 @@ This avoids destabilizing the validated EPC+eNodeB+car path.
 - Inference:
   - local endpoint on EPC (or cloud target when configured)
   - detections feed the EPC autonomous policy; Jetson remains an inference endpoint only
+- Dataset capture:
+  - EPC records candidate frames and estimates for later curation
+  - recorded estimates are not treated as ground-truth labels until manually reviewed
 
 ## Design Invariants
 

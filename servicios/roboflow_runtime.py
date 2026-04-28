@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import cv2
+import numpy as np
 
 try:
     from inference_sdk import InferenceHTTPClient
@@ -176,6 +177,28 @@ def infer_one_image(client, image_path: Path, config: InferenceConfig):
 
     if config.target == "model":
         return client.infer(str(image_path), model_id=config.model_id)
+
+    raise ValueError("TP2_INFERENCE_TARGET debe ser workflow o model.")
+
+
+def prepare_sdk_frame(frame: np.ndarray) -> np.ndarray:
+    if frame.dtype != np.uint8:
+        frame = frame.astype(np.uint8)
+    return np.ascontiguousarray(frame)
+
+
+def infer_one_frame(client, frame: np.ndarray, config: InferenceConfig):
+    sdk_frame = prepare_sdk_frame(frame)
+    if config.target == "workflow":
+        return client.run_workflow(
+            workspace_name=config.workspace,
+            workflow_id=config.workflow,
+            images={"image": sdk_frame},
+            use_cache=False,
+        )
+
+    if config.target == "model":
+        return client.infer(sdk_frame, model_id=config.model_id)
 
     raise ValueError("TP2_INFERENCE_TARGET debe ser workflow o model.")
 

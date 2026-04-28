@@ -1,8 +1,55 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
-from coche import NEUTRAL_STEERING, NEUTRAL_THROTTLE, RuntimeState
+import numpy as np
+
+from autonomous_driver import AutonomousDecision
+from coche import (
+    CriticalFrameAnalyzer,
+    NEUTRAL_STEERING,
+    NEUTRAL_THROTTLE,
+    RuntimeState,
+    SessionRecorder,
+)
+
+
+def prediction(label="STOP", confidence=0.9, x=100, y=100, width=40, height=40):
+    return {
+        "class": label,
+        "confidence": confidence,
+        "x": x,
+        "y": y,
+        "width": width,
+        "height": height,
+    }
+
+
+def decision(action="continue", state="cruise", reason="test"):
+    return AutonomousDecision(
+        active=True,
+        steering=NEUTRAL_STEERING,
+        throttle=0.5,
+        raw_steering=NEUTRAL_STEERING,
+        raw_throttle=0.5,
+        action=action,
+        state=state,
+        reason=reason,
+        target=None,
+        candidates=(),
+    )
+
+
+def analyzer():
+    return CriticalFrameAnalyzer(
+        low_confidence_min=0.35,
+        low_confidence_max=0.55,
+        disappear_frames=3,
+        match_iou=0.1,
+        match_center_distance=0.2,
+    )
 
 
 class RuntimeStateModeTest(unittest.TestCase):
@@ -57,6 +104,103 @@ class RuntimeStateModeTest(unittest.TestCase):
         self.assertEqual(control["source"], "stop")
         self.assertEqual(control["steering"], NEUTRAL_STEERING)
         self.assertEqual(control["throttle"], NEUTRAL_THROTTLE)
+
+
+class CriticalFrameAnalyzerTest(unittest.TestCase):
+    def test_low_confidence_and_class_change_are_flagged(self):
+        detector = analyzer()
+        detector.evaluate(
+            frame_seq=1,
+            frame_shape=(240, 320, 3),
+            predictions=[prediction("STOP", confidence=0.8)],
+            decision=decision(),
+            operator_events=[],
+        )
+
+        enriched, flags = detector.evaluate(
+            frame_seq=2,
+            frame_shape=(240, 320, 3),
+            predictions=[prediction("VELOCIDAD-MAX-30", confidence=0.5)],
+            decision=decision(),
+            operator_events=[],
+        )
+
+        self.assertEqual(enriched[0]["track_id"], 1)
+        rules = {flag["rule"] for flag in flags}
+        self.assertIn("low_confidence_band", rules)
+        self.assertIn("track_class_change", rules)
+
+    def test_short_lived_detection_is_flagged_when_it_disappears(self):
+        detector = analyzer()
+        detector.evaluate(
+            frame_seq=1,
+            frame_shape=(240, 320, 3),
+            predictions=[prediction()],
+            decision=decision(),
+            operator_events=[],
+        )
+
+        _enriched, flags = detector.evaluate(
+            frame_seq=2,
+            frame_shape=(240, 320, 3),
+            predictions=[],
+            decision=decision(),
+            operator_events=[],
+        )
+
+        self.assertIn("short_lived_detection", {flag["rule"] for flag in flags})
+
+    def test_ambiguous_decision_and_operator_override_are_flagged(self):
+        _enriched, flags = analyzer().evaluate(
+            frame_seq=1,
+            frame_shape=(240, 320, 3),
+            predictions=[],
+            decision=decision(action="ambiguous", state="ambiguous", reason="conflict"),
+            operator_events=[{"seq": 1, "type": "manual_override", "reason": "stop"}],
+        )
+
+        rules = {flag["rule"] for flag in flags}
+        self.assertIn("ambiguous_decision", rules)
+        self.assertIn("operator_override", rules)
+
+
+class SessionRecorderTest(unittest.TestCase):
+    def test_recorder_writes_manifest_labels_and_critical_sidecar(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recorder = SessionRecorder(
+                Path(tmp),
+                autostart=False,
+                save_images=True,
+                min_interval_sec=0.0,
+                jpeg_quality=80,
+                save_video=False,
+                video_fps=5.0,
+                save_critical_images=True,
+            )
+            status = recorder.start()
+            self.assertTrue(status["enabled"])
+
+            frame = np.zeros((120, 160, 3), dtype=np.uint8)
+            recorder.record(
+                frame=frame,
+                frame_seq=1,
+                predictions=[prediction(confidence=0.45)],
+                inference_payload={"predictions": []},
+                decision=decision(),
+                inference_latency_ms=12,
+                inference_backend={"api_url": "http://test"},
+                control={"mode": "autonomous"},
+                operator_events=[],
+            )
+
+            session_dir = Path(recorder.snapshot()["session_dir"])
+            self.assertEqual(recorder.snapshot()["records"], 1)
+            self.assertEqual(recorder.snapshot()["critical_records"], 1)
+            self.assertTrue((session_dir / "manifest.jsonl").exists())
+            self.assertTrue((session_dir / "labels.jsonl").exists())
+            self.assertTrue((session_dir / "critical.jsonl").exists())
+            self.assertTrue((session_dir / "images/frame_00000001.jpg").exists())
+            self.assertTrue((session_dir / "critical/frame_00000001.jpg").exists())
 
 
 if __name__ == "__main__":

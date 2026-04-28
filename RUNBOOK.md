@@ -31,7 +31,7 @@ The manual order below remains the operational source for troubleshooting.
 10. Open the live operator view from Tailscale at `http://100.97.19.112:8088/`.
     - Keep manual mode selected for initial safety checks.
     - Switch to autonomous mode only after live frames and fresh inference status are visible.
-    - Enable dataset recording only when disk space and scene setup are intentional for the session.
+    - Normal systemd sessions autostart dataset recording; stop it from the web UI only when disk space or scene setup makes capture undesirable.
 11. If using Jetson offload, first verify Jetson reachability and `tp2-roboflow-inference.service`; then point EPC to `http://100.115.99.8:9001` (or the current reachable Jetson IP) with `TP2_INFERENCE_TARGET=model` and `ROBOFLOW_MODEL_ID=tp2-g4-2026/2`.
 
 ## Shutdown Order
@@ -59,7 +59,9 @@ The manual order below remains the operational source for troubleshooting.
 - `coche.py` accepts direct remote manual control over the web view and falls back to neutral when web commands stop.
 - `coche.py` exposes `POST /mode` for `manual`/`autonomous`; autonomous mode falls back to neutral when frames or inference become stale.
 - Autonomous forward movement defaults to positive throttle `+0.50`; reverse throttle is not emitted by the autonomous controller.
-- `coche.py` exposes `POST /recording` and `GET /recording.json` for session capture; recordings include candidate frames, predictions, autonomous estimates, and selected controls.
+- `coche.py` exposes `POST /recording` and `GET /recording.json` for session capture; recordings include candidate frames, annotated MP4 video, predictions, critical flags, autonomous estimates, and selected controls.
+- Normal `tp2-car-control.service` sessions autostart recording under `/srv/tp2/frames/autonomous` and write `manifest.jsonl`, `labels.jsonl`, `critical.jsonl`, `session.mp4`, and optional critical images.
+- Offline review runs with `python servicios/session_replayer.py <session-dir>` and writes `labels_reviewed.json` without modifying the original manifest.
 - Script receives car payloads (`I`, `B`, `D`).
 - Script sends control packets (`C`) back to car.
 - Car behavior matches command stream.
@@ -69,6 +71,7 @@ The manual order below remains the operational source for troubleshooting.
 - Local inference endpoint reachable when enabled (default `127.0.0.1:9001`).
 - `inferencia.py` runs with a known image and writes annotated output.
 - `coche.py` reports the configured inference backend on `/status.json`.
+- Live `coche.py` inference passes OpenCV NumPy frames to `inference_sdk` directly; it does not create a temporary JPEG per inference request.
 
 ## Jetson Validation (when enabled)
 

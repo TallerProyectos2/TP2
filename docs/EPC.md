@@ -61,13 +61,15 @@ Operational files are stored in repo `servicios/` and validated on EPC under `/h
 - Car web/control runtime:
   - `coche.py` (`172.16.0.1:20001` UDP, `0.0.0.0:8088` web)
   - `autonomous_driver.py` deterministic autonomous controller used by `coche.py`
-  - optional session recorder under `TP2_SESSION_RECORD_DIR` for dataset candidates
+  - session recorder under `TP2_SESSION_RECORD_DIR` for dataset candidates, annotated MP4, critical flags, and offline relabeling inputs
+  - `session_replayer.py` offline review server for frame replay and label correction
   - manual web control is gated by drive mode; stale manual posts cannot switch an active autonomous session back to manual
   - autonomous forward commands are clamped to non-negative throttle and default to `+0.50`
 - Inference files:
   - `start_local_inference_server.py` (optional EPC local endpoint, default `127.0.0.1:9001`)
   - `inferencia.py` (CLI execution and annotated output)
   - `roboflow_runtime.py` (shared Roboflow client/helpers for CLI and live car control)
+  - live `coche.py` inference uses OpenCV NumPy frames through `inference_sdk`, avoiding temporary JPEG files on disk
   - current remote inference profile for `coche.py`: `/home/tp2/.config/tp2/coche-jetson.env` on EPC
   - current Jetson Roboflow target: direct model inference with `ROBOFLOW_MODEL_ID=tp2-g4-2026/2`
 - Conda runtime:
@@ -93,6 +95,7 @@ Operational files are stored in repo `servicios/` and validated on EPC under `/h
 
 - `/srv/tp2/frames`
   - default base for autonomous dataset captures: `/srv/tp2/frames/autonomous`
+  - session outputs include `manifest.jsonl`, `labels.jsonl`, `critical.jsonl`, `session.mp4`, raw frames, and reviewed labels from `session_replayer.py`
 - `/srv/tp2/logs`
 - `/srv/tp2/docker`
 - `/srv/tp2/config`

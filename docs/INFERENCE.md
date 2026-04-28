@@ -20,7 +20,8 @@ Inference is currently available on EPC using scripts from `servicios/`.
   - browser control updates EPC state while UDP control remains on EPC
   - can call a Roboflow-compatible endpoint for frame inference while the UDP control loop stays anchored on EPC
   - can use those detections for EPC-local autonomous driving decisions when the operator enables autonomous mode
-  - can record frames, prediction candidates, autonomous estimates, and commands for later dataset curation/retraining
+  - can record frames, annotated MP4 video, prediction candidates, critical flags, autonomous estimates, and commands for later dataset curation/retraining
+  - live inference passes OpenCV NumPy arrays directly to `inference_sdk`, avoiding a temporary JPEG write per request
   - defaults live inference to Jetson at `http://100.115.99.8:9001`
   - default Jetson target is direct model inference with `ROBOFLOW_MODEL_ID=tp2-g4-2026/2`
   - exposes annotated live video, browser control, and inference status on `0.0.0.0:8088` for Tailscale operators
@@ -45,6 +46,10 @@ Primary environment variables used by scripts:
 - `ROBOFLOW_MODEL_ID`
 - `TP2_TEST_IMAGE`
 - `TP2_OUTPUT_IMAGE`
+- `TP2_SESSION_RECORD_DIR`
+- `TP2_SESSION_RECORD_AUTOSTART`
+- `TP2_SESSION_RECORD_VIDEO`
+- `TP2_SESSION_RECORD_CRITICAL_IMAGES`
 
 Machine-local persistent env files:
 
@@ -88,7 +93,8 @@ Requirements:
 - fallback to EPC local inference when Jetson path fails
 - car continues talking only to EPC, never directly to Jetson
 - autonomous driving must treat Jetson output as inference only; steering/throttle policy remains in EPC `coche.py`/`autonomous_driver.py`
-- session recording must not copy Roboflow secrets; only runtime predictions, frame metadata, and candidate images are saved
+- session recording must not copy Roboflow secrets; only runtime predictions, frame metadata, candidate images, annotated video, critical flags, and reviewed labels are saved
+- offline curation uses `servicios/session_replayer.py` and writes `labels_reviewed.json` beside the session
 
 Last validated Jetson configuration:
 

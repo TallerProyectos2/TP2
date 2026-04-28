@@ -30,6 +30,7 @@ Este plan toma como base un runtime unico en `servicios/coche.py` y elimina comp
   - `servicios/roboflow_runtime.py`
   - `servicios/inferencia.py`
   - `servicios/start_local_inference_server.py`
+  - `servicios/session_replayer.py`
   - `servicios/environment-tp2.yml`
   - `servicios/test.jpg`
 
@@ -64,9 +65,10 @@ Este plan toma como base un runtime unico en `servicios/coche.py` y elimina comp
 ## 4.1 Ya cubierto
 
 - Runtime web del coche:
-  - `coche.py` (UDP del coche, MJPEG, inferencia asincrona, control web, modo autonomo y watchdog manual)
-  - `autonomous_driver.py` (control autonomo determinista con normalizacion de detecciones, tracking temporal, estimacion de distancia por area, FSM de maniobras, cooldowns y filtrado de comandos)
-  - grabador de sesion/dataset desde `coche.py` para guardar frames, predicciones, estimaciones autonomas y comandos como candidatos de reentrenamiento Roboflow
+- `coche.py` (UDP del coche, MJPEG, inferencia asincrona, control web, modo autonomo y watchdog manual)
+- `autonomous_driver.py` (control autonomo determinista con normalizacion de detecciones, tracking temporal, estimacion de distancia por area, FSM de maniobras, cooldowns y filtrado de comandos)
+- grabador de sesion/dataset desde `coche.py` para guardar frames, video MP4 anotado, predicciones, flags criticos, estimaciones autonomas y comandos como candidatos de reentrenamiento Roboflow
+- replayer offline `session_replayer.py` para visualizar sesiones, filtrar situaciones criticas y relabelar detecciones sin modificar el manifiesto original
 - Inferencia y validacion:
   - `inferencia.py` (CLI)
   - `start_local_inference_server.py` (endpoint local)
@@ -109,7 +111,8 @@ Eso puede existir en el futuro como capa adicional, pero no es requisito para se
   - throttle autonomo: las acciones de avance usan `+0.50`; las paradas, ambiguedad o fallbacks por datos obsoletos usan neutro.
   - tracking/FSM: confirma señales durante varios frames, mantiene `STOP`, ejecuta giros durante una ventana controlada y aplica cooldown para no repetir la misma señal.
   - fallback: sin frame o inferencia fresca, EPC manda neutro.
-  - dataset: la web puede activar grabacion de frames y `manifest.jsonl` para curar falsos positivos/negativos antes de reentrenar.
+  - dataset: la web y el servicio pueden activar grabacion de sesion; el servicio normal arranca con captura por defecto para generar `manifest.jsonl`, `labels.jsonl`, `critical.jsonl` y `session.mp4` antes de curar/reentrenar.
+  - inferencia live: `coche.py` usa `inference_sdk` con frames NumPy de OpenCV, sin JPEG temporal en disco.
 
 ## Paso 3. Validacion repetible extremo a extremo sobre EPC (pendiente corta)
 

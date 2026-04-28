@@ -7,7 +7,6 @@ import signal
 import socket
 import struct
 import sys
-import tempfile
 import threading
 import time
 from collections import Counter
@@ -36,7 +35,7 @@ from roboflow_runtime import (  # noqa: E402
     create_client,
     draw_predictions_on_image,
     extract_predictions,
-    infer_one_image,
+    infer_one_frame,
     local_endpoint_reachable,
 )
 
@@ -133,6 +132,14 @@ SESSION_RECORD_AUTOSTART = env_bool("TP2_SESSION_RECORD_AUTOSTART", False)
 SESSION_RECORD_IMAGES = env_bool("TP2_SESSION_RECORD_IMAGES", True)
 SESSION_RECORD_MIN_INTERVAL_SEC = env_float("TP2_SESSION_RECORD_MIN_INTERVAL_SEC", 0.45)
 SESSION_RECORD_JPEG_QUALITY = min(95, max(35, env_int("TP2_SESSION_RECORD_JPEG_QUALITY", 82)))
+SESSION_RECORD_VIDEO = env_bool("TP2_SESSION_RECORD_VIDEO", True)
+SESSION_RECORD_VIDEO_FPS = max(1.0, env_float("TP2_SESSION_RECORD_VIDEO_FPS", 10.0))
+SESSION_RECORD_CRITICAL_IMAGES = env_bool("TP2_SESSION_RECORD_CRITICAL_IMAGES", True)
+SESSION_RECORD_LOW_CONF_MIN = env_float("TP2_SESSION_RECORD_LOW_CONF_MIN", 0.35)
+SESSION_RECORD_LOW_CONF_MAX = env_float("TP2_SESSION_RECORD_LOW_CONF_MAX", 0.55)
+SESSION_RECORD_DISAPPEAR_FRAMES = max(1, env_int("TP2_SESSION_RECORD_DISAPPEAR_FRAMES", 3))
+SESSION_RECORD_TRACK_IOU = env_float("TP2_SESSION_RECORD_TRACK_IOU", 0.10)
+SESSION_RECORD_TRACK_CENTER_DISTANCE = env_float("TP2_SESSION_RECORD_TRACK_CENTER_DISTANCE", 0.18)
 
 EXIT_EVENT = threading.Event()
 
@@ -164,6 +171,173 @@ class FrameContext:
     inference_latency_ms: int | None
 
 
+@dataclass
+class RecorderTrack:
+    track_id: int
+    label: str
+    first_seq: int
+    last_seq: int
+    hits: int
+    last_prediction: dict[str, Any]
+    disappeared_reported: bool = False
+
+
+class CriticalFrameAnalyzer:
+    def __init__(
+        self,
+        *,
+        low_confidence_min: float,
+        low_confidence_max: float,
+        disappear_frames: int,
+        match_iou: float,
+        match_center_distance: float,
+    ) -> None:
+        self.low_confidence_min = low_confidence_min
+        self.low_confidence_max = low_confidence_max
+        self.disappear_frames = max(1, disappear_frames)
+        self.match_iou = max(0.0, match_iou)
+        self.match_center_distance = max(0.0, match_center_distance)
+        self.next_track_id = 1
+        self.tracks: dict[int, RecorderTrack] = {}
+
+    def evaluate(
+        self,
+        *,
+        frame_seq: int,
+        frame_shape: tuple[int, ...],
+        predictions: list[dict[str, Any]],
+        decision: AutonomousDecision,
+        operator_events: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        flags: list[dict[str, Any]] = []
+        enriched: list[dict[str, Any]] = []
+        matched: set[int] = set()
+
+        for index, prediction in enumerate(predictions):
+            item = dict(prediction)
+            label = prediction_label(item)
+            confidence = prediction_confidence(item)
+            track = self._best_match(item, frame_shape, matched)
+
+            if track is None:
+                track_id = self.next_track_id
+                self.next_track_id += 1
+                track = RecorderTrack(
+                    track_id=track_id,
+                    label=label,
+                    first_seq=frame_seq,
+                    last_seq=frame_seq,
+                    hits=1,
+                    last_prediction=dict(item),
+                )
+                self.tracks[track_id] = track
+            else:
+                if label and track.label and label != track.label and frame_seq - track.last_seq <= 1:
+                    flags.append(
+                        {
+                            "rule": "track_class_change",
+                            "track_id": track.track_id,
+                            "prediction_index": index,
+                            "previous_class": track.label,
+                            "current_class": label,
+                            "severity": "high",
+                        }
+                    )
+                track.label = label or track.label
+                track.last_seq = frame_seq
+                track.hits += 1
+                track.last_prediction = dict(item)
+                track.disappeared_reported = False
+
+            matched.add(track.track_id)
+            item["track_id"] = track.track_id
+            item["track_hits"] = track.hits
+            if confidence is not None and self.low_confidence_min <= confidence <= self.low_confidence_max:
+                flags.append(
+                    {
+                        "rule": "low_confidence_band",
+                        "track_id": track.track_id,
+                        "prediction_index": index,
+                        "class": label,
+                        "confidence": round(confidence, 4),
+                        "range": [self.low_confidence_min, self.low_confidence_max],
+                        "severity": "medium",
+                    }
+                )
+            enriched.append(item)
+
+        for track_id, track in list(self.tracks.items()):
+            if track_id in matched:
+                continue
+            missing_frames = frame_seq - track.last_seq
+            if (
+                missing_frames == 1
+                and track.hits < self.disappear_frames
+                and not track.disappeared_reported
+            ):
+                flags.append(
+                    {
+                        "rule": "short_lived_detection",
+                        "track_id": track.track_id,
+                        "class": track.label,
+                        "hits": track.hits,
+                        "first_seq": track.first_seq,
+                        "last_seq": track.last_seq,
+                        "severity": "medium",
+                    }
+                )
+                track.disappeared_reported = True
+            if missing_frames > max(self.disappear_frames, 6):
+                self.tracks.pop(track_id, None)
+
+        decision_status = decision.to_status()
+        if decision.action == "ambiguous" or decision.state == "ambiguous":
+            flags.append(
+                {
+                    "rule": "ambiguous_decision",
+                    "action": decision.action,
+                    "state": decision.state,
+                    "reason": decision.reason,
+                    "severity": "high",
+                }
+            )
+
+        for event in operator_events:
+            if event.get("type") in {"manual_override", "manual_override_attempt"}:
+                flags.append(
+                    {
+                        "rule": "operator_override",
+                        "event": event,
+                        "severity": "high",
+                    }
+                )
+
+        return enriched, dedupe_flags(flags, decision_status)
+
+    def _best_match(
+        self,
+        prediction: dict[str, Any],
+        frame_shape: tuple[int, ...],
+        matched: set[int],
+    ) -> RecorderTrack | None:
+        best: tuple[float, RecorderTrack] | None = None
+        for track in self.tracks.values():
+            if track.track_id in matched:
+                continue
+            overlap = prediction_iou(track.last_prediction, prediction)
+            center_distance = prediction_center_distance(
+                track.last_prediction,
+                prediction,
+                frame_shape,
+            )
+            if overlap < self.match_iou and center_distance > self.match_center_distance:
+                continue
+            score = overlap + max(0.0, 1.0 - center_distance)
+            if best is None or score > best[0]:
+                best = (score, track)
+        return None if best is None else best[1]
+
+
 class SessionRecorder:
     def __init__(
         self,
@@ -173,21 +347,36 @@ class SessionRecorder:
         save_images: bool,
         min_interval_sec: float,
         jpeg_quality: int,
+        save_video: bool,
+        video_fps: float,
+        save_critical_images: bool,
     ) -> None:
         self.root = root
         self.save_images = save_images
         self.min_interval_sec = max(0.0, min_interval_sec)
         self.jpeg_quality = jpeg_quality
+        self.save_video = save_video
+        self.video_fps = max(1.0, video_fps)
+        self.save_critical_images = save_critical_images
         self.lock = threading.RLock()
         self.enabled = False
         self.session_dir: Path | None = None
         self.images_dir: Path | None = None
+        self.critical_dir: Path | None = None
         self.manifest_path: Path | None = None
+        self.labels_path: Path | None = None
+        self.critical_path: Path | None = None
+        self.video_path: Path | None = None
+        self.video_writer: cv2.VideoWriter | None = None
+        self.video_size: tuple[int, int] | None = None
         self.started_at: float | None = None
         self.last_record_at = 0.0
         self.records = 0
         self.images = 0
+        self.critical_records = 0
+        self.video_frames = 0
         self.last_error: str | None = None
+        self.critical_analyzer = self._new_critical_analyzer()
         if autostart:
             self.start()
 
@@ -195,18 +384,55 @@ class SessionRecorder:
         with self.lock:
             if self.enabled:
                 return self.snapshot()
+            self._release_video_writer()
+            self.critical_analyzer = self._new_critical_analyzer()
             session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
             self.session_dir = self.root / session_id
             self.images_dir = self.session_dir / "images"
+            self.critical_dir = self.session_dir / "critical"
             self.manifest_path = self.session_dir / "manifest.jsonl"
+            self.labels_path = self.session_dir / "labels.jsonl"
+            self.critical_path = self.session_dir / "critical.jsonl"
+            self.video_path = self.session_dir / "session.mp4"
+            self.video_size = None
             try:
                 self.session_dir.mkdir(parents=True, exist_ok=True)
                 if self.save_images:
                     self.images_dir.mkdir(parents=True, exist_ok=True)
+                if self.save_critical_images:
+                    self.critical_dir.mkdir(parents=True, exist_ok=True)
+                session_meta = {
+                    "schema_version": 2,
+                    "session_id": session_id,
+                    "started_at": datetime.now().isoformat(timespec="milliseconds"),
+                    "recording": {
+                        "images": self.save_images,
+                        "video": self.save_video,
+                        "video_fps": self.video_fps,
+                        "critical_images": self.save_critical_images,
+                        "min_interval_sec": self.min_interval_sec,
+                    },
+                    "critical_rules": {
+                        "low_confidence": [
+                            SESSION_RECORD_LOW_CONF_MIN,
+                            SESSION_RECORD_LOW_CONF_MAX,
+                        ],
+                        "short_lived_detection_frames": SESSION_RECORD_DISAPPEAR_FRAMES,
+                        "track_class_change": True,
+                        "ambiguous_decision": True,
+                        "operator_override": True,
+                    },
+                }
+                (self.session_dir / "session.json").write_text(
+                    json.dumps(session_meta, indent=2, ensure_ascii=True) + "\n",
+                    encoding="utf-8",
+                )
                 (self.session_dir / "README.txt").write_text(
                     "TP2 autonomous session capture.\n"
-                    "manifest.jsonl contains frame metadata, Roboflow predictions, "
-                    "autonomous estimates, and selected controls.\n",
+                    "manifest.jsonl maps frame_seq to raw image, annotated video frame, "
+                    "Roboflow predictions, critical flags, autonomous decision, and control.\n"
+                    "labels.jsonl contains model-estimated labels for offline review; "
+                    "labels_reviewed.json is written by session_replayer.py.\n",
                     encoding="utf-8",
                 )
                 self.enabled = True
@@ -214,6 +440,8 @@ class SessionRecorder:
                 self.last_record_at = 0.0
                 self.records = 0
                 self.images = 0
+                self.critical_records = 0
+                self.video_frames = 0
                 self.last_error = None
             except OSError as exc:
                 self.enabled = False
@@ -223,7 +451,12 @@ class SessionRecorder:
     def stop(self) -> dict[str, Any]:
         with self.lock:
             self.enabled = False
+            self._release_video_writer()
             return self.snapshot()
+
+    def close(self) -> None:
+        with self.lock:
+            self._release_video_writer()
 
     def set_enabled(self, enabled: bool) -> dict[str, Any]:
         return self.start() if enabled else self.stop()
@@ -236,9 +469,10 @@ class SessionRecorder:
         predictions: list[dict[str, Any]],
         inference_payload: Any,
         decision: AutonomousDecision,
-        inference_latency_ms: int,
+        inference_latency_ms: int | None,
         inference_backend: dict[str, Any],
         control: dict[str, Any],
+        operator_events: list[dict[str, Any]],
     ) -> None:
         with self.lock:
             if not self.enabled or self.session_dir is None or self.manifest_path is None:
@@ -247,6 +481,15 @@ class SessionRecorder:
             if now - self.last_record_at < self.min_interval_sec:
                 return
             self.last_record_at = now
+
+            enriched_predictions, critical_flags = self.critical_analyzer.evaluate(
+                frame_seq=frame_seq,
+                frame_shape=frame.shape,
+                predictions=predictions,
+                decision=decision,
+                operator_events=operator_events,
+            )
+            labels = build_label_candidates(enriched_predictions, frame.shape)
 
             image_rel: str | None = None
             if self.save_images and self.images_dir is not None:
@@ -265,23 +508,78 @@ class SessionRecorder:
                     self.last_error = f"image: {exc}"
                     image_rel = None
 
+            annotated = draw_recording_overlay(
+                frame,
+                enriched_predictions,
+                decision=decision,
+                critical_flags=critical_flags,
+            )
+            video_info = self._write_video_frame(annotated)
+
+            critical_rel: str | None = None
+            if critical_flags:
+                self.critical_records += 1
+                if self.save_critical_images and self.critical_dir is not None:
+                    critical_rel = f"critical/frame_{frame_seq:08d}.jpg"
+                    critical_path = self.session_dir / critical_rel
+                    try:
+                        cv2.imwrite(
+                            str(critical_path),
+                            annotated,
+                            [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality],
+                        )
+                    except Exception as exc:
+                        self.last_error = f"critical-image: {exc}"
+
             item = {
+                "schema_version": 2,
                 "ts": round(now, 3),
                 "iso_time": datetime.now().isoformat(timespec="milliseconds"),
                 "frame_seq": frame_seq,
+                "record_index": self.records,
                 "image": image_rel,
-                "predictions": sanitize_predictions(predictions),
+                "critical_image": critical_rel,
+                "video": video_info,
+                "predictions": sanitize_predictions(enriched_predictions),
+                "labels": labels,
                 "raw_prediction_count": len(predictions),
                 "inference_payload": summarize_payload(inference_payload),
                 "inference_latency_ms": inference_latency_ms,
                 "inference_backend": inference_backend,
                 "autonomy": decision.to_status(),
                 "control": control,
+                "operator_events": operator_events,
+                "critical": {
+                    "is_critical": bool(critical_flags),
+                    "flags": critical_flags,
+                },
                 "roboflow_retrain_note": "candidate-estimates-not-ground-truth",
             }
             try:
-                with self.manifest_path.open("a", encoding="utf-8") as fh:
-                    fh.write(json.dumps(item, ensure_ascii=True, separators=(",", ":")) + "\n")
+                self._append_jsonl(self.manifest_path, item)
+                if self.labels_path is not None:
+                    self._append_jsonl(
+                        self.labels_path,
+                        {
+                            "frame_seq": frame_seq,
+                            "image": image_rel,
+                            "labels": labels,
+                            "source": "model-candidate",
+                            "reviewed": False,
+                        },
+                    )
+                if critical_flags and self.critical_path is not None:
+                    self._append_jsonl(
+                        self.critical_path,
+                        {
+                            "frame_seq": frame_seq,
+                            "image": image_rel,
+                            "critical_image": critical_rel,
+                            "flags": critical_flags,
+                            "autonomy": decision.to_status(),
+                            "operator_events": operator_events,
+                        },
+                    )
                 self.records += 1
                 self.last_error = None
             except OSError as exc:
@@ -296,11 +594,254 @@ class SessionRecorder:
                 "session_dir": None if self.session_dir is None else str(self.session_dir),
                 "records": self.records,
                 "images": self.images,
+                "critical_records": self.critical_records,
+                "video": {
+                    "enabled": self.save_video,
+                    "path": None if self.video_path is None else str(self.video_path),
+                    "frames": self.video_frames,
+                    "fps": self.video_fps,
+                },
                 "age_sec": None if self.started_at is None else rounded(now - self.started_at),
                 "min_interval_sec": self.min_interval_sec,
                 "save_images": self.save_images,
                 "last_error": self.last_error,
             }
+
+    def _new_critical_analyzer(self) -> CriticalFrameAnalyzer:
+        return CriticalFrameAnalyzer(
+            low_confidence_min=SESSION_RECORD_LOW_CONF_MIN,
+            low_confidence_max=SESSION_RECORD_LOW_CONF_MAX,
+            disappear_frames=SESSION_RECORD_DISAPPEAR_FRAMES,
+            match_iou=SESSION_RECORD_TRACK_IOU,
+            match_center_distance=SESSION_RECORD_TRACK_CENTER_DISTANCE,
+        )
+
+    def _write_video_frame(self, frame: np.ndarray) -> dict[str, Any] | None:
+        if not self.save_video or self.video_path is None:
+            return None
+        try:
+            h, w = frame.shape[:2]
+            if self.video_writer is None:
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                self.video_size = (w, h)
+                self.video_writer = cv2.VideoWriter(
+                    str(self.video_path),
+                    fourcc,
+                    self.video_fps,
+                    self.video_size,
+                )
+                if not self.video_writer.isOpened():
+                    self.video_writer = None
+                    raise RuntimeError("cv2.VideoWriter could not open session.mp4")
+            if self.video_size is not None and (w, h) != self.video_size:
+                frame = cv2.resize(frame, self.video_size, interpolation=cv2.INTER_AREA)
+            frame_index = self.video_frames
+            self.video_writer.write(frame)
+            self.video_frames += 1
+            return {
+                "path": "session.mp4",
+                "frame_index": frame_index,
+                "fps": self.video_fps,
+            }
+        except Exception as exc:
+            self.last_error = f"video: {exc}"
+            return None
+
+    def _release_video_writer(self) -> None:
+        if self.video_writer is not None:
+            self.video_writer.release()
+            self.video_writer = None
+
+    @staticmethod
+    def _append_jsonl(path: Path, item: dict[str, Any]) -> None:
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(item, ensure_ascii=True, separators=(",", ":")) + "\n")
+
+
+def prediction_label(prediction: dict[str, Any]) -> str:
+    return str(prediction.get("class") or prediction.get("class_name") or "").strip()
+
+
+def prediction_confidence(prediction: dict[str, Any]) -> float | None:
+    value = prediction.get("confidence")
+    try:
+        return None if value is None else float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def prediction_box(prediction: dict[str, Any]) -> tuple[float, float, float, float] | None:
+    try:
+        x = float(prediction.get("x"))
+        y = float(prediction.get("y"))
+        w = float(prediction.get("width"))
+        h = float(prediction.get("height"))
+    except (TypeError, ValueError):
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    return x - w / 2.0, y - h / 2.0, x + w / 2.0, y + h / 2.0
+
+
+def prediction_iou(a: dict[str, Any], b: dict[str, Any]) -> float:
+    box_a = prediction_box(a)
+    box_b = prediction_box(b)
+    if box_a is None or box_b is None:
+        return 0.0
+    ax1, ay1, ax2, ay2 = box_a
+    bx1, by1, bx2, by2 = box_b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - inter
+    return 0.0 if union <= 0 else inter / union
+
+
+def prediction_center_distance(
+    a: dict[str, Any],
+    b: dict[str, Any],
+    frame_shape: tuple[int, ...],
+) -> float:
+    try:
+        ax = float(a.get("x"))
+        ay = float(a.get("y"))
+        bx = float(b.get("x"))
+        by = float(b.get("y"))
+    except (TypeError, ValueError):
+        return 1.0
+    frame_h = max(1, int(frame_shape[0])) if len(frame_shape) > 0 else 1
+    frame_w = max(1, int(frame_shape[1])) if len(frame_shape) > 1 else 1
+    return float(np.hypot((ax - bx) / frame_w, (ay - by) / frame_h))
+
+
+def dedupe_flags(
+    flags: list[dict[str, Any]],
+    decision_status: dict[str, Any],
+) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for flag in flags:
+        key = json.dumps(
+            {
+                "rule": flag.get("rule"),
+                "track_id": flag.get("track_id"),
+                "prediction_index": flag.get("prediction_index"),
+                "event_seq": (flag.get("event") or {}).get("seq"),
+            },
+            sort_keys=True,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        item = dict(flag)
+        item.setdefault("decision_action", decision_status.get("action"))
+        result.append(item)
+    return result
+
+
+def build_label_candidates(
+    predictions: list[dict[str, Any]],
+    frame_shape: tuple[int, ...],
+) -> list[dict[str, Any]]:
+    frame_h = max(1, int(frame_shape[0])) if len(frame_shape) > 0 else 1
+    frame_w = max(1, int(frame_shape[1])) if len(frame_shape) > 1 else 1
+    labels: list[dict[str, Any]] = []
+    for index, prediction in enumerate(predictions):
+        box = prediction_box(prediction)
+        if box is None:
+            continue
+        x1, y1, x2, y2 = box
+        labels.append(
+            {
+                "index": index,
+                "track_id": prediction.get("track_id"),
+                "class": prediction_label(prediction),
+                "confidence": prediction_confidence(prediction),
+                "bbox_xyxy": [
+                    round(max(0.0, min(frame_w, x1)), 2),
+                    round(max(0.0, min(frame_h, y1)), 2),
+                    round(max(0.0, min(frame_w, x2)), 2),
+                    round(max(0.0, min(frame_h, y2)), 2),
+                ],
+                "bbox_normalized_xyxy": [
+                    round(max(0.0, min(1.0, x1 / frame_w)), 6),
+                    round(max(0.0, min(1.0, y1 / frame_h)), 6),
+                    round(max(0.0, min(1.0, x2 / frame_w)), 6),
+                    round(max(0.0, min(1.0, y2 / frame_h)), 6),
+                ],
+                "status": "candidate",
+            }
+        )
+    return labels
+
+
+def draw_recording_overlay(
+    frame: np.ndarray,
+    predictions: list[dict[str, Any]],
+    *,
+    decision: AutonomousDecision,
+    critical_flags: list[dict[str, Any]],
+) -> np.ndarray:
+    output = draw_predictions_on_image(
+        frame,
+        predictions,
+        min_confidence=0.0,
+    )
+    h, w = output.shape[:2]
+
+    for prediction in predictions:
+        box = prediction_box(prediction)
+        if box is None:
+            continue
+        x1, y1, _x2, _y2 = [int(round(v)) for v in box]
+        track_id = prediction.get("track_id")
+        if track_id is None:
+            continue
+        text = f"#{track_id}"
+        cv2.putText(
+            output,
+            text,
+            (max(0, x1), min(h - 8, max(14, y1 + 16))),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.48,
+            (0, 0, 0),
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            output,
+            text,
+            (max(0, x1), min(h - 8, max(14, y1 + 16))),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.48,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
+    banner = f"auto={decision.action} state={decision.state}"
+    if critical_flags:
+        rules = ",".join(str(flag.get("rule", "?")) for flag in critical_flags[:3])
+        banner += f" critical={rules}"
+    overlay = output.copy()
+    cv2.rectangle(overlay, (0, 0), (w, 34), (8, 8, 10), -1)
+    cv2.addWeighted(overlay, 0.70, output, 0.30, 0, output)
+    cv2.putText(
+        output,
+        banner[:120],
+        (10, 23),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.58,
+        (248, 248, 250) if not critical_flags else (98, 190, 255),
+        1,
+        cv2.LINE_AA,
+    )
+    return output
 
 
 class RuntimeState:
@@ -340,6 +881,8 @@ class RuntimeState:
         self.throttle = NEUTRAL_THROTTLE
         self.control_updated_at = wall_time()
         self.control_seq = 0
+        self.operator_event_seq = 0
+        self.pending_operator_events: list[dict[str, Any]] = []
         self.drive_mode = normalize_drive_mode(DEFAULT_DRIVE_MODE)
         self.autonomous_controller = AutonomousController(AUTONOMOUS_CONFIG)
         self.autonomous_decision = AutonomousDecision(
@@ -363,6 +906,9 @@ class RuntimeState:
             save_images=SESSION_RECORD_IMAGES,
             min_interval_sec=SESSION_RECORD_MIN_INTERVAL_SEC,
             jpeg_quality=SESSION_RECORD_JPEG_QUALITY,
+            save_video=SESSION_RECORD_VIDEO,
+            video_fps=SESSION_RECORD_VIDEO_FPS,
+            save_critical_images=SESSION_RECORD_CRITICAL_IMAGES,
         )
 
         self.web_stream_clients = 0
@@ -471,6 +1017,7 @@ class RuntimeState:
             decision = self._evaluate_autonomous_locked()
             control = self.control_snapshot_locked()
             backend = dict(self.inference_backend)
+            operator_events = self._consume_operator_events_locked()
 
         if frame is not None:
             self.recorder.record(
@@ -482,7 +1029,31 @@ class RuntimeState:
                 inference_latency_ms=latency_ms,
                 inference_backend=backend,
                 control=control,
+                operator_events=operator_events,
             )
+
+    def record_frame_without_inference(self, seq: int, frame: np.ndarray) -> None:
+        with self.lock:
+            if ENABLE_INFERENCE and self.inference_status not in {"disabled", "offline", "error"}:
+                return
+            decision = self._evaluate_autonomous_locked()
+            control = self.control_snapshot_locked()
+            backend = dict(self.inference_backend)
+            status = self.inference_status
+            error = self.inference_error
+            operator_events = self._consume_operator_events_locked()
+
+        self.recorder.record(
+            frame=frame,
+            frame_seq=seq,
+            predictions=[],
+            inference_payload={"status": status, "error": error},
+            decision=decision,
+            inference_latency_ms=None,
+            inference_backend=backend,
+            control=control,
+            operator_events=operator_events,
+        )
 
     def _evaluate_autonomous_locked(self) -> AutonomousDecision:
         now = wall_time()
@@ -510,7 +1081,15 @@ class RuntimeState:
 
     def set_drive_mode(self, mode: str) -> dict[str, Any]:
         with self.lock:
-            self.drive_mode = normalize_drive_mode(mode)
+            previous_mode = self.drive_mode
+            requested_mode = normalize_drive_mode(mode)
+            if previous_mode == "autonomous" and requested_mode == "manual":
+                self._note_operator_event_locked(
+                    "manual_override",
+                    reason="operator-selected-manual",
+                    details={"requested_mode": mode},
+                )
+            self.drive_mode = requested_mode
             if self.drive_mode == "autonomous":
                 self.autonomous_controller.filter.reset()
                 self._apply_autonomous_control_locked()
@@ -549,6 +1128,22 @@ class RuntimeState:
         with self.lock:
             self.web_control_posts += 1
             if self.drive_mode != "manual":
+                steering_value = round(clamp(steering, -1.0, 1.0, NEUTRAL_STEERING), 3)
+                throttle_value = round(clamp(throttle, -1.0, 1.0, NEUTRAL_THROTTLE), 3)
+                is_neutral = (
+                    abs(steering_value - NEUTRAL_STEERING) <= 0.01
+                    and abs(throttle_value - NEUTRAL_THROTTLE) <= 0.01
+                )
+                if self.drive_mode == "autonomous" and not is_neutral:
+                    self._note_operator_event_locked(
+                        "manual_override_attempt",
+                        reason="manual-control-post-during-autonomous",
+                        details={
+                            "source": source,
+                            "requested_steering": steering_value,
+                            "requested_throttle": throttle_value,
+                        },
+                    )
                 if self.drive_mode == "autonomous":
                     self._apply_autonomous_control_locked()
                 return self.control_snapshot_locked()
@@ -591,6 +1186,12 @@ class RuntimeState:
 
     def neutral(self, source: str = "neutral") -> dict[str, Any]:
         with self.lock:
+            if self.drive_mode == "autonomous":
+                self._note_operator_event_locked(
+                    "manual_override",
+                    reason=f"operator-{source}",
+                    details={"source": source},
+                )
             self.drive_mode = "manual"
             self.control_armed = False
             self.control_source = source
@@ -610,6 +1211,36 @@ class RuntimeState:
             "updated_age_sec": max(0.0, wall_time() - self.control_updated_at),
             "seq": self.control_seq,
         }
+
+    def _note_operator_event_locked(
+        self,
+        event_type: str,
+        *,
+        reason: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        self.operator_event_seq += 1
+        self.pending_operator_events.append(
+            {
+                "seq": self.operator_event_seq,
+                "type": event_type,
+                "reason": reason,
+                "ts": round(wall_time(), 3),
+                "mode": self.drive_mode,
+                "control": {
+                    "source": self.control_source,
+                    "steering": self.steering,
+                    "throttle": self.throttle,
+                },
+                "details": details or {},
+            }
+        )
+        self.pending_operator_events = self.pending_operator_events[-16:]
+
+    def _consume_operator_events_locked(self) -> list[dict[str, Any]]:
+        events = list(self.pending_operator_events)
+        self.pending_operator_events.clear()
+        return events
 
     def get_control(self) -> tuple[float, float, dict[str, Any]]:
         with self.lock:
@@ -752,9 +1383,11 @@ def sanitize_predictions(predictions: list[dict[str, Any]]) -> list[dict[str, An
     clean: list[dict[str, Any]] = []
     for prediction in predictions[:20]:
         item: dict[str, Any] = {}
-        for key in ("class", "confidence", "x", "y", "width", "height"):
+        for key in ("class", "class_name", "confidence", "x", "y", "width", "height", "track_id", "track_hits"):
             value = prediction.get(key)
-            if isinstance(value, (int, float)):
+            if key in {"track_id", "track_hits"} and isinstance(value, (int, float)):
+                item[key] = int(value)
+            elif isinstance(value, (int, float)):
                 item[key] = round(float(value), 4)
             elif value is not None:
                 item[key] = str(value)
@@ -932,7 +1565,7 @@ def build_stream_frame(state: RuntimeState) -> bytes:
 def build_placeholder(snapshot: dict[str, Any]) -> np.ndarray:
     width, height = 1280, 720
     canvas = np.zeros((height, width, 3), dtype=np.uint8)
-    canvas[:, :] = (16, 12, 8)  # BGR for ~#080c10 — deep navy base
+    canvas[:, :] = (10, 10, 12)  # BGR for ~#0c0a0a — neutral near-black
 
     cx, cy = width // 2, height // 2
     cv2.circle(canvas, (cx, cy - 30), 26, (255, 166, 78), 2, cv2.LINE_AA)
@@ -941,17 +1574,17 @@ def build_placeholder(snapshot: dict[str, Any]) -> np.ndarray:
     title = "SIN SENAL"
     meta = f"UDP {snapshot['udp']['bind']}"
 
-    (tw, th), _ = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 0.95, 2)
+    (tw, _th), _ = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 0.95, 2)
     cv2.putText(
         canvas, title,
         (cx - tw // 2, cy + 30),
-        cv2.FONT_HERSHEY_SIMPLEX, 0.95, (232, 239, 255), 2, cv2.LINE_AA,
+        cv2.FONT_HERSHEY_SIMPLEX, 0.95, (236, 236, 239), 2, cv2.LINE_AA,
     )
-    (mw, mh), _ = cv2.getTextSize(meta, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
+    (mw, _mh), _ = cv2.getTextSize(meta, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
     cv2.putText(
         canvas, meta,
         (cx - mw // 2, cy + 70),
-        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (140, 152, 180), 1, cv2.LINE_AA,
+        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (164, 164, 171), 1, cv2.LINE_AA,
     )
     return canvas
 
@@ -991,14 +1624,9 @@ def inference_loop(state: RuntimeState) -> None:
                 last_submit = time.monotonic()
                 state.set_inference_status("running")
 
-                temp_path: Path | None = None
                 started_ms = monotonic_ms()
                 try:
-                    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-                        temp_path = Path(tmp.name)
-                    if not cv2.imwrite(str(temp_path), frame):
-                        raise RuntimeError("could not write temp inference frame")
-                    payload = infer_one_image(client, temp_path, config)
+                    payload = infer_one_frame(client, frame, config)
                     predictions = extract_predictions(payload)
                     latency = monotonic_ms() - started_ms
                     state.set_predictions(
@@ -1008,12 +1636,10 @@ def inference_loop(state: RuntimeState) -> None:
                         frame=frame,
                         inference_payload=payload,
                     )
-                finally:
-                    if temp_path is not None:
-                        try:
-                            temp_path.unlink(missing_ok=True)
-                        except OSError:
-                            pass
+                except Exception as exc:
+                    state.set_inference_status("error", str(exc))
+                    EXIT_EVENT.wait(INFERENCE_RETRY_SEC)
+                    break
 
         except Exception as exc:
             state.set_inference_status("error", str(exc))
@@ -1230,7 +1856,8 @@ def handle_udp_packet(
         if frame is None:
             state.note_frame_decode_error("could not decode image packet")
         else:
-            state.update_frame(frame)
+            seq = state.update_frame(frame)
+            state.record_frame_without_inference(seq, frame)
     elif packet_type == "B":
         state.update_battery(payload)
     elif packet_type == "D":
@@ -1272,21 +1899,21 @@ LIVE_VIEW_HTML = r"""<!doctype html>
   <style>
     :root {
       color-scheme: dark;
-      --bg-0: #060912;
-      --bg-1: #0b1022;
-      --bg-2: #11172d;
-      --line: #1d2543;
-      --line-soft: #141a32;
-      --ink: #e8efff;
-      --ink-2: #a8b4cc;
-      --muted: #5e6a85;
+      --bg-0: #0a0a0c;
+      --bg-1: #131316;
+      --bg-2: #1a1a1e;
+      --line: #26262b;
+      --line-soft: #1c1c20;
+      --ink: #ececef;
+      --ink-2: #a4a4ab;
+      --muted: #61616a;
       --blue: #4ea6ff;
       --blue-soft: rgba(78,166,255,0.16);
       --blue-deep: #1a3a78;
       --cyan: #7dd3fc;
       --amber: #fbbf24;
       --red: #f87171;
-      --shadow: 0 32px 60px rgba(2,6,18,0.55);
+      --shadow: 0 24px 50px rgba(0,0,0,0.55);
       --body: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     }
@@ -1298,8 +1925,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       width: 100%;
       height: 100%;
       background:
-        radial-gradient(1100px 600px at 82% -10%, rgba(78,166,255,0.10), transparent 60%),
-        radial-gradient(900px 500px at -10% 110%, rgba(125,211,252,0.06), transparent 60%),
+        radial-gradient(1200px 700px at 92% -10%, rgba(78,166,255,0.06), transparent 60%),
         var(--bg-0);
       color: var(--ink);
       font-family: var(--body);
@@ -1380,7 +2006,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       padding: 0 13px;
       border: 1px solid var(--line);
       border-radius: 999px;
-      background: rgba(11,16,34,0.7);
+      background: rgba(26,26,30,0.7);
       color: var(--ink-2);
       font-size: 10.5px;
       letter-spacing: 0.08em;
@@ -1448,7 +2074,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       border: 1px solid var(--line);
       border-radius: 14px;
       background:
-        radial-gradient(120% 80% at 50% 50%, #0a1226 0%, #050810 100%);
+        radial-gradient(120% 80% at 50% 50%, #16161a 0%, #08080a 100%);
       overflow: hidden;
       box-shadow: var(--shadow);
       min-height: 0;
@@ -1475,7 +2101,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         linear-gradient(to top, var(--blue) 0 14px, transparent 14px) bottom left/1px 14px no-repeat,
         linear-gradient(to left, var(--blue) 0 14px, transparent 14px) bottom right/14px 1px no-repeat,
         linear-gradient(to top, var(--blue) 0 14px, transparent 14px) bottom right/1px 14px no-repeat;
-      opacity: 0.55;
+      opacity: 0.22;
     }
 
     /* Minimal "no feed" overlay — fits the live window, only visible when needed */
@@ -1547,7 +2173,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       position: absolute; right: 18px; top: 18px;
       display: flex; align-items: center; gap: 8px;
       padding: 6px 10px;
-      background: rgba(11,16,34,0.75);
+      background: rgba(20,20,24,0.75);
       backdrop-filter: blur(8px);
       border: 1px solid rgba(78,166,255,0.28);
       border-radius: 4px;
@@ -1580,7 +2206,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       z-index: 3;
     }
     .hud .chip {
-      background: rgba(11,16,34,0.78);
+      background: rgba(20,20,24,0.78);
       backdrop-filter: blur(8px);
       border: 1px solid rgba(78,166,255,0.20);
       border-radius: 4px;
@@ -1613,7 +2239,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       align-items: center;
       padding: 16px 18px;
       border: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(17,23,45,0.7), rgba(11,16,34,0.7));
+      background: linear-gradient(180deg, rgba(26,26,30,0.7), rgba(19,19,22,0.75));
       border-radius: 14px;
     }
     .deck .group { display: flex; flex-direction: column; gap: 10px; }
@@ -1627,14 +2253,40 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       font-weight: 500;
     }
 
-    .wheel-wrap { display: flex; align-items: center; gap: 16px; }
-    .wheel {
-      width: 104px; height: 104px;
-      filter: drop-shadow(0 6px 14px rgba(78,166,255,0.18));
+    .steer-wrap { display: flex; align-items: center; gap: 16px; }
+    .steer-meter {
+      width: 130px; height: 32px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(90deg, rgba(78,166,255,0.06), transparent 50%, rgba(78,166,255,0.06));
+      position: relative;
+      overflow: hidden;
     }
-    .wheel svg {
-      width: 100%; height: 100%;
-      transition: transform 90ms linear;
+    .steer-meter .mid {
+      position: absolute; top: -2px; bottom: -2px; left: 50%;
+      width: 1px;
+      background: var(--line);
+      box-shadow: 0 0 0 0.5px rgba(78,166,255,0.20);
+    }
+    .steer-meter .tick {
+      position: absolute; top: 0; bottom: 0;
+      width: 1px;
+      background: rgba(78,166,255,0.12);
+    }
+    .steer-meter .fill-left {
+      position: absolute; top: 4px; bottom: 4px; right: 50%;
+      width: 0%;
+      background: linear-gradient(270deg, var(--blue), #a8d0ff);
+      border-radius: 4px 0 0 4px;
+      transition: width 90ms ease;
+    }
+    .steer-meter .fill-right {
+      position: absolute; top: 4px; bottom: 4px; left: 50%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--blue), #a8d0ff);
+      border-radius: 0 4px 4px 0;
+      transition: width 90ms ease;
     }
     .axis-data { font-family: var(--mono); display: flex; flex-direction: column; gap: 3px; }
     .axis-data .v {
@@ -1852,7 +2504,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     .card {
       border: 1px solid var(--line);
       background:
-        linear-gradient(180deg, rgba(17,23,45,0.65), rgba(11,16,34,0.7));
+        linear-gradient(180deg, rgba(26,26,30,0.65), rgba(19,19,22,0.7));
       border-radius: 12px;
       padding: 16px 16px 14px;
     }
@@ -1917,22 +2569,6 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     .row .v.red { color: var(--red); }
     .row .v.muted { color: var(--muted); }
 
-    /* battery */
-    .battery .gauge {
-      height: 8px;
-      border-radius: 4px;
-      overflow: hidden;
-      border: 1px solid var(--line);
-      background: var(--bg-2);
-      position: relative;
-      margin-top: 4px;
-    }
-    .battery .gauge .fill {
-      height: 100%; width: 0%;
-      background: linear-gradient(90deg, var(--blue), #a8d0ff);
-      transition: width 240ms ease, background 240ms ease;
-    }
-
     /* sparkline */
     .spark-wrap {
       display: grid;
@@ -1987,7 +2623,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       padding: 8px 10px;
       border: 1px solid var(--line);
       border-radius: 6px;
-      background: rgba(11,16,34,0.5);
+      background: rgba(20,20,24,0.5);
     }
     .det .name {
       font-weight: 500;
@@ -2104,30 +2740,18 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         </div>
 
         <div class="deck">
-          <div class="group wheel-wrap">
-            <div class="wheel">
-              <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" id="wheel-svg" aria-hidden="true">
-                <defs>
-                  <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stop-color="#1f2742"/>
-                    <stop offset="100%" stop-color="#0c1124"/>
-                  </linearGradient>
-                </defs>
-                <circle cx="50" cy="50" r="45" fill="url(#rim)" stroke="#1d2543" stroke-width="2"/>
-                <circle cx="50" cy="50" r="36" fill="none" stroke="#080c18" stroke-width="3"/>
-                <g stroke="#4ea6ff" stroke-width="3" stroke-linecap="round">
-                  <line x1="50" y1="50" x2="50" y2="14"/>
-                  <line x1="50" y1="50" x2="20" y2="68"/>
-                  <line x1="50" y1="50" x2="80" y2="68"/>
-                </g>
-                <circle cx="50" cy="50" r="9" fill="#080c18" stroke="#4ea6ff" stroke-width="2"/>
-                <circle cx="50" cy="14" r="2.5" fill="#4ea6ff"/>
-              </svg>
-            </div>
+          <div class="group steer-wrap">
             <div class="axis-data">
               <span class="l">Giro</span>
               <span class="v" id="steer-val">0.25</span>
               <span class="l dir" id="steer-dir">centrado</span>
+            </div>
+            <div class="steer-meter" aria-label="Giro">
+              <div class="tick" style="left:25%"></div>
+              <div class="mid"></div>
+              <div class="tick" style="left:75%"></div>
+              <div class="fill-left" id="steer-left"></div>
+              <div class="fill-right" id="steer-right"></div>
             </div>
           </div>
 
@@ -2220,6 +2844,8 @@ LIVE_VIEW_HTML = r"""<!doctype html>
           <div class="row"><span class="k">Sesión</span><span class="v muted" id="rec-session">--</span></div>
           <div class="row"><span class="k">Registros</span><span class="v" id="rec-records">0</span></div>
           <div class="row"><span class="k">Imágenes</span><span class="v" id="rec-images">0</span></div>
+          <div class="row"><span class="k">Críticos</span><span class="v" id="rec-critical">0</span></div>
+          <div class="row"><span class="k">Video</span><span class="v muted" id="rec-video">--</span></div>
           <div class="row"><span class="k">Error</span><span class="v muted" id="rec-error">--</span></div>
         </section>
 
@@ -2234,14 +2860,8 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         </section>
 
         <section class="card">
-          <h2>Coche</h2>
-          <div class="battery">
-            <div class="row" style="border:0; padding-bottom: 4px;">
-              <span class="k">Batería</span><span class="v accent" id="bat-val">--</span>
-            </div>
-            <div class="gauge"><div class="fill" id="bat-fill"></div></div>
-          </div>
-          <div class="row" style="margin-top: 12px;"><span class="k">Origen control</span><span class="v" id="ctrl-source">--</span></div>
+          <h2>Sistema</h2>
+          <div class="row"><span class="k">Origen control</span><span class="v" id="ctrl-source">--</span></div>
           <div class="row"><span class="k">Watchdog</span><span class="v" id="ctrl-watch">--</span></div>
           <div class="row"><span class="k">Stream activo</span><span class="v" id="stream-clients">--</span></div>
           <div class="row"><span class="k">Posts control</span><span class="v" id="control-posts">--</span></div>
@@ -2265,7 +2885,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       hudFps: $('hud-fps'), hudLat: $('hud-lat'), hudDet: $('hud-det'), hudFrame: $('hud-frame'),
       videoShell: $('video-shell'), noFeedMeta: $('no-feed-meta'),
 
-      wheelSvg: $('wheel-svg'),
+      steerLeft: $('steer-left'), steerRight: $('steer-right'),
       steerVal: $('steer-val'), steerDir: $('steer-dir'),
       thrFwd: $('thr-fwd'), thrRev: $('thr-rev'),
       thrVal: $('thr-val'), thrDir: $('thr-dir'),
@@ -2282,12 +2902,11 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       autoTarget: $('auto-target'), autoZone: $('auto-zone'), autoReason: $('auto-reason'),
 
       recTag: $('rec-tag'), recSession: $('rec-session'), recRecords: $('rec-records'),
-      recImages: $('rec-images'), recError: $('rec-error'),
+      recImages: $('rec-images'), recCritical: $('rec-critical'), recVideo: $('rec-video'), recError: $('rec-error'),
 
       linkBind: $('link-bind'), linkClient: $('link-client'), linkLast: $('link-last'),
       linkRx: $('link-rx'), linkTx: $('link-tx'), linkErr: $('link-err'),
 
-      batVal: $('bat-val'), batFill: $('bat-fill'),
       ctrlSource: $('ctrl-source'), ctrlWatch: $('ctrl-watch'),
       streamClients: $('stream-clients'), controlPosts: $('control-posts'),
     };
@@ -2354,13 +2973,15 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     }
 
     function renderControl(steering, throttle) {
-      const offset = clampNum(steering - NEUTRAL_STEERING, -1, 1);
-      const rot = -offset * 130;
-      els.wheelSvg.style.transform = `rotate(${rot.toFixed(1)}deg)`;
+      const offset = steering - NEUTRAL_STEERING;
+      const leftPct  = clampNum(offset / 0.75, 0, 1);
+      const rightPct = clampNum(-offset / 1.25, 0, 1);
+      els.steerLeft.style.width  = (leftPct  * 50).toFixed(1) + '%';
+      els.steerRight.style.width = (rightPct * 50).toFixed(1) + '%';
       els.steerVal.textContent = nfmt(steering, 2);
       els.steerDir.textContent =
-        offset > 0.05  ? 'izquierda · ' + Math.round(offset * 100) + '%'
-      : offset < -0.05 ? 'derecha · '   + Math.round(-offset * 100) + '%'
+        offset > 0.05  ? 'izquierda · ' + Math.round(leftPct * 100) + '%'
+      : offset < -0.05 ? 'derecha · '   + Math.round(rightPct * 100) + '%'
       :                  'centrado';
 
       const fwd = clampNum(Math.max(0, throttle), 0, 1);
@@ -2678,6 +3299,8 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         els.recSession.textContent = rec.session_dir || '--';
         els.recRecords.textContent = rec.records ?? 0;
         els.recImages.textContent = rec.images ?? 0;
+        els.recCritical.textContent = rec.critical_records ?? 0;
+        els.recVideo.textContent = rec.video && rec.video.enabled ? ((rec.video.frames || 0) + ' fr') : 'off';
         els.recError.textContent = rec.last_error || '--';
 
         /* link card */
@@ -2692,23 +3315,6 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         els.linkRx.textContent = totalRx + (breakdown ? ' · ' + breakdown : '');
         els.linkTx.textContent = data.udp.tx_packets;
         els.linkErr.textContent = (data.udp.bad_packets || 0) + (vid.decode_errors ? ' · ' + vid.decode_errors + ' dec' : '');
-
-        /* car card */
-        const bat = data.car && data.car.battery;
-        if (bat == null) {
-          els.batVal.textContent = '--';
-          els.batFill.style.width = '0%';
-        } else {
-          const b = Number(bat);
-          els.batVal.textContent = b.toFixed(2);
-          const pct = b > 1 ? clampNum(b, 0, 100) : clampNum(b * 100, 0, 100);
-          els.batFill.style.width = pct.toFixed(0) + '%';
-          els.batFill.style.background = pct < 20
-            ? 'linear-gradient(90deg, #f87171, #fca5a5)'
-            : pct < 45
-            ? 'linear-gradient(90deg, #fbbf24, #fde68a)'
-            : 'linear-gradient(90deg, #4ea6ff, #a8d0ff)';
-        }
 
         els.ctrlSource.textContent =
           data.control.source + ' · ' + nfmt(remoteSteer, 2) + ' / ' + nfmt(remoteThr, 2);
@@ -2772,6 +3378,7 @@ def main() -> int:
         sock.close()
     except OSError:
         pass
+    state.recorder.close()
     return 0
 
 

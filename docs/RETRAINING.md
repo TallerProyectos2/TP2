@@ -57,12 +57,19 @@ Recorder track ids are for dataset triage only. They are not persisted as car-co
 
 ## Offline Replayer
 
-Run from any machine with the TP2 Python environment and access to a session directory:
+The normal operator path is from the live `coche.py` web UI:
+
+1. Open `http://100.97.19.112:8088/`.
+2. Press `Revisar dataset`.
+3. The live runtime starts the replayer on `TP2_SESSION_REPLAYER_PORT`, default `8090`.
+4. The replayer opens with a session selector populated directly from `TP2_SESSION_RECORD_DIR`.
+
+The standalone path is still available from any machine with the TP2 Python environment and access to the recording root:
 
 ```bash
 cd /home/tp2/TP2_red4G
 conda activate tp2
-python servicios/session_replayer.py /srv/tp2/frames/autonomous/<session-id> --host 0.0.0.0 --port 8090
+python servicios/session_replayer.py /srv/tp2/frames/autonomous --host 0.0.0.0 --port 8090
 ```
 
 From an operator laptop over Tailscale, open:
@@ -73,6 +80,7 @@ http://100.97.19.112:8090/
 
 The replayer supports:
 
+- selecting any session directory under the recording root
 - stepping through all frames or critical frames only
 - viewing overlays from candidate labels and critical rules
 - relabeling a detection class
@@ -109,4 +117,5 @@ For a recorder change:
 - Start `coche.py` locally with inference disabled and a temporary record directory.
 - Send a synthetic `I + pickle(jpeg)` frame.
 - Confirm `manifest.jsonl`, `labels.jsonl`, and `session.mp4` are created.
-- Start `session_replayer.py` against that session and confirm `GET /api/session` works.
+- Start the replayer from `coche.py` with `POST /replayer/start`.
+- Confirm `GET /api/sessions` shows the recorded session and `GET /api/frame?idx=0` returns frame metadata.

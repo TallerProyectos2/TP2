@@ -38,6 +38,7 @@ from roboflow_runtime import (  # noqa: E402
     infer_one_frame,
     local_endpoint_reachable,
 )
+from session_replayer import ReplayerHandler, SessionCatalog  # noqa: E402
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -140,6 +141,9 @@ SESSION_RECORD_LOW_CONF_MAX = env_float("TP2_SESSION_RECORD_LOW_CONF_MAX", 0.55)
 SESSION_RECORD_DISAPPEAR_FRAMES = max(1, env_int("TP2_SESSION_RECORD_DISAPPEAR_FRAMES", 3))
 SESSION_RECORD_TRACK_IOU = env_float("TP2_SESSION_RECORD_TRACK_IOU", 0.10)
 SESSION_RECORD_TRACK_CENTER_DISTANCE = env_float("TP2_SESSION_RECORD_TRACK_CENTER_DISTANCE", 0.18)
+ENABLE_SESSION_REPLAYER = env_bool("TP2_ENABLE_SESSION_REPLAYER", True)
+SESSION_REPLAYER_HOST = os.getenv("TP2_SESSION_REPLAYER_HOST", "0.0.0.0")
+SESSION_REPLAYER_PORT = env_int("TP2_SESSION_REPLAYER_PORT", 8090)
 
 EXIT_EVENT = threading.Event()
 
@@ -844,6 +848,80 @@ def draw_recording_overlay(
     return output
 
 
+class ReplayerManager:
+    def __init__(
+        self,
+        record_root: Path,
+        *,
+        enabled: bool,
+        host: str,
+        port: int,
+    ) -> None:
+        self.record_root = record_root
+        self.enabled = enabled
+        self.host = host
+        self.port = port
+        self.lock = threading.RLock()
+        self.server: ThreadingHTTPServer | None = None
+        self.thread: threading.Thread | None = None
+        self.last_error: str | None = None
+
+    def start(self) -> dict[str, Any]:
+        with self.lock:
+            if not self.enabled:
+                self.last_error = "session replayer disabled"
+                return self.snapshot()
+            if self.server is not None:
+                return self.snapshot()
+            try:
+                catalog = SessionCatalog(self.record_root)
+                ReplayerHandler.catalog = catalog
+                server = ThreadingHTTPServer((self.host, self.port), ReplayerHandler)
+                thread = threading.Thread(
+                    target=server.serve_forever,
+                    daemon=True,
+                    name="session-replayer",
+                )
+                thread.start()
+                self.server = server
+                self.thread = thread
+                self.last_error = None
+            except OSError as exc:
+                self.server = None
+                self.thread = None
+                self.last_error = str(exc)
+            return self.snapshot()
+
+    def stop(self) -> dict[str, Any]:
+        with self.lock:
+            server = self.server
+            self.server = None
+            self.thread = None
+        if server is not None:
+            def shutdown() -> None:
+                server.shutdown()
+                server.server_close()
+
+            threading.Thread(target=shutdown, daemon=True).start()
+        return self.snapshot()
+
+    def snapshot(self, *, public_host: str | None = None) -> dict[str, Any]:
+        with self.lock:
+            active = self.server is not None
+            host = public_host or self.host
+            if host in {"", "0.0.0.0", "::"}:
+                host = "127.0.0.1"
+            return {
+                "enabled": self.enabled,
+                "active": active,
+                "host": self.host,
+                "port": self.port,
+                "url": f"http://{host}:{self.port}/",
+                "record_root": str(self.record_root),
+                "last_error": self.last_error,
+            }
+
+
 class RuntimeState:
     def __init__(self) -> None:
         self.lock = threading.RLock()
@@ -909,6 +987,12 @@ class RuntimeState:
             save_video=SESSION_RECORD_VIDEO,
             video_fps=SESSION_RECORD_VIDEO_FPS,
             save_critical_images=SESSION_RECORD_CRITICAL_IMAGES,
+        )
+        self.replayer = ReplayerManager(
+            SESSION_RECORD_DIR,
+            enabled=ENABLE_SESSION_REPLAYER,
+            host=SESSION_REPLAYER_HOST,
+            port=SESSION_REPLAYER_PORT,
         )
 
         self.web_stream_clients = 0
@@ -1333,6 +1417,7 @@ class RuntimeState:
                     },
                 },
                 "recording": self.recorder.snapshot(),
+                "replayer": self.replayer.snapshot(),
                 "car": {
                     "battery": self.battery,
                     "telemetry": self.telemetry,
@@ -1689,6 +1774,15 @@ class LiveHandler(BaseHTTPRequestHandler):
             self.stream_video()
         elif path == "/recording.json":
             self.send_json({"ok": True, "recording": self.state.recorder.snapshot()})
+        elif path == "/replayer.json":
+            self.send_json(
+                {
+                    "ok": True,
+                    "replayer": self.state.replayer.snapshot(
+                        public_host=self.request_public_host()
+                    ),
+                }
+            )
         elif path == "/healthz":
             self.send_json({"ok": True})
         elif path == "/favicon.ico":
@@ -1732,6 +1826,16 @@ class LiveHandler(BaseHTTPRequestHandler):
             else:
                 status = self.state.recorder.set_enabled(not self.state.recorder.snapshot()["enabled"])
             self.send_json({"ok": status.get("last_error") is None, "recording": status})
+            return
+        if path in {"/replayer/start", "/retraining/start"}:
+            status = self.state.replayer.start()
+            status = self.state.replayer.snapshot(public_host=self.request_public_host())
+            self.send_json({"ok": status.get("last_error") is None, "replayer": status})
+            return
+        if path in {"/replayer/stop", "/retraining/stop"}:
+            status = self.state.replayer.stop()
+            status = self.state.replayer.snapshot(public_host=self.request_public_host())
+            self.send_json({"ok": status.get("last_error") is None, "replayer": status})
             return
         if path in {"/control/neutral", "/neutral"}:
             self.send_json({"ok": True, "control": self.state.release_manual_control("neutral")})
@@ -1793,6 +1897,14 @@ class LiveHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def request_public_host(self) -> str:
+        host_header = self.headers.get("Host", "").strip()
+        if not host_header:
+            return "127.0.0.1"
+        if host_header.startswith("["):
+            return host_header.split("]", 1)[0].strip("[]")
+        return host_header.split(":", 1)[0]
 
     def stream_video(self) -> None:
         self.state.add_stream_client()
@@ -2485,6 +2597,23 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       border-color: rgba(248,113,113,0.55);
       box-shadow: 0 0 20px rgba(248,113,113,0.20);
     }
+    button.review {
+      height: 44px; padding: 0 18px;
+      border: 1px solid rgba(125,211,252,0.38);
+      background: rgba(125,211,252,0.08);
+      color: var(--cyan);
+      font-family: var(--body);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      border-radius: 8px;
+      cursor: pointer;
+      text-transform: uppercase;
+    }
+    button.review.active {
+      background: rgba(125,211,252,0.14);
+      box-shadow: 0 0 20px rgba(125,211,252,0.16);
+    }
 
     /* RIGHT COLUMN: telemetry stack ----------------------------------- */
     .side {
@@ -2789,6 +2918,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
               <button type="button" id="mode-auto">Autónomo</button>
             </div>
             <button type="button" class="record" id="record">Grabar dataset</button>
+            <button type="button" class="review" id="review">Revisar dataset</button>
             <button type="button" class="stop" id="stop">Stop</button>
           </div>
         </div>
@@ -2846,6 +2976,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
           <div class="row"><span class="k">Imágenes</span><span class="v" id="rec-images">0</span></div>
           <div class="row"><span class="k">Críticos</span><span class="v" id="rec-critical">0</span></div>
           <div class="row"><span class="k">Video</span><span class="v muted" id="rec-video">--</span></div>
+          <div class="row"><span class="k">Replayer</span><span class="v muted" id="rec-replayer">--</span></div>
           <div class="row"><span class="k">Error</span><span class="v muted" id="rec-error">--</span></div>
         </section>
 
@@ -2890,7 +3021,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       thrFwd: $('thr-fwd'), thrRev: $('thr-rev'),
       thrVal: $('thr-val'), thrDir: $('thr-dir'),
 
-      modeManual: $('mode-manual'), modeAuto: $('mode-auto'), stop: $('stop'), record: $('record'),
+      modeManual: $('mode-manual'), modeAuto: $('mode-auto'), stop: $('stop'), record: $('record'), review: $('review'),
 
       aiTag: $('ai-tag'),
       aiBackend: $('ai-backend'), aiModel: $('ai-model'), aiStatus: $('ai-status'),
@@ -2902,7 +3033,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       autoTarget: $('auto-target'), autoZone: $('auto-zone'), autoReason: $('auto-reason'),
 
       recTag: $('rec-tag'), recSession: $('rec-session'), recRecords: $('rec-records'),
-      recImages: $('rec-images'), recCritical: $('rec-critical'), recVideo: $('rec-video'), recError: $('rec-error'),
+      recImages: $('rec-images'), recCritical: $('rec-critical'), recVideo: $('rec-video'), recReplayer: $('rec-replayer'), recError: $('rec-error'),
 
       linkBind: $('link-bind'), linkClient: $('link-client'), linkLast: $('link-last'),
       linkRx: $('link-rx'), linkTx: $('link-tx'), linkErr: $('link-err'),
@@ -3054,6 +3185,26 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       }
     }
 
+    async function launchReplayer() {
+      try {
+        els.review.classList.add('active');
+        const res = await fetch('/replayer/start', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: '{}',
+          cache: 'no-store',
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error((data.replayer && data.replayer.last_error) || data.error || 'replayer');
+        if (data.replayer && data.replayer.url) {
+          window.open(data.replayer.url, 'tp2-session-replayer');
+        }
+      } catch (err) {
+        els.recReplayer.textContent = 'error';
+        els.recError.textContent = err.message || 'replayer';
+      }
+    }
+
     async function releaseManual() {
       clearManualKeys();
       lastSent = { steering: NEUTRAL_STEERING, throttle: 0.0 };
@@ -3100,6 +3251,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     els.modeAuto.addEventListener('click', () => postMode('autonomous'));
     els.stop.addEventListener('click', emergencyStop);
     els.record.addEventListener('click', toggleRecording);
+    els.review.addEventListener('click', launchReplayer);
 
     /* manual control loop */
     setInterval(() => {
@@ -3301,6 +3453,9 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         els.recImages.textContent = rec.images ?? 0;
         els.recCritical.textContent = rec.critical_records ?? 0;
         els.recVideo.textContent = rec.video && rec.video.enabled ? ((rec.video.frames || 0) + ' fr') : 'off';
+        const replayer = data.replayer || {};
+        els.review.classList.toggle('active', !!replayer.active);
+        els.recReplayer.textContent = replayer.active ? ('abierto · ' + replayer.port) : (replayer.enabled ? 'listo' : 'off');
         els.recError.textContent = rec.last_error || '--';
 
         /* link card */
@@ -3379,6 +3534,7 @@ def main() -> int:
     except OSError:
         pass
     state.recorder.close()
+    state.replayer.stop()
     return 0
 
 

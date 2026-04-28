@@ -94,7 +94,7 @@ Requirements:
 - car continues talking only to EPC, never directly to Jetson
 - autonomous driving must treat Jetson output as inference only; steering/throttle policy remains in EPC `coche.py`/`autonomous_driver.py`
 - session recording must not copy Roboflow secrets; only runtime predictions, frame metadata, candidate images, annotated video, critical flags, and reviewed labels are saved
-- offline curation uses `servicios/session_replayer.py` and writes `labels_reviewed.json` beside the session
+- offline curation uses `servicios/session_replayer.py`; it can be launched from the `coche.py` web UI, reads the recording root directly with a session selector, and writes `labels_reviewed.json` beside the selected session
 
 Last validated Jetson configuration:
 

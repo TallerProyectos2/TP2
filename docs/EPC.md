@@ -62,7 +62,7 @@ Operational files are stored in repo `servicios/` and validated on EPC under `/h
   - `coche.py` (`172.16.0.1:20001` UDP, `0.0.0.0:8088` web)
   - `autonomous_driver.py` deterministic autonomous controller used by `coche.py`
   - session recorder under `TP2_SESSION_RECORD_DIR` for dataset candidates, annotated MP4, critical flags, and offline relabeling inputs
-  - `session_replayer.py` offline review server for frame replay and label correction
+  - `session_replayer.py` review server for frame replay and label correction, launchable from the `coche.py` web UI and backed by a session selector over the recording root
   - manual web control is gated by drive mode; stale manual posts cannot switch an active autonomous session back to manual
   - autonomous forward commands are clamped to non-negative throttle and default to `+0.50`
 - Inference files:
@@ -88,6 +88,7 @@ Operational files are stored in repo `servicios/` and validated on EPC under `/h
   - `POST /mode`: switch between `manual` and `autonomous`
   - `POST /recording`: start/stop dataset capture
   - `GET /recording.json`: inspect current recording state
+  - `POST /replayer/start`: start the session replayer on `TP2_SESSION_REPLAYER_PORT` (default `8090`)
 - `9001/TCP`: local inference endpoint (when started)
 - Remote inference offload last validated from EPC to Jetson: `100.115.99.8:9001`
 

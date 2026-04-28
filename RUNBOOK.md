@@ -61,7 +61,8 @@ The manual order below remains the operational source for troubleshooting.
 - Autonomous forward movement defaults to positive throttle `+0.50`; reverse throttle is not emitted by the autonomous controller.
 - `coche.py` exposes `POST /recording` and `GET /recording.json` for session capture; recordings include candidate frames, annotated MP4 video, predictions, critical flags, autonomous estimates, and selected controls.
 - Normal `tp2-car-control.service` sessions autostart recording under `/srv/tp2/frames/autonomous` and write `manifest.jsonl`, `labels.jsonl`, `critical.jsonl`, `session.mp4`, and optional critical images.
-- Offline review runs with `python servicios/session_replayer.py <session-dir>` and writes `labels_reviewed.json` without modifying the original manifest.
+- The live web UI can launch the retraining/replayer server with `POST /replayer/start`; the replayer reads `/srv/tp2/frames/autonomous` directly and provides a session selector.
+- Offline review can also run with `python servicios/session_replayer.py /srv/tp2/frames/autonomous` and writes `labels_reviewed.json` without modifying the original manifest.
 - Script receives car payloads (`I`, `B`, `D`).
 - Script sends control packets (`C`) back to car.
 - Car behavior matches command stream.

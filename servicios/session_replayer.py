@@ -2,16 +2,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import threading
 from dataclasses import dataclass
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import cv2
 import numpy as np
+
+
+DEFAULT_RECORD_ROOT = Path(
+    os.getenv("TP2_SESSION_RECORD_DIR", "/srv/tp2/frames/autonomous")
+).expanduser()
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -40,6 +47,120 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def relabel_key(frame_seq: int, label_index: int) -> str:
     return f"{int(frame_seq)}:{int(label_index)}"
+
+
+def path_is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def is_session_dir(path: Path) -> bool:
+    return path.is_dir() and (path / "manifest.jsonl").exists()
+
+
+@dataclass(frozen=True)
+class SessionSummary:
+    id: str
+    path: str
+    frames: int
+    critical: int
+    reviewed: int
+    images: int
+    has_video: bool
+    started_at: str | None
+    modified_at: str
+
+
+class SessionCatalog:
+    def __init__(self, record_root: Path, *, initial_session_id: str | None = None) -> None:
+        root = record_root.expanduser().resolve()
+        if is_session_dir(root):
+            self.record_root = root.parent
+            self.initial_session_id = initial_session_id or root.name
+        else:
+            self.record_root = root
+            self.initial_session_id = initial_session_id
+        self.lock = threading.RLock()
+
+    def sessions(self) -> list[SessionSummary]:
+        if not self.record_root.exists():
+            return []
+        summaries: list[SessionSummary] = []
+        for child in self.record_root.iterdir():
+            if not is_session_dir(child):
+                continue
+            summaries.append(self._summarize(child))
+        summaries.sort(key=lambda item: item.modified_at, reverse=True)
+        return summaries
+
+    def latest_session_id(self) -> str | None:
+        sessions = self.sessions()
+        if not sessions:
+            return None
+        if self.initial_session_id and any(item.id == self.initial_session_id for item in sessions):
+            return self.initial_session_id
+        return sessions[0].id
+
+    def load(self, session_id: str | None = None) -> tuple[str, "SessionData"]:
+        selected_id = self.resolve_session_id(session_id)
+        if selected_id is None:
+            raise FileNotFoundError(f"No session directories under {self.record_root}")
+        path = self.session_path(selected_id)
+        if not is_session_dir(path):
+            raise FileNotFoundError(f"No manifest.jsonl for session {selected_id}")
+        return selected_id, SessionData.load(path)
+
+    def resolve_session_id(self, session_id: str | None) -> str | None:
+        cleaned = unquote(session_id or "").strip()
+        if cleaned:
+            path = self.session_path(cleaned)
+            if is_session_dir(path):
+                return path.name
+        return self.latest_session_id()
+
+    def session_path(self, session_id: str) -> Path:
+        candidate = (self.record_root / Path(session_id).name).resolve()
+        if not path_is_relative_to(candidate, self.record_root):
+            raise ValueError("session id escapes record root")
+        return candidate
+
+    def _summarize(self, path: Path) -> SessionSummary:
+        manifest = read_jsonl(path / "manifest.jsonl")
+        critical = sum(1 for item in manifest if (item.get("critical") or {}).get("is_critical"))
+        reviews = 0
+        reviews_path = path / "labels_reviewed.json"
+        if reviews_path.exists():
+            try:
+                payload = json.loads(reviews_path.read_text(encoding="utf-8"))
+                raw = payload.get("reviews", {})
+                reviews = len(raw) if isinstance(raw, dict) else 0
+            except json.JSONDecodeError:
+                reviews = 0
+        images_dir = path / "images"
+        images = len(list(images_dir.glob("*.jpg"))) if images_dir.exists() else 0
+        started_at = None
+        session_meta = path / "session.json"
+        if session_meta.exists():
+            try:
+                payload = json.loads(session_meta.read_text(encoding="utf-8"))
+                started_at = payload.get("started_at")
+            except json.JSONDecodeError:
+                started_at = None
+        mtime = datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds")
+        return SessionSummary(
+            id=path.name,
+            path=str(path),
+            frames=len(manifest),
+            critical=critical,
+            reviewed=reviews,
+            images=images,
+            has_video=(path / "session.mp4").exists(),
+            started_at=started_at,
+            modified_at=mtime,
+        )
 
 
 @dataclass
@@ -124,7 +245,7 @@ class SessionData:
         image_rel = item.get("image")
         if image_rel:
             image_path = (self.root / str(image_rel)).resolve()
-            if image_path.exists() and self.root in image_path.parents:
+            if image_path.exists() and path_is_relative_to(image_path, self.root):
                 image = cv2.imread(str(image_path))
                 if image is not None:
                     return image
@@ -135,7 +256,7 @@ class SessionData:
         if video_rel is None or frame_index is None:
             return None
         video_path = (self.root / str(video_rel)).resolve()
-        if not video_path.exists() or self.root not in video_path.parents:
+        if not video_path.exists() or not path_is_relative_to(video_path, self.root):
             return None
         cap = cv2.VideoCapture(str(video_path))
         try:
@@ -173,14 +294,14 @@ class SessionData:
 
 def placeholder_image(text: str) -> np.ndarray:
     image = np.zeros((720, 1280, 3), dtype=np.uint8)
-    image[:, :] = (16, 16, 18)
+    image[:, :] = (10, 10, 12)
     cv2.putText(
         image,
         text[:80],
         (64, 360),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.9,
-        (230, 230, 235),
+        (236, 236, 239),
         2,
         cv2.LINE_AA,
     )
@@ -197,13 +318,19 @@ def draw_overlay(image: np.ndarray, item: dict[str, Any]) -> np.ndarray:
         x1, y1, x2, y2 = [int(round(float(v))) for v in bbox]
         review = label.get("review") or {}
         is_valid = review.get("valid", True)
-        color = (80, 220, 120) if is_valid else (80, 80, 240)
+        color = (78, 166, 255) if is_valid else (80, 80, 240)
         label_class = review.get("class") or label.get("class") or "object"
         text = f"{label.get('index')} #{label.get('track_id', '-')} {label_class}"
         if not is_valid:
             text += " reject"
         cv2.rectangle(output, (x1, y1), (x2, y2), color, 2)
-        cv2.rectangle(output, (x1, max(0, y1 - 24)), (min(output.shape[1] - 1, x1 + 360), y1), color, -1)
+        cv2.rectangle(
+            output,
+            (x1, max(0, y1 - 24)),
+            (min(output.shape[1] - 1, x1 + 360), y1),
+            color,
+            -1,
+        )
         cv2.putText(
             output,
             text[:48],
@@ -219,7 +346,7 @@ def draw_overlay(image: np.ndarray, item: dict[str, Any]) -> np.ndarray:
     flags = critical.get("flags") or []
     if flags:
         rules = ", ".join(str(flag.get("rule", "?")) for flag in flags[:4])
-        cv2.rectangle(output, (0, 0), (output.shape[1], 34), (30, 45, 70), -1)
+        cv2.rectangle(output, (0, 0), (output.shape[1], 34), (18, 31, 48), -1)
         cv2.putText(
             output,
             f"CRITICAL: {rules}"[:120],
@@ -234,42 +361,76 @@ def draw_overlay(image: np.ndarray, item: dict[str, Any]) -> np.ndarray:
 
 
 class ReplayerHandler(BaseHTTPRequestHandler):
-    session: SessionData
+    catalog: SessionCatalog
 
-    server_version = "TP2SessionReplayer/1.0"
+    server_version = "TP2SessionReplayer/1.1"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         sys.stderr.write(f"{self.address_string()} - {fmt % args}\n")
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
         if parsed.path == "/":
             self.send_html(INDEX_HTML)
             return
-        if parsed.path == "/api/session":
-            self.send_json(
-                {
+        if parsed.path == "/favicon.ico":
+            self.send_response(204)
+            self.send_header("Cache-Control", "max-age=86400")
+            self.end_headers()
+            return
+        if parsed.path in {"/api/sessions", "/api/session"}:
+            selected = params.get("session", [None])[0]
+            sessions = [summary.__dict__ for summary in self.catalog.sessions()]
+            try:
+                active_id, session = self.catalog.load(selected)
+                payload = {
                     "ok": True,
-                    "root": str(self.session.root),
-                    "frames": len(self.session.manifest),
-                    "critical_indexes": self.session.critical_indexes(),
-                    "classes": self.session.classes(),
+                    "record_root": str(self.catalog.record_root),
+                    "selected_session_id": active_id,
+                    "root": str(session.root),
+                    "frames": len(session.manifest),
+                    "critical_indexes": session.critical_indexes(),
+                    "classes": session.classes(),
+                    "sessions": sessions,
                 }
-            )
+            except FileNotFoundError:
+                payload = {
+                    "ok": True,
+                    "record_root": str(self.catalog.record_root),
+                    "selected_session_id": None,
+                    "root": None,
+                    "frames": 0,
+                    "critical_indexes": [],
+                    "classes": [],
+                    "sessions": sessions,
+                }
+            self.send_json(payload)
             return
         if parsed.path == "/api/frame":
-            params = parse_qs(parsed.query)
+            selected = params.get("session", [None])[0]
             idx = int(params.get("idx", ["0"])[0])
             try:
-                self.send_json({"ok": True, "frame": self.session.frame_payload(idx)})
-            except IndexError as exc:
+                active_id, session = self.catalog.load(selected)
+                self.send_json(
+                    {
+                        "ok": True,
+                        "selected_session_id": active_id,
+                        "frame": session.frame_payload(idx),
+                    }
+                )
+            except (FileNotFoundError, IndexError) as exc:
                 self.send_json({"ok": False, "error": str(exc)}, status=404)
             return
         if parsed.path == "/frame.jpg":
-            params = parse_qs(parsed.query)
+            selected = params.get("session", [None])[0]
             idx = int(params.get("idx", ["0"])[0])
             overlay = params.get("overlay", ["1"])[0] != "0"
-            image = self.session.image_for_index(idx, overlay=overlay)
+            try:
+                _active_id, session = self.catalog.load(selected)
+                image = session.image_for_index(idx, overlay=overlay)
+            except (FileNotFoundError, IndexError):
+                image = placeholder_image("No session frame available")
             ok, encoded = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 86])
             if not ok:
                 self.send_json({"ok": False, "error": "could not encode frame"}, status=500)
@@ -287,11 +448,20 @@ class ReplayerHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(min(length, 65536)) if length > 0 else b"{}"
         try:
             payload = json.loads(raw.decode("utf-8") or "{}")
-            review = self.session.save_review(payload)
+            selected = str(payload.get("session_id") or "").strip() or None
+            active_id, session = self.catalog.load(selected)
+            review = session.save_review(payload)
         except Exception as exc:
             self.send_json({"ok": False, "error": str(exc)}, status=400)
             return
-        self.send_json({"ok": True, "review": review, "classes": self.session.classes()})
+        self.send_json(
+            {
+                "ok": True,
+                "selected_session_id": active_id,
+                "review": review,
+                "classes": session.classes(),
+            }
+        )
 
     def send_json(self, payload: dict[str, Any], status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
@@ -310,107 +480,313 @@ class ReplayerHandler(BaseHTTPRequestHandler):
 
 
 INDEX_HTML = r"""<!doctype html>
-<html lang="en">
+<html lang="es">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TP2 Session Replayer</title>
+  <title>TP2 · Reentrenamiento</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
-    :root { color-scheme: dark; font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
-    body { margin: 0; background: #101114; color: #f0f0f2; }
-    header { display: flex; justify-content: space-between; gap: 18px; align-items: center; padding: 14px 18px; border-bottom: 1px solid #2b2d34; }
-    h1 { font-size: 17px; margin: 0; font-weight: 650; }
-    main { display: grid; grid-template-columns: minmax(0, 1fr) 390px; gap: 16px; padding: 16px; }
-    .viewer { display: grid; gap: 12px; min-width: 0; }
-    .frame { background: #08090b; border: 1px solid #2b2d34; border-radius: 8px; overflow: hidden; min-height: 320px; }
-    .frame img { display: block; width: 100%; max-height: calc(100vh - 150px); object-fit: contain; }
-    .bar, .panel { border: 1px solid #2b2d34; border-radius: 8px; background: #17191e; }
-    .bar { display: flex; align-items: center; gap: 10px; padding: 10px; flex-wrap: wrap; }
-    button, input, select, textarea { font: inherit; }
-    button { border: 1px solid #3b82f6; background: #19345f; color: #f8fbff; border-radius: 6px; padding: 7px 10px; cursor: pointer; }
-    button.secondary { border-color: #444852; background: #22252c; }
-    button.danger { border-color: #ef4444; background: #4a1d25; }
-    input, select, textarea { background: #101114; color: #f0f0f2; border: 1px solid #3a3d46; border-radius: 6px; padding: 7px 8px; }
-    label { display: inline-flex; align-items: center; gap: 6px; color: #c4c7d0; }
-    aside { display: grid; align-content: start; gap: 12px; min-width: 0; }
-    .panel { padding: 12px; }
-    .panel h2 { margin: 0 0 10px; font-size: 12px; color: #c4c7d0; text-transform: uppercase; letter-spacing: .08em; }
-    .meta { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #c4c7d0; font-size: 12px; display: grid; gap: 4px; }
-    .labels { display: grid; gap: 7px; max-height: 320px; overflow: auto; }
-    .label-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; border: 1px solid #30333b; border-radius: 6px; padding: 8px; cursor: pointer; }
-    .label-row.active { border-color: #3b82f6; background: #172b4c; }
-    .label-row.invalid { border-color: #ef4444; background: #351b22; }
-    .flags { display: grid; gap: 6px; }
-    .flag { border: 1px solid #4b5563; border-left: 3px solid #f59e0b; border-radius: 5px; padding: 7px; font-size: 12px; color: #e5e7eb; }
+    :root {
+      color-scheme: dark;
+      --bg-0: #0a0a0c;
+      --bg-1: #131316;
+      --bg-2: #1a1a1e;
+      --line: #26262b;
+      --line-soft: #1c1c20;
+      --ink: #ececef;
+      --ink-2: #a4a4ab;
+      --muted: #61616a;
+      --blue: #4ea6ff;
+      --blue-deep: #1a3a78;
+      --cyan: #7dd3fc;
+      --amber: #fbbf24;
+      --red: #f87171;
+      --body: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      --shadow: 0 24px 50px rgba(0,0,0,0.55);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background:
+        radial-gradient(1200px 700px at 92% -10%, rgba(78,166,255,0.06), transparent 60%),
+        var(--bg-0);
+      color: var(--ink);
+      font-family: var(--body);
+      font-size: 13.5px;
+      letter-spacing: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+    .app { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; gap: 18px; padding: 20px 22px 22px; }
+    header {
+      display: grid;
+      grid-template-columns: minmax(260px, auto) 1fr auto;
+      align-items: center;
+      gap: 22px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .brand { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    .brand .mark {
+      width: 36px; height: 36px; border-radius: 8px;
+      background: linear-gradient(135deg, var(--blue), var(--blue-deep));
+      display: grid; place-items: center;
+      box-shadow: 0 6px 18px rgba(78,166,255,0.28), inset 0 1px 0 rgba(255,255,255,0.12);
+    }
+    .brand .mark svg { width: 18px; height: 18px; color: #fff; }
+    .brand h1 { margin: 0; font-size: 19px; line-height: 1.1; font-weight: 600; letter-spacing: -0.005em; }
+    .brand h1 .accent { color: var(--blue); margin: 0 4px; font-weight: 400; }
+    .brand h1 .sub { color: var(--ink-2); font-weight: 500; }
+    .brand .meta { font-family: var(--mono); font-size: 10.5px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+    .session-select {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+    }
+    select, input, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--bg-1);
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 12px;
+      padding: 9px 10px;
+      outline: none;
+    }
+    textarea { min-height: 70px; resize: vertical; font-family: var(--body); }
+    button {
+      height: 38px;
+      border: 1px solid rgba(78,166,255,0.42);
+      border-radius: 7px;
+      background: rgba(78,166,255,0.10);
+      color: var(--blue);
+      font-family: var(--body);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      cursor: pointer;
+      padding: 0 14px;
+    }
+    button:hover { background: rgba(78,166,255,0.16); }
+    button.danger { color: var(--red); border-color: rgba(248,113,113,0.5); background: rgba(248,113,113,0.12); }
+    .pills { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      height: 30px; padding: 0 12px;
+      border: 1px solid var(--line); border-radius: 999px;
+      background: rgba(26,26,30,0.7);
+      color: var(--ink-2);
+      font-size: 10.5px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .pill .dot { width: 7px; height: 7px; border-radius: 99px; background: currentColor; box-shadow: 0 0 12px currentColor; }
+    .pill.ok { color: var(--cyan); } .pill.warn { color: var(--amber); } .pill.bad { color: var(--red); }
+    main { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 390px; gap: 20px; }
+    .stage { min-height: 0; display: grid; grid-template-rows: minmax(320px, 1fr) auto; gap: 14px; }
+    .frame {
+      position: relative;
+      min-height: 320px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: radial-gradient(120% 80% at 50% 50%, #16161a 0%, #08080a 100%);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+    .frame img { display: block; width: 100%; height: 100%; max-height: calc(100vh - 220px); object-fit: contain; }
+    .frame::after {
+      content: "";
+      position: absolute; inset: 14px; border-radius: 8px; pointer-events: none;
+      background:
+        linear-gradient(to right, var(--blue) 0 14px, transparent 14px) top left/14px 1px no-repeat,
+        linear-gradient(to bottom, var(--blue) 0 14px, transparent 14px) top left/1px 14px no-repeat,
+        linear-gradient(to left, var(--blue) 0 14px, transparent 14px) top right/14px 1px no-repeat,
+        linear-gradient(to bottom, var(--blue) 0 14px, transparent 14px) top right/1px 14px no-repeat,
+        linear-gradient(to right, var(--blue) 0 14px, transparent 14px) bottom left/14px 1px no-repeat,
+        linear-gradient(to top, var(--blue) 0 14px, transparent 14px) bottom left/1px 14px no-repeat,
+        linear-gradient(to left, var(--blue) 0 14px, transparent 14px) bottom right/14px 1px no-repeat,
+        linear-gradient(to top, var(--blue) 0 14px, transparent 14px) bottom right/1px 14px no-repeat;
+      opacity: 0.22;
+    }
+    .deck, .card {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(26,26,30,0.7), rgba(19,19,22,0.75));
+      border-radius: 12px;
+    }
+    .deck { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 12px; flex-wrap: wrap; }
+    .deck .left, .deck .right { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    label { display: inline-flex; gap: 7px; align-items: center; color: var(--ink-2); font-size: 12px; }
+    .pos { font-family: var(--mono); color: var(--ink-2); font-size: 12px; min-width: 86px; text-align: right; }
+    .side { min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 14px; padding-right: 4px; }
+    .card { padding: 16px 16px 14px; }
+    .card h2 { margin: 0 0 12px; font-weight: 600; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; }
+    .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--line-soft); }
+    .row:last-child { border-bottom: 0; }
+    .row .k { color: var(--muted); font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; font-size: 10.5px; }
+    .row .v { font-family: var(--mono); color: var(--ink); text-align: right; font-size: 12px; overflow-wrap: anywhere; }
+    .flags, .labels { display: grid; gap: 7px; max-height: 260px; overflow: auto; }
+    .flag, .label-row {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(20,20,24,0.5);
+      padding: 8px 10px;
+      font-size: 12px;
+    }
+    .flag { border-left: 3px solid var(--amber); color: var(--ink-2); }
+    .label-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; cursor: pointer; }
+    .label-row.active { border-color: rgba(78,166,255,0.75); background: rgba(78,166,255,0.14); }
+    .label-row.invalid { border-color: rgba(248,113,113,0.55); background: rgba(248,113,113,0.12); }
+    .label-row .name { color: var(--ink); font-weight: 500; }
+    .label-row small { color: var(--muted); font-family: var(--mono); }
     .form { display: grid; gap: 8px; }
-    @media (max-width: 980px) { main { grid-template-columns: 1fr; } .frame img { max-height: none; } }
+    .empty { color: var(--muted); border-style: dashed; text-align: center; }
+    @media (max-width: 1080px) {
+      header { grid-template-columns: 1fr; gap: 14px; }
+      .pills { justify-content: flex-start; }
+      main { grid-template-columns: 1fr; }
+      .frame img { max-height: none; }
+    }
   </style>
 </head>
 <body>
-  <header>
-    <h1>TP2 Session Replayer</h1>
-    <div class="meta"><span id="root">--</span></div>
-  </header>
-  <main>
-    <section class="viewer">
-      <div class="frame"><img id="frame" alt="recorded frame"></div>
-      <div class="bar">
-        <button id="prev">Prev</button>
-        <button id="next">Next</button>
-        <label><input id="critical" type="checkbox"> critical only</label>
-        <label><input id="overlay" type="checkbox" checked> overlay</label>
-        <span class="meta" id="pos">--</span>
+  <div class="app">
+    <header>
+      <div class="brand">
+        <div class="mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 6h16M4 12h16M4 18h10"/>
+          </svg>
+        </div>
+        <div>
+          <h1>TP2<span class="accent">/</span><span class="sub">Reentrenamiento</span></h1>
+          <div class="meta" id="root">--</div>
+        </div>
       </div>
-    </section>
-    <aside>
-      <section class="panel">
-        <h2>Frame</h2>
-        <div class="meta" id="frame-meta">--</div>
-      </section>
-      <section class="panel">
-        <h2>Critical Flags</h2>
-        <div class="flags" id="flags"></div>
-      </section>
-      <section class="panel">
-        <h2>Labels</h2>
-        <div class="labels" id="labels"></div>
-      </section>
-      <section class="panel">
-        <h2>Relabel</h2>
-        <div class="form">
-          <select id="class-select"></select>
-          <input id="class-input" placeholder="or new class">
-          <label><input id="valid" type="checkbox" checked> valid detection</label>
-          <textarea id="note" rows="3" placeholder="note"></textarea>
-          <button id="save">Save reviewed label</button>
-          <button class="danger" id="reject">Reject detection</button>
+      <div class="session-select">
+        <select id="session-select"></select>
+        <button id="refresh">Actualizar</button>
+      </div>
+      <div class="pills">
+        <div class="pill ok"><span class="dot"></span><span id="pill-frames">0 fr</span></div>
+        <div class="pill warn"><span class="dot"></span><span id="pill-critical">0 crit</span></div>
+        <div class="pill ok"><span class="dot"></span><span id="pill-reviewed">0 rev</span></div>
+      </div>
+    </header>
+    <main>
+      <section class="stage">
+        <div class="frame"><img id="frame" alt="recorded frame"></div>
+        <div class="deck">
+          <div class="left">
+            <button id="prev">Anterior</button>
+            <button id="next">Siguiente</button>
+            <label><input id="critical" type="checkbox"> solo criticos</label>
+            <label><input id="overlay" type="checkbox" checked> overlay</label>
+          </div>
+          <div class="right"><span class="pos" id="pos">--</span></div>
         </div>
       </section>
-    </aside>
-  </main>
+      <aside class="side">
+        <section class="card">
+          <h2>Sesion</h2>
+          <div class="row"><span class="k">Frames</span><span class="v" id="meta-frames">--</span></div>
+          <div class="row"><span class="k">Criticos</span><span class="v" id="meta-critical">--</span></div>
+          <div class="row"><span class="k">Imagenes</span><span class="v" id="meta-images">--</span></div>
+          <div class="row"><span class="k">Video</span><span class="v" id="meta-video">--</span></div>
+          <div class="row"><span class="k">Modificada</span><span class="v" id="meta-modified">--</span></div>
+        </section>
+        <section class="card">
+          <h2>Frame</h2>
+          <div class="row"><span class="k">Seq</span><span class="v" id="frame-seq">--</span></div>
+          <div class="row"><span class="k">Hora</span><span class="v" id="frame-time">--</span></div>
+          <div class="row"><span class="k">Inferencia</span><span class="v" id="frame-inf">--</span></div>
+          <div class="row"><span class="k">Accion</span><span class="v" id="frame-action">--</span></div>
+        </section>
+        <section class="card">
+          <h2>Flags Criticos</h2>
+          <div class="flags" id="flags"><div class="flag empty">Sin flags</div></div>
+        </section>
+        <section class="card">
+          <h2>Labels</h2>
+          <div class="labels" id="labels"><div class="label-row empty">Sin labels</div></div>
+        </section>
+        <section class="card">
+          <h2>Relabel</h2>
+          <div class="form">
+            <select id="class-select"></select>
+            <input id="class-input" placeholder="nueva clase">
+            <label><input id="valid" type="checkbox" checked> deteccion valida</label>
+            <textarea id="note" placeholder="nota"></textarea>
+            <button id="save">Guardar label</button>
+            <button class="danger" id="reject">Rechazar deteccion</button>
+          </div>
+        </section>
+      </aside>
+    </main>
+  </div>
   <script>
-    let session = null, idx = 0, selected = null, frameData = null;
     const $ = id => document.getElementById(id);
+    let catalog = null, session = null, sessionId = null, idx = 0, selected = null, frameData = null;
     async function api(path, opts) {
       const res = await fetch(path, opts || {cache: 'no-store'});
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'request failed');
       return data;
     }
-    function criticalIndexes() { return session ? session.critical_indexes : []; }
-    function visibleIndex(delta) {
-      if (!$('critical').checked) return Math.max(0, Math.min(session.frames - 1, idx + delta));
-      const list = criticalIndexes();
-      if (!list.length) return idx;
-      const cur = list.indexOf(idx);
-      const next = cur < 0 ? (delta >= 0 ? 0 : list.length - 1) : Math.max(0, Math.min(list.length - 1, cur + delta));
-      return list[next];
+    function enc(v) { return encodeURIComponent(v || ''); }
+    function sessionQuery(extra) { return 'session=' + enc(sessionId) + (extra ? '&' + extra : ''); }
+    function currentSummary() {
+      if (!catalog || !sessionId) return null;
+      return (catalog.sessions || []).find(item => item.id === sessionId) || null;
     }
-    async function loadSession() {
-      session = await api('/api/session');
-      $('root').textContent = session.root;
-      renderClasses(session.classes);
+    async function loadCatalog(preferred) {
+      catalog = await api('/api/sessions' + (preferred ? '?session=' + enc(preferred) : ''));
+      $('root').textContent = catalog.record_root || '--';
+      const select = $('session-select');
+      select.innerHTML = '';
+      if (!(catalog.sessions || []).length) {
+        const opt = document.createElement('option');
+        opt.value = ''; opt.textContent = 'No hay sesiones grabadas';
+        select.appendChild(opt);
+        renderEmpty();
+        return;
+      }
+      for (const item of catalog.sessions) {
+        const opt = document.createElement('option');
+        opt.value = item.id;
+        opt.textContent = item.id + ' · ' + item.frames + ' fr · ' + item.critical + ' crit';
+        select.appendChild(opt);
+      }
+      sessionId = preferred || catalog.selected_session_id || catalog.sessions[0].id;
+      select.value = sessionId;
+      await loadSession(sessionId);
+    }
+    async function loadSession(id) {
+      sessionId = id;
+      session = await api('/api/session?session=' + enc(id));
+      sessionId = session.selected_session_id;
+      renderClasses(session.classes || []);
+      renderSessionMeta();
       await loadFrame(0);
+    }
+    function renderSessionMeta() {
+      const s = currentSummary() || {};
+      $('pill-frames').textContent = (s.frames || session.frames || 0) + ' fr';
+      $('pill-critical').textContent = (s.critical || (session.critical_indexes || []).length || 0) + ' crit';
+      $('pill-reviewed').textContent = (s.reviewed || 0) + ' rev';
+      $('meta-frames').textContent = s.frames ?? session.frames ?? '--';
+      $('meta-critical').textContent = s.critical ?? (session.critical_indexes || []).length;
+      $('meta-images').textContent = s.images ?? '--';
+      $('meta-video').textContent = s.has_video ? 'session.mp4' : '--';
+      $('meta-modified').textContent = s.modified_at || '--';
     }
     function renderClasses(classes) {
       const sel = $('class-select');
@@ -421,37 +797,61 @@ INDEX_HTML = r"""<!doctype html>
         sel.appendChild(opt);
       }
     }
+    function criticalIndexes() { return session ? session.critical_indexes || [] : []; }
+    function visibleIndex(delta) {
+      if (!$('critical').checked) return Math.max(0, Math.min(session.frames - 1, idx + delta));
+      const list = criticalIndexes();
+      if (!list.length) return idx;
+      const cur = list.indexOf(idx);
+      const next = cur < 0 ? (delta >= 0 ? 0 : list.length - 1) : Math.max(0, Math.min(list.length - 1, cur + delta));
+      return list[next];
+    }
     async function loadFrame(newIdx) {
+      if (!sessionId || !session || !session.frames) { renderEmpty(); return; }
       idx = Math.max(0, Math.min(session.frames - 1, newIdx));
-      const data = await api('/api/frame?idx=' + idx);
+      const data = await api('/api/frame?' + sessionQuery('idx=' + idx));
       frameData = data.frame;
       selected = null;
-      $('frame').src = '/frame.jpg?idx=' + idx + '&overlay=' + ($('overlay').checked ? '1' : '0') + '&t=' + Date.now();
+      $('frame').src = '/frame.jpg?' + sessionQuery('idx=' + idx + '&overlay=' + ($('overlay').checked ? '1' : '0')) + '&t=' + Date.now();
       renderFrame();
     }
     function renderFrame() {
       $('pos').textContent = (idx + 1) + ' / ' + session.frames;
-      $('frame-meta').innerHTML = [
-        'frame_seq: ' + frameData.frame_seq,
-        'time: ' + (frameData.iso_time || '--'),
-        'image: ' + (frameData.image || '--'),
-        'video_frame: ' + ((frameData.video && frameData.video.frame_index) ?? '--'),
-        'inference_ms: ' + (frameData.inference_latency_ms ?? '--'),
-        'action: ' + (((frameData.autonomy || {}).action) || ((frameData.autonomy || {}).decision || {}).action || '--')
-      ].map(x => '<span>' + x + '</span>').join('');
+      $('frame-seq').textContent = frameData.frame_seq ?? '--';
+      $('frame-time').textContent = frameData.iso_time || '--';
+      $('frame-inf').textContent = frameData.inference_latency_ms == null ? '--' : frameData.inference_latency_ms + ' ms';
+      const autonomy = frameData.autonomy || {};
+      $('frame-action').textContent = autonomy.action || (autonomy.decision || {}).action || '--';
       const flags = (((frameData.critical || {}).flags) || []);
-      $('flags').innerHTML = flags.length ? flags.map(f => '<div class="flag"><b>' + (f.rule || '?') + '</b><br><span>' + JSON.stringify(f) + '</span></div>').join('') : '<div class="meta">none</div>';
+      $('flags').innerHTML = flags.length ? '' : '<div class="flag empty">Sin flags</div>';
+      for (const flag of flags) {
+        const div = document.createElement('div');
+        div.className = 'flag';
+        div.innerHTML = '<b>' + (flag.rule || '?') + '</b><br><span>' + JSON.stringify(flag) + '</span>';
+        $('flags').appendChild(div);
+      }
       const labels = frameData.labels || [];
-      $('labels').innerHTML = labels.length ? '' : '<div class="meta">no labels</div>';
+      $('labels').innerHTML = labels.length ? '' : '<div class="label-row empty">Sin labels</div>';
       labels.forEach((label, i) => {
         const review = label.review || {};
         const div = document.createElement('div');
         div.className = 'label-row' + (review.valid === false ? ' invalid' : '') + (selected === i ? ' active' : '');
-        div.innerHTML = '<span>#' + (label.track_id ?? '-') + ' ' + (review.class || label.class || 'object') + '<br><small>' + (label.confidence == null ? '--' : Math.round(label.confidence * 100) + '%') + '</small></span><span>' + label.index + '</span>';
+        const conf = label.confidence == null ? '--' : Math.round(label.confidence * 100) + '%';
+        div.innerHTML = '<span><span class="name">#' + (label.track_id ?? '-') + ' ' + (review.class || label.class || 'objeto') + '</span><br><small>' + conf + '</small></span><span>' + label.index + '</span>';
         div.onclick = () => selectLabel(i);
         $('labels').appendChild(div);
       });
       if (labels.length) selectLabel(0, false);
+    }
+    function renderEmpty() {
+      session = {frames: 0, critical_indexes: []};
+      $('frame').removeAttribute('src');
+      $('pos').textContent = '--';
+      $('pill-frames').textContent = '0 fr';
+      $('pill-critical').textContent = '0 crit';
+      $('pill-reviewed').textContent = '0 rev';
+      $('labels').innerHTML = '<div class="label-row empty">Sin sesiones</div>';
+      $('flags').innerHTML = '<div class="flag empty">Sin flags</div>';
     }
     function selectLabel(i, rerender=true) {
       selected = i;
@@ -464,29 +864,33 @@ INDEX_HTML = r"""<!doctype html>
       if (rerender) renderFrame();
     }
     async function saveReview(validOverride) {
-      if (selected == null) return;
+      if (selected == null || !frameData) return;
       const label = frameData.labels[selected];
       const cls = $('class-input').value.trim() || $('class-select').value || label.class || '';
       const valid = validOverride == null ? $('valid').checked : validOverride;
       const data = await api('/api/relabel', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({frame_seq: frameData.frame_seq, label_index: label.index, class: cls, valid, note: $('note').value})
+        body: JSON.stringify({session_id: sessionId, frame_seq: frameData.frame_seq, label_index: label.index, class: cls, valid, note: $('note').value})
       });
       renderClasses(data.classes);
+      await loadCatalog(sessionId);
       await loadFrame(idx);
     }
+    $('session-select').onchange = e => loadSession(e.target.value);
+    $('refresh').onclick = () => loadCatalog(sessionId);
     $('prev').onclick = () => loadFrame(visibleIndex(-1));
     $('next').onclick = () => loadFrame(visibleIndex(1));
     $('overlay').onchange = () => loadFrame(idx);
-    $('critical').onchange = () => { if ($('critical').checked && !((frameData.critical || {}).is_critical)) loadFrame(visibleIndex(1)); };
+    $('critical').onchange = () => { if ($('critical').checked && frameData && !((frameData.critical || {}).is_critical)) loadFrame(visibleIndex(1)); };
     $('save').onclick = () => saveReview(null);
     $('reject').onclick = () => saveReview(false);
     window.addEventListener('keydown', e => {
       if (e.key === 'ArrowLeft') loadFrame(visibleIndex(-1));
       if (e.key === 'ArrowRight') loadFrame(visibleIndex(1));
     });
-    loadSession().catch(err => alert(err.message));
+    const params = new URLSearchParams(location.search);
+    loadCatalog(params.get('session')).catch(err => alert(err.message));
   </script>
 </body>
 </html>
@@ -494,21 +898,23 @@ INDEX_HTML = r"""<!doctype html>
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Replay and relabel a TP2 recorded session.")
-    parser.add_argument("session_dir", type=Path, help="Directory containing manifest.jsonl")
+    parser = argparse.ArgumentParser(description="Replay and relabel TP2 recorded sessions.")
+    parser.add_argument(
+        "record_root",
+        nargs="?",
+        type=Path,
+        default=DEFAULT_RECORD_ROOT,
+        help="Session root directory, or one specific session directory with manifest.jsonl",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8090)
     args = parser.parse_args()
 
-    session = SessionData.load(args.session_dir)
-    if not session.manifest:
-        print(f"No frames found in {session.root / 'manifest.jsonl'}", file=sys.stderr)
-        return 2
-
-    ReplayerHandler.session = session
+    catalog = SessionCatalog(args.record_root)
+    ReplayerHandler.catalog = catalog
     server = ThreadingHTTPServer((args.host, args.port), ReplayerHandler)
     print(f"Replayer listening on http://{args.host}:{args.port}/")
-    print(f"Session: {session.root}")
+    print(f"Session root: {catalog.record_root}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

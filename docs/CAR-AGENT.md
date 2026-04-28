@@ -49,7 +49,7 @@ Normal sessions use one EPC runtime from `servicios/`:
   - records include Roboflow predictions, annotated MP4 video, candidate labels, critical flags, autonomous estimate, selected target, command, backend and latency
   - critical flags include low-confidence detections, class changes on the same recorder track, short-lived detections, ambiguous autonomous decisions, and operator overrides during autonomous mode
   - saved labels are estimates/candidates, not ground truth; they must be curated before reuploading to Roboflow
-  - `servicios/session_replayer.py` replays sessions offline and writes reviewed labels beside the capture
+  - the live web UI can start the retraining/replayer server; `servicios/session_replayer.py` reads the recording root directly, shows a session selector, and writes reviewed labels beside the selected capture
 
 ## LTE Binding Context
 

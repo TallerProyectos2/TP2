@@ -62,6 +62,7 @@ Operational files are stored in repo `servicios/` and validated on EPC under `/h
   - `coche.py` (`172.16.0.1:20001` UDP, `0.0.0.0:8088` web)
   - `autonomous_driver.py` deterministic autonomous controller used by `coche.py`
   - optional session recorder under `TP2_SESSION_RECORD_DIR` for dataset candidates
+  - manual web control is gated by drive mode; stale manual posts cannot switch an active autonomous session back to manual
 - Inference files:
   - `start_local_inference_server.py` (optional EPC local endpoint, default `127.0.0.1:9001`)
   - `inferencia.py` (CLI execution and annotated output)

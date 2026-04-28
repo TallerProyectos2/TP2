@@ -141,7 +141,7 @@ ops/bin/tp2-status
 - status endpoint: `http://127.0.0.1:8088/status.json` on EPC
 - operator URL over Tailscale: `http://100.97.19.112:8088/`
 - camera stream: `/video.mjpg`
-- control API: `POST /control` applies browser commands directly; `POST /control/neutral` remains available for internal safe-stop calls
+- control API: `POST /control` applies non-neutral browser commands only while the runtime is in `manual`; neutral manual posts stay unarmed; `POST /control/neutral` releases manual control without leaving `autonomous`; `POST /control/stop` forces manual neutral stop
 - mode API: `POST /mode` switches between `manual` and `autonomous`; manual remains the safe startup mode
 - recording API: `POST /recording` starts/stops dataset capture; `GET /recording.json` reports output path and counters
 - safety timeout: `TP2_WEB_CONTROL_TIMEOUT_SEC` forces neutral when browser commands stop

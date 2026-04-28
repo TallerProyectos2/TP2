@@ -548,6 +548,11 @@ class RuntimeState:
     ) -> dict[str, Any]:
         with self.lock:
             self.web_control_posts += 1
+            if self.drive_mode != "manual":
+                if self.drive_mode == "autonomous":
+                    self._apply_autonomous_control_locked()
+                return self.control_snapshot_locked()
+
             self.drive_mode = "manual"
             if not ENABLE_WEB_CONTROL:
                 self.control_armed = False
@@ -555,10 +560,31 @@ class RuntimeState:
                 self.steering = NEUTRAL_STEERING
                 self.throttle = NEUTRAL_THROTTLE
             else:
-                self.control_armed = True
-                self.control_source = source
-                self.steering = round(clamp(steering, -1.0, 1.0, NEUTRAL_STEERING), 3)
-                self.throttle = round(clamp(throttle, -1.0, 1.0, NEUTRAL_THROTTLE), 3)
+                steering_value = round(clamp(steering, -1.0, 1.0, NEUTRAL_STEERING), 3)
+                throttle_value = round(clamp(throttle, -1.0, 1.0, NEUTRAL_THROTTLE), 3)
+                is_neutral = (
+                    abs(steering_value - NEUTRAL_STEERING) <= 0.01
+                    and abs(throttle_value - NEUTRAL_THROTTLE) <= 0.01
+                )
+                self.control_armed = not is_neutral
+                self.control_source = "neutral" if is_neutral else source
+                self.steering = steering_value
+                self.throttle = throttle_value
+            self.control_updated_at = wall_time()
+            self.control_seq += 1
+            return self.control_snapshot_locked()
+
+    def release_manual_control(self, source: str = "manual-release") -> dict[str, Any]:
+        with self.lock:
+            if self.drive_mode != "manual":
+                if self.drive_mode == "autonomous":
+                    self._apply_autonomous_control_locked()
+                return self.control_snapshot_locked()
+
+            self.control_armed = False
+            self.control_source = source
+            self.steering = NEUTRAL_STEERING
+            self.throttle = NEUTRAL_THROTTLE
             self.control_updated_at = wall_time()
             self.control_seq += 1
             return self.control_snapshot_locked()
@@ -1077,7 +1103,10 @@ class LiveHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": status.get("last_error") is None, "recording": status})
             return
         if path in {"/control/neutral", "/neutral"}:
-            self.send_json({"ok": True, "control": self.state.neutral("neutral")})
+            self.send_json({"ok": True, "control": self.state.release_manual_control("neutral")})
+            return
+        if path in {"/control/stop", "/stop"}:
+            self.send_json({"ok": True, "control": self.state.neutral("stop")})
             return
         if path != "/control":
             self.send_error(404, "not found")
@@ -1095,8 +1124,10 @@ class LiveHandler(BaseHTTPRequestHandler):
             return
 
         action = str(payload.get("action", "")).strip().lower()
-        if action in {"neutral", "stop", "estop"}:
-            control = self.state.neutral("stop" if action != "neutral" else "neutral")
+        if action in {"stop", "estop"}:
+            control = self.state.neutral("stop")
+        elif action == "neutral":
+            control = self.state.release_manual_control("neutral")
         else:
             control = self.state.set_control(
                 payload.get("steering", NEUTRAL_STEERING),
@@ -2263,6 +2294,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     let driveMode = 'manual';
     let lastSent = { steering: NEUTRAL_STEERING, throttle: 0.0 };
     let viewControl = { steering: NEUTRAL_STEERING, throttle: 0.0 };
+    let manualNeutralPosted = true;
 
     /* sparkline buffers */
     const LAT_BUF = [], FPS_BUF = [];
@@ -2296,6 +2328,11 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       driveMode = mode === 'autonomous' ? 'autonomous' : 'manual';
       els.modeManual.classList.toggle('active', driveMode === 'manual');
       els.modeAuto.classList.toggle('active', driveMode === 'autonomous');
+    }
+
+    function clearManualKeys() {
+      keys.clear();
+      paintKeys();
     }
 
     function axisFromKeys() {
@@ -2362,7 +2399,8 @@ LIVE_VIEW_HTML = r"""<!doctype html>
 
     async function postMode(mode) {
       renderMode(mode);
-      keys.clear(); paintKeys();
+      clearManualKeys();
+      manualNeutralPosted = true;
       try {
         const res = await fetch('/mode', {
           method: 'POST',
@@ -2390,14 +2428,31 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       }
     }
 
-    async function neutral() {
-      keys.clear(); paintKeys();
+    async function releaseManual() {
+      clearManualKeys();
+      lastSent = { steering: NEUTRAL_STEERING, throttle: 0.0 };
+      manualNeutralPosted = true;
+      renderControl(NEUTRAL_STEERING, 0.0);
+      try { await fetch('/control/neutral', { method: 'POST', cache: 'no-store' }); } catch (_) {}
+    }
+
+    async function focusSafetyRelease() {
+      if (driveMode === 'manual') {
+        await releaseManual();
+      } else {
+        clearManualKeys();
+      }
+    }
+
+    async function emergencyStop() {
+      clearManualKeys();
       renderMode('manual');
+      manualNeutralPosted = true;
       lastSent = { steering: NEUTRAL_STEERING, throttle: 0.0 };
       renderControl(NEUTRAL_STEERING, 0.0);
       setPillState(els.pillCtrl, 'bad');
       els.pillCtrlVal.textContent = 'OFF';
-      try { await fetch('/control/neutral', { method: 'POST', cache: 'no-store' }); } catch (_) {}
+      try { await fetch('/control/stop', { method: 'POST', cache: 'no-store' }); } catch (_) {}
     }
 
     window.addEventListener('keydown', (event) => {
@@ -2412,21 +2467,29 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       keys.delete(event.key.toLowerCase());
       paintKeys();
     });
-    window.addEventListener('blur', neutral);
-    document.addEventListener('visibilitychange', () => { if (document.hidden) neutral(); });
+    window.addEventListener('blur', focusSafetyRelease);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) focusSafetyRelease(); });
 
     els.modeManual.addEventListener('click', () => postMode('manual'));
     els.modeAuto.addEventListener('click', () => postMode('autonomous'));
-    els.stop.addEventListener('click', neutral);
+    els.stop.addEventListener('click', emergencyStop);
     els.record.addEventListener('click', toggleRecording);
 
     /* manual control loop */
     setInterval(() => {
       if (driveMode === 'manual') {
         const c = axisFromKeys();
-        lastSent = c;
-        renderControl(c.steering, c.throttle);
-        postControl(c);
+        const active = Math.abs(c.steering - NEUTRAL_STEERING) > 0.01 || Math.abs(c.throttle) > 0.01;
+        if (active) {
+          manualNeutralPosted = false;
+          lastSent = c;
+          renderControl(c.steering, c.throttle);
+          postControl(c);
+        } else {
+          lastSent = { steering: NEUTRAL_STEERING, throttle: 0.0 };
+          renderControl(NEUTRAL_STEERING, 0.0);
+          if (!manualNeutralPosted) releaseManual();
+        }
       }
     }, 50);
 

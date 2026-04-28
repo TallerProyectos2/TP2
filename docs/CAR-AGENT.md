@@ -67,7 +67,7 @@ Normal sessions use one EPC runtime from `servicios/`:
 - Current LTE-side runtime bind is `172.16.0.1:20001`.
 - `coche.py` is the only normal car runtime in `servicios/`.
 - `coche.py` exposes the live camera/inference/operator status and remote manual control web view on `8088/TCP`; use `http://100.97.19.112:8088/` from Tailscale during normal EPC-run sessions.
-- Browser control is direct once the operator opens the web UI. It has a watchdog: if the web UI stops sending commands, EPC returns to neutral instead of holding the last throttle.
+- Browser control is direct only in manual mode once the operator opens the web UI. Neutral manual posts do not arm the control path, and the watchdog returns active manual commands to neutral instead of holding the last throttle. Manual control release does not leave autonomous mode; the Stop button is the explicit manual neutral stop.
 - The web UI exposes `POST /mode` for `manual` and `autonomous`. Manual is the safe default; autonomous should only be enabled after live camera frames and inference are visible.
 - The web UI exposes `POST /recording` for dataset capture. Default recording state is controlled by `TP2_SESSION_RECORD_AUTOSTART`; normal operation should keep it off unless data capture is intentional.
 - `scripts_profesor/car1_grupo4.py` is a professor-style manual-control server adapted for Grupo 4. It intentionally keeps the professor script behavior and binds the LTE runtime address `172.16.0.1:20001`, so do not run it at the same time as `tp2-car-control.service`.

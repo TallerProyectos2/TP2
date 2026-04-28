@@ -120,6 +120,54 @@ inactive
 
 Jetson endpoint `http://100.115.99.8:9001/info` timed out from EPC during this validation window, so live Jetson inference was not claimed as validated for this change.
 
+## Deployment Evidence
+
+GitHub:
+
+- pushed commit `c642ae2` to `origin/main`
+
+EPC repository:
+
+```bash
+ssh tp2@100.97.19.112 'cd /home/tp2/TP2_red4G && git pull --ff-only origin main && git rev-parse --short HEAD'
+```
+
+Observed:
+
+```text
+c642ae2
+```
+
+EPC tests after pull:
+
+```bash
+ssh tp2@100.97.19.112 'cd /home/tp2/TP2_red4G && bash -lc "source /home/tp2/miniforge3/etc/profile.d/conda.sh && conda activate tp2 && PYTHONPATH=servicios python -m py_compile servicios/coche.py servicios/roboflow_runtime.py servicios/session_replayer.py tests/test_coche_runtime.py tests/test_roboflow_runtime.py && PYTHONPATH=servicios python -m unittest discover -s tests"'
+```
+
+Result:
+
+```text
+Ran 22 tests in 0.002s
+OK
+```
+
+Installed EPC systemd unit templates without starting services:
+
+```bash
+ssh tp2@100.97.19.112 'cd /home/tp2/TP2_red4G && printf "%s\n" "TP2_EPC_SSH=local" > /tmp/tp2-local-install.env && TP2_LAB_CONFIG=/tmp/tp2-local-install.env ops/bin/tp2-install-systemd epc && rm -f /tmp/tp2-local-install.env'
+```
+
+Post-install unit check:
+
+```text
+Environment=TP2_ENABLE_INFERENCE=1
+Environment=TP2_SESSION_RECORD_AUTOSTART=1
+Environment=TP2_SESSION_RECORD_VIDEO=1
+Environment=TP2_SESSION_RECORD_CRITICAL_IMAGES=1
+ExecStart=/home/tp2/miniforge3/bin/conda run --no-capture-output -n tp2 python -u /home/tp2/TP2_red4G/servicios/coche.py
+inactive
+```
+
 ## Notes
 
 - No firmware changes were made.

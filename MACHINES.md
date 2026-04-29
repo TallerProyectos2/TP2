@@ -113,6 +113,7 @@ Do not store passwords here.
 - Autostart note:
   - car-side runtime is started manually by operators
   - EPC automation checks the car UE best-effort before publishing the `AM-Cloud` state, but does not block by default
+  - EPC automation does not restart the car-side service unless `TP2_RESTART_CAR_ON_UP=1` is explicitly configured
 
 ## Ownership Rules
 

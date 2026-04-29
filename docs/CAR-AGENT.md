@@ -41,6 +41,7 @@ Normal sessions use one EPC runtime from `servicios/`:
   - autonomous forward movement uses positive throttle `+0.65`; stop, ambiguity, stale frame or stale inference still force neutral `0.0`
   - outgoing UDP steering is trimmed by `TP2_STEERING_TRIM` before packet send; current default `-0.08` compensates the physical left drift with a small rightward correction
   - nearest/relevant signs are selected by bounding-box area, confidence, persistence, image zone (`left`, `center`, `right`), and maneuver state
+  - default sign thresholds are tuned to act on slightly smaller/farther signs, so STOP and turn decisions begin before the car reaches the sign
   - detections are tracked across frames; default turn decisions trigger on the first valid confirmed frame to reduce reaction delay
   - the FSM holds stops, maintains 90-degree open-loop turns for the configured maneuver window, and applies cooldowns to avoid repeating the same sign
   - stale frame or stale inference state forces neutral instead of continuing on old detections

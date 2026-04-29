@@ -102,6 +102,12 @@ class AutonomousDriverTest(unittest.TestCase):
         self.assertEqual(decision.action, "approach-stop")
         self.assertGreater(decision.throttle, self.config.neutral_throttle)
 
+    def test_mid_distance_stop_triggers_before_sign_is_close(self):
+        decision = self.decide([prediction(SIGN_STOP, x=320, width=65, height=65)])
+        self.assertEqual(decision.action, "stop")
+        self.assertEqual(decision.throttle, self.config.neutral_throttle)
+        self.assertEqual(decision.target.distance, "mid")
+
     def test_no_relevant_sign_continues(self):
         decision = self.decide(
             [
@@ -186,6 +192,12 @@ class AutonomousDriverTest(unittest.TestCase):
         decision = self.decide([prediction(SIGN_TURN_LEFT, x=160, width=180, height=180)])
         self.assertEqual(decision.action, "turn-left")
         self.assertEqual(decision.raw_throttle, 0.65)
+        self.assertIn("turn-90", decision.reason)
+
+    def test_mid_distance_turn_starts_before_sign_is_close(self):
+        decision = self.decide([prediction(SIGN_TURN_RIGHT, x=480, width=65, height=65)])
+        self.assertEqual(decision.action, "turn-right")
+        self.assertEqual(decision.target.distance, "mid")
         self.assertIn("turn-90", decision.reason)
 
     def test_turn_hold_is_configured_for_ninety_degree_maneuver(self):

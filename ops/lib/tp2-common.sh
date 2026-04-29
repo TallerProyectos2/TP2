@@ -52,7 +52,7 @@ tp2_load_config() {
   : "${TP2_ENB_SRSENB_SERVICE:=tp2-srsenb.service}"
   : "${TP2_EPC_SRSEPC_CMD:=/usr/local/bin/srsepc /home/tp2/.config/srsran/epc.conf}"
   : "${TP2_ENB_SRSENB_CMD:=/usr/local/bin/srsenb /home/tp2/.config/srsran/enb.conf}"
-  : "${TP2_EPC_MQTT_SERVICE:=mosquitto.service}"
+  : "${TP2_EPC_MQTT_SERVICE:=mosquitto}"
   : "${TP2_EPC_LOCAL_INFERENCE_SERVICE:=tp2-local-inference.service}"
   : "${TP2_EPC_CAR_CONTROL_SERVICE:=tp2-car-control.service}"
   : "${TP2_EPC_AM_CLOUD_SERVICE:=tp2-car-command-am-cloud.service}"
@@ -62,15 +62,20 @@ tp2_load_config() {
   : "${TP2_START_JETSON_INFERENCE:=1}"
   : "${TP2_STOP_MOSQUITTO_ON_DOWN:=0}"
   : "${TP2_STOP_JETSON_ON_DOWN:=0}"
-  : "${TP2_REQUIRE_CAR_UE:=1}"
+  : "${TP2_REQUIRE_CAR_UE:=0}"
+  : "${TP2_RESTART_CAR_ON_UP:=0}"
   : "${TP2_CAR_WEB_URL:=http://127.0.0.1:8088/status.json}"
   : "${TP2_CAR_WEB_PUBLIC_URL:=http://100.97.19.112:8088/}"
   : "${TP2_CHECK_CAR_WEB:=1}"
 
+  : "${TP2_PUBLISH_CAR_MODE_ON_UP:=1}"
+  : "${TP2_MQTT_CLEAR_RETAINED_ON_UP:=1}"
+  : "${TP2_MQTT_RETAIN_COMMAND:=0}"
   : "${TP2_MQTT_HOST:=172.16.0.1}"
   : "${TP2_MQTT_PORT:=1883}"
   : "${TP2_MQTT_COMMAND_TOPIC:=1/command}"
   : "${TP2_MQTT_COMMAND_PAYLOAD:=AM-Cloud}"
+  : "${TP2_MQTT_SUB_TIMEOUT_SEC:=2}"
 
   : "${TP2_WAIT_SSH_TIMEOUT_SEC:=20}"
   : "${TP2_SSH_CONNECT_TIMEOUT_SEC:=10}"
@@ -189,6 +194,11 @@ tp2_remote_systemctl() {
   local action="$2"
   local unit="$3"
 
+  if [[ "${unit}" == "mosquitto" && ( "${action}" == "start" || "${action}" == "stop" ) ]]; then
+    tp2_remote_sh "${target}" "sudo -n systemctl ${action} mosquitto || sudo -n systemctl ${action} mosquitto.service"
+    return
+  fi
+
   tp2_remote_sh "${target}" "sudo -n systemctl ${action} ${unit}"
 }
 
@@ -196,6 +206,11 @@ tp2_remote_systemctl_quiet() {
   local target="$1"
   local action="$2"
   local unit="$3"
+
+  if [[ "${unit}" == "mosquitto" && ( "${action}" == "start" || "${action}" == "stop" ) ]]; then
+    tp2_remote_sh "${target}" "sudo -n systemctl ${action} mosquitto >/dev/null 2>&1 || sudo -n systemctl ${action} mosquitto.service >/dev/null 2>&1 || true"
+    return
+  fi
 
   tp2_remote_sh "${target}" "sudo -n systemctl ${action} ${unit} >/dev/null 2>&1 || true"
 }
@@ -213,6 +228,74 @@ tp2_remote_can_sudo_systemctl() {
   local unit="$3"
 
   tp2_remote_sh "${target}" "sudo -n -l /usr/bin/systemctl ${action} ${unit} >/dev/null"
+}
+
+tp2_mqtt_retained_command_payload() {
+  local host_q
+  local port_q
+  local topic_q
+  local timeout_q
+
+  printf -v host_q "%q" "${TP2_MQTT_HOST}"
+  printf -v port_q "%q" "${TP2_MQTT_PORT}"
+  printf -v topic_q "%q" "${TP2_MQTT_COMMAND_TOPIC}"
+  printf -v timeout_q "%q" "${TP2_MQTT_SUB_TIMEOUT_SEC}"
+
+  tp2_remote_sh "${TP2_EPC_SSH}" "
+timeout ${timeout_q} mosquitto_sub -h ${host_q} -p ${port_q} -t ${topic_q} -C 1 2>/dev/null || true
+"
+}
+
+tp2_clear_retained_car_mode() {
+  local host_q
+  local port_q
+  local topic_q
+
+  printf -v host_q "%q" "${TP2_MQTT_HOST}"
+  printf -v port_q "%q" "${TP2_MQTT_PORT}"
+  printf -v topic_q "%q" "${TP2_MQTT_COMMAND_TOPIC}"
+
+  tp2_remote_sh "${TP2_EPC_SSH}" \
+    "mosquitto_pub -q 1 -r -n -h ${host_q} -p ${port_q} -t ${topic_q}"
+}
+
+tp2_prepare_car_mode_topic() {
+  [[ "${TP2_MQTT_CLEAR_RETAINED_ON_UP}" == "1" ]] || return 0
+
+  local retained
+  retained="$(tp2_mqtt_retained_command_payload | head -n 1 || true)"
+  if [[ -z "${retained}" ]]; then
+    tp2_log "MQTT ${TP2_MQTT_COMMAND_TOPIC}: no retained command to clear"
+    return 0
+  fi
+
+  tp2_log "MQTT ${TP2_MQTT_COMMAND_TOPIC}: clearing retained command before startup publish"
+  tp2_clear_retained_car_mode
+}
+
+tp2_publish_car_mode_once() {
+  [[ "${TP2_PUBLISH_CAR_MODE_ON_UP}" == "1" ]] || {
+    tp2_log "Skipping car mode publish because TP2_PUBLISH_CAR_MODE_ON_UP=0"
+    return 0
+  }
+
+  local host_q
+  local port_q
+  local topic_q
+  local payload_q
+  local retain_arg=""
+
+  printf -v host_q "%q" "${TP2_MQTT_HOST}"
+  printf -v port_q "%q" "${TP2_MQTT_PORT}"
+  printf -v topic_q "%q" "${TP2_MQTT_COMMAND_TOPIC}"
+  printf -v payload_q "%q" "${TP2_MQTT_COMMAND_PAYLOAD}"
+  if [[ "${TP2_MQTT_RETAIN_COMMAND}" == "1" ]]; then
+    retain_arg="-r "
+    tp2_warn "Publishing retained car mode because TP2_MQTT_RETAIN_COMMAND=1"
+  fi
+
+  tp2_remote_sh "${TP2_EPC_SSH}" \
+    "mosquitto_pub -q 1 ${retain_arg}-h ${host_q} -p ${port_q} -t ${topic_q} -m ${payload_q}"
 }
 
 tp2_remote_has_process_cmd() {

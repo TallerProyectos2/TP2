@@ -56,7 +56,7 @@ TP2_ENB_SSH=tp2@10.10.10.2
 TP2_ENB_SSH_PROXY=tp2@100.97.19.112
 ```
 
-The car runtime is intentionally outside this automation. Operators start and stop the car-side process manually.
+The car runtime is intentionally outside this automation. Operators start and stop the car-side process manually. `tp2-up` does not restart the car-side service unless `TP2_RESTART_CAR_ON_UP=1` is explicitly set in host-local config.
 The EPC automation no longer blocks on UE IP detection by default because the modem attach state can be valid even when the previous fixed target `172.16.0.2` does not answer ping or the attach log is not fresh. The live HSS was observed with dynamic UE allocation on `2026-04-27`, so confirm the current IP from the latest `srsepc` log when troubleshooting.
 
 ## Startup Order
@@ -72,11 +72,11 @@ The EPC automation no longer blocks on UE IP detection by default because the mo
 7. Check the car UE path once: ping the configured `TP2_CAR_UE_IP` or inspect the latest EPC attach log for IMSI `901650000052126`. Continue when not confirmed unless `TP2_REQUIRE_CAR_UE=1`.
 8. Check the Jetson inference endpoint from EPC. If `TP2_JETSON_SSH` and `TP2_START_JETSON_INFERENCE=1` are configured, start `tp2-roboflow-inference.service` first.
 9. On EPC, start `tp2-local-inference.service` when local fallback is enabled.
-10. On EPC, start `mosquitto.service`.
+10. On EPC, start Mosquitto with `sudo systemctl start mosquitto`, then clear any stale retained payload on the car command topic when `TP2_MQTT_CLEAR_RETAINED_ON_UP=1`.
 11. On EPC, start `tp2-car-control.service`.
-12. Re-check the car UE IP once before publishing `AM-Cloud`. Continue when not confirmed unless `TP2_REQUIRE_CAR_UE=1`.
+12. Re-check the car UE IP once before publishing `AM-Cloud`. Continue when not confirmed unless `TP2_REQUIRE_CAR_UE=1`. Restart the car-side systemd service only when `TP2_RESTART_CAR_ON_UP=1`.
 13. Check the EPC live video web endpoint.
-14. On EPC, publish `AM-Cloud` with `tp2-car-command-am-cloud.service`.
+14. On EPC, publish `AM-Cloud` once with `mosquitto_pub -q 1` and no retained flag by default. The legacy `tp2-car-command-am-cloud.service` remains installable but is not the normal `tp2-up` publish path.
 
 Profiles:
 
@@ -98,6 +98,8 @@ If a host-local `EnvironmentFile` sets the same inference variables, inspect the
 6. Optionally stop Jetson inference if `TP2_STOP_JETSON_ON_DOWN=1`.
 
 The default keeps Mosquitto and Jetson inference alive because they are safe support services and may be shared across checks.
+
+Mosquitto start/stop operations must use the broker unit directly (`sudo systemctl start mosquitto` and `sudo systemctl stop mosquitto`). The repository sudoers template allows both `mosquitto` and `mosquitto.service` spellings for compatibility, but `tp2-up`/`tp2-down` default to `mosquitto`.
 
 ## Installation
 

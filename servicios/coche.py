@@ -85,7 +85,7 @@ CONTROL_TIMEOUT_SEC = env_float("TP2_WEB_CONTROL_TIMEOUT_SEC", 0.45)
 CONTROL_TX_HZ = max(1.0, env_float("TP2_CONTROL_TX_HZ", 20.0))
 CLIENT_ADDR_TTL_SEC = env_float("TP2_CLIENT_ADDR_TTL_SEC", 3.0)
 
-INFERENCE_MIN_INTERVAL_SEC = env_float("TP2_INFERENCE_MIN_INTERVAL_SEC", 0.10)
+INFERENCE_MIN_INTERVAL_SEC = env_float("TP2_INFERENCE_MIN_INTERVAL_SEC", 0.07)
 INFERENCE_RETRY_SEC = env_float("TP2_INFERENCE_RETRY_SEC", 2.0)
 INFERENCE_MIN_CONFIDENCE = env_float("TP2_INFERENCE_MIN_CONFIDENCE", 0.20)
 OVERLAY_MAX_AGE_SEC = env_float("TP2_OVERLAY_MAX_AGE_SEC", 1.25)
@@ -99,8 +99,8 @@ AUTONOMOUS_CONFIG = AutonomousConfig(
     ),
     stale_prediction_sec=env_float("TP2_AUTONOMOUS_STALE_SEC", 1.25),
     max_frame_age_sec=env_float("TP2_AUTONOMOUS_MAX_FRAME_AGE_SEC", 1.0),
-    min_area_ratio=env_float("TP2_AUTONOMOUS_MIN_AREA_RATIO", 0.004),
-    near_area_ratio=env_float("TP2_AUTONOMOUS_NEAR_AREA_RATIO", 0.045),
+    min_area_ratio=env_float("TP2_AUTONOMOUS_MIN_AREA_RATIO", 0.003),
+    near_area_ratio=env_float("TP2_AUTONOMOUS_NEAR_AREA_RATIO", 0.030),
     center_left=env_float("TP2_AUTONOMOUS_CENTER_LEFT", 0.40),
     center_right=env_float("TP2_AUTONOMOUS_CENTER_RIGHT", 0.60),
     neutral_steering=NEUTRAL_STEERING,

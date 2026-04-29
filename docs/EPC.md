@@ -66,7 +66,8 @@ Operational files are stored in repo `servicios/` and validated on EPC under `/h
   - manual web control is gated by drive mode; stale manual posts cannot switch an active autonomous session back to manual
   - autonomous forward commands are clamped to non-negative throttle and default to `+0.65`
   - outgoing UDP steering applies `TP2_STEERING_TRIM=-0.08` by default to compensate the current physical left drift; `/status.json` exposes `effective_steering`
-  - autonomous inference submits frames every `0.10 s` by default when frames are available
+  - autonomous inference submits frames every `0.07 s` by default when frames are available
+  - autonomous sign filtering accepts smaller/farther signs by default (`TP2_AUTONOMOUS_MIN_AREA_RATIO=0.003`, `TP2_AUTONOMOUS_NEAR_AREA_RATIO=0.030`) so STOP and turn decisions begin earlier
   - turn signs trigger from the first valid confirmed detection and use a timed 90-degree open-loop maneuver by default
 - Inference files:
   - `start_local_inference_server.py` (optional EPC local endpoint, default `127.0.0.1:9001`)

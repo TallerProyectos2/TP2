@@ -43,8 +43,8 @@ class AutonomousConfig:
     min_confidence: float = 0.35
     stale_prediction_sec: float = 1.25
     max_frame_age_sec: float = 1.0
-    min_area_ratio: float = 0.004
-    near_area_ratio: float = 0.045
+    min_area_ratio: float = 0.003
+    near_area_ratio: float = 0.030
     center_left: float = 0.40
     center_right: float = 0.60
     neutral_steering: float = 0.25

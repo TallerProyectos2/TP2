@@ -6,6 +6,8 @@ Cmnd_Alias TP2_EPC_SYSTEMCTL = \
     /usr/bin/systemctl stop tp2-srsepc.service, \
     /usr/bin/systemctl start tp2-local-inference.service, \
     /usr/bin/systemctl stop tp2-local-inference.service, \
+    /usr/bin/systemctl start mosquitto, \
+    /usr/bin/systemctl stop mosquitto, \
     /usr/bin/systemctl start mosquitto.service, \
     /usr/bin/systemctl stop mosquitto.service, \
     /usr/bin/systemctl start tp2-car-control.service, \

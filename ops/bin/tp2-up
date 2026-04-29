@@ -115,6 +115,7 @@ fi
 tp2_log "Starting MQTT broker on EPC"
 tp2_remote_systemctl "${TP2_EPC_SSH}" start "${TP2_EPC_MQTT_SERVICE}"
 tp2_wait_service_active "${TP2_EPC_SSH}" "${TP2_EPC_MQTT_SERVICE}"
+tp2_prepare_car_mode_topic
 
 tp2_log "Starting EPC car control"
 tp2_remote_systemctl "${TP2_EPC_SSH}" start "${TP2_EPC_CAR_CONTROL_SERVICE}"
@@ -122,11 +123,15 @@ tp2_wait_service_active "${TP2_EPC_SSH}" "${TP2_EPC_CAR_CONTROL_SERVICE}"
 tp2_wait_remote "${TP2_EPC_SSH}" "${TP2_WAIT_SERVICE_TIMEOUT_SEC}" "EPC control UDP port" \
   "ss -H -lun | grep -q ':20001'"
 
-tp2_log "Discovering car SSH endpoint through EPC"
-car_ssh_ip="$(tp2_wait_car_ssh_ip "${TP2_WAIT_UE_TIMEOUT_SEC}")" || \
-  tp2_die "Could not discover car SSH endpoint from EPC within ${TP2_WAIT_UE_TIMEOUT_SEC}s"
-tp2_log "Car SSH endpoint detected at ${car_ssh_ip}"
-tp2_restart_car_service_via_epc "${car_ssh_ip}"
+if [[ "${TP2_RESTART_CAR_ON_UP}" == "1" ]]; then
+  tp2_log "Discovering car SSH endpoint through EPC"
+  car_ssh_ip="$(tp2_wait_car_ssh_ip "${TP2_WAIT_UE_TIMEOUT_SEC}")" || \
+    tp2_die "Could not discover car SSH endpoint from EPC within ${TP2_WAIT_UE_TIMEOUT_SEC}s"
+  tp2_log "Car SSH endpoint detected at ${car_ssh_ip}"
+  tp2_restart_car_service_via_epc "${car_ssh_ip}"
+else
+  tp2_maybe_wait_car_ue "Checking car UE before mode publish"
+fi
 
 if [[ "${TP2_CHECK_CAR_WEB}" == "1" ]]; then
   tp2_log "Checking EPC live video web endpoint"
@@ -134,7 +139,7 @@ if [[ "${TP2_CHECK_CAR_WEB}" == "1" ]]; then
     "curl -fsS --max-time 2 ${TP2_CAR_WEB_URL} >/dev/null"
 fi
 
-tp2_log "Publishing car AM-Cloud mode"
-tp2_remote_systemctl "${TP2_EPC_SSH}" start "${TP2_EPC_AM_CLOUD_SERVICE}"
+tp2_log "Publishing car mode once over MQTT"
+tp2_publish_car_mode_once
 
 tp2_log "TP2 startup sequence completed"

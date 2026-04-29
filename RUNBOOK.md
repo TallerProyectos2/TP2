@@ -27,7 +27,8 @@ The manual order below remains the operational source for troubleshooting.
    - inference endpoint (`start_local_inference_server.py`) if local inference path is needed
    - live video/control web view from `coche.py` on `0.0.0.0:8088`
 9. Publish the current car mode when required:
-   - `mosquitto_pub -q 1 -r -h 172.16.0.1 -p 1883 -t 1/command -m "AM-Cloud"`
+   - `mosquitto_pub -q 1 -h 172.16.0.1 -p 1883 -t 1/command -m "AM-Cloud"`
+   - Do not retain this command by default. `tp2-up` clears stale retained payloads before startup publish to avoid replaying `AM-Cloud` on every car MQTT reconnect.
 10. Open the live operator view from Tailscale at `http://100.97.19.112:8088/`.
     - Keep manual mode selected for initial safety checks.
     - Switch to autonomous mode only after live frames and fresh inference status are visible.
@@ -60,7 +61,8 @@ The manual order below remains the operational source for troubleshooting.
 - `coche.py` exposes `POST /mode` for `manual`/`autonomous`; autonomous mode falls back to neutral when frames or inference become stale.
 - Autonomous forward movement defaults to positive throttle `+0.65`; reverse throttle is not emitted by the autonomous controller.
 - UDP control output applies `TP2_STEERING_TRIM` before sending commands to the car. The default is `-0.08`, a rightward correction for the current physical left drift; `/status.json` reports both requested `steering` and sent `effective_steering`.
-- Autonomous inference cadence defaults to `0.10 s` minimum spacing between submitted frames.
+- Autonomous inference cadence defaults to `0.07 s` minimum spacing between submitted frames.
+- Autonomous sign selection accepts smaller/farther signs by default (`TP2_AUTONOMOUS_MIN_AREA_RATIO=0.003`, `TP2_AUTONOMOUS_NEAR_AREA_RATIO=0.030`) so STOP and turn actions can begin earlier.
 - Turn signs trigger on the first valid confirmed detection by default and execute an open-loop 90-degree maneuver window (`TP2_AUTONOMOUS_TURN_HOLD_SEC`, default `1.20 s`; `TP2_AUTONOMOUS_TURN_DEGREES`, default `90`).
 - `coche.py` exposes `POST /recording` and `GET /recording.json` for session capture; recordings include candidate frames, annotated MP4 video, predictions, critical flags, autonomous estimates, and selected controls.
 - Normal `tp2-car-control.service` sessions autostart recording under `/srv/tp2/frames/autonomous` and write `manifest.jsonl`, `labels.jsonl`, `critical.jsonl`, `session.mp4`, and optional critical images.

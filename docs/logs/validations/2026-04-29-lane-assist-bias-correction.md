@@ -21,4 +21,12 @@
 
 ## EPC note
 
-At initial inspection `tp2-car-control.service` was inactive, while `tp2-srsepc.service` and `mosquitto.service` were active. Deployment validation must include starting/restarting the car runtime.
+At initial inspection `tp2-car-control.service` was inactive, while `tp2-srsepc.service` and `mosquitto.service` were active. After deploy:
+
+- EPC pulled `main` to `3a1dd5e`.
+- EPC tests passed: 39 tests OK.
+- `sudo -n systemctl start tp2-car-control.service` started the runtime.
+- `172.16.0.1:20001/UDP` and `0.0.0.0:8088/TCP` were listening.
+- Synthetic UDP frame check returned `C`, steering `0.17`, throttle `0.0` in manual neutral.
+- Live car frames then arrived from `172.16.0.2`; `/status.json` showed `lane.status=tracking`, `lane.usable=true`, `lane.guidance.source=pair`, `lane.guidance.correction=-0.117`.
+- `tp2-srsepc.service`, `mosquitto.service`, and `tp2-car-control.service` were active.

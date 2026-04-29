@@ -13,6 +13,8 @@ from coche import (
     NEUTRAL_THROTTLE,
     RuntimeState,
     SessionRecorder,
+    STEERING_TRIM,
+    corrected_steering,
 )
 
 
@@ -104,6 +106,15 @@ class RuntimeStateModeTest(unittest.TestCase):
         self.assertEqual(control["source"], "stop")
         self.assertEqual(control["steering"], NEUTRAL_STEERING)
         self.assertEqual(control["throttle"], NEUTRAL_THROTTLE)
+
+    def test_control_snapshot_exposes_steering_trim(self):
+        state = RuntimeState()
+
+        control = state.control_snapshot_locked()
+
+        self.assertEqual(control["steering_trim"], STEERING_TRIM)
+        self.assertEqual(control["effective_steering"], corrected_steering(NEUTRAL_STEERING))
+        self.assertLess(control["effective_steering"], control["steering"])
 
 
 class CriticalFrameAnalyzerTest(unittest.TestCase):

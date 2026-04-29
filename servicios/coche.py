@@ -79,6 +79,7 @@ ENABLE_WEB_CONTROL = env_bool("TP2_ENABLE_WEB_CONTROL", True)
 ENABLE_INFERENCE = env_bool("TP2_ENABLE_INFERENCE", True)
 
 NEUTRAL_STEERING = env_float("TP2_NEUTRAL_STEERING", 0.25)
+STEERING_TRIM = env_float("TP2_STEERING_TRIM", -0.08)
 NEUTRAL_THROTTLE = env_float("TP2_NEUTRAL_THROTTLE", 0.0)
 CONTROL_TIMEOUT_SEC = env_float("TP2_WEB_CONTROL_TIMEOUT_SEC", 0.45)
 CONTROL_TX_HZ = max(1.0, env_float("TP2_CONTROL_TX_HZ", 20.0))
@@ -155,6 +156,10 @@ def clamp(value: Any, minimum: float, maximum: float, default: float = 0.0) -> f
     except (TypeError, ValueError):
         return default
     return max(minimum, min(maximum, number))
+
+
+def corrected_steering(steering: float) -> float:
+    return round(clamp(float(steering) + STEERING_TRIM, -1.0, 1.0, NEUTRAL_STEERING), 3)
 
 
 def monotonic_ms() -> int:
@@ -1287,11 +1292,14 @@ class RuntimeState:
             return self.control_snapshot_locked()
 
     def control_snapshot_locked(self) -> dict[str, Any]:
+        effective_steering = corrected_steering(self.steering)
         return {
             "armed": self.control_armed,
             "source": self.control_source,
             "mode": self.drive_mode,
             "steering": self.steering,
+            "effective_steering": effective_steering,
+            "steering_trim": STEERING_TRIM,
             "throttle": self.throttle,
             "updated_age_sec": max(0.0, wall_time() - self.control_updated_at),
             "seq": self.control_seq,
@@ -1554,6 +1562,7 @@ def send_control_packet(
     steering: float,
     throttle: float,
 ) -> None:
+    steering = corrected_steering(steering)
     payload = (
         struct.pack("c", b"C")
         + struct.pack("d", round(float(steering), 3))

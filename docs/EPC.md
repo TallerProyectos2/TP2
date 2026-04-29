@@ -65,6 +65,7 @@ Operational files are stored in repo `servicios/` and validated on EPC under `/h
   - `session_replayer.py` review server for frame replay and label correction, launchable from the `coche.py` web UI and backed by a session selector over the recording root
   - manual web control is gated by drive mode; stale manual posts cannot switch an active autonomous session back to manual
   - autonomous forward commands are clamped to non-negative throttle and default to `+0.65`
+  - outgoing UDP steering applies `TP2_STEERING_TRIM=-0.08` by default to compensate the current physical left drift; `/status.json` exposes `effective_steering`
   - autonomous inference submits frames every `0.10 s` by default when frames are available
   - turn signs trigger from the first valid confirmed detection and use a timed 90-degree open-loop maneuver by default
 - Inference files:

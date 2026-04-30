@@ -213,6 +213,7 @@ class SessionData:
     root: Path
     manifest: list[dict[str, Any]]
     reviews: dict[str, dict[str, Any]]
+    manual_labels: dict[str, list[dict[str, Any]]]
     lock: threading.RLock
 
     @classmethod
@@ -233,7 +234,28 @@ class SessionData:
                     }
             except json.JSONDecodeError:
                 reviews = {}
-        return cls(root=root, manifest=manifest, reviews=reviews, lock=threading.RLock())
+        manual_path = root / "manual_labels.json"
+        manual_labels: dict[str, list[dict[str, Any]]] = {}
+        if manual_path.exists():
+            try:
+                payload = json.loads(manual_path.read_text(encoding="utf-8"))
+                raw = payload.get("labels", {})
+                if isinstance(raw, dict):
+                    for key, items in raw.items():
+                        if not isinstance(items, list):
+                            continue
+                        cleaned = [item for item in items if isinstance(item, dict) and item.get("id")]
+                        if cleaned:
+                            manual_labels[str(key)] = cleaned
+            except json.JSONDecodeError:
+                manual_labels = {}
+        return cls(
+            root=root,
+            manifest=manifest,
+            reviews=reviews,
+            manual_labels=manual_labels,
+            lock=threading.RLock(),
+        )
 
     def classes(self) -> list[str]:
         values: set[str] = set()
@@ -274,15 +296,28 @@ class SessionData:
             raise IndexError("empty session")
         idx = max(0, min(idx, len(self.manifest) - 1))
         item = dict(self.manifest[idx])
+        frame_seq = int(item.get("frame_seq", 0))
         labels = []
         for label in item.get("labels", []) or []:
             label_item = dict(label)
-            key = relabel_key(int(item.get("frame_seq", 0)), int(label_item.get("index", 0)))
+            key = relabel_key(frame_seq, int(label_item.get("index", 0)))
             review = self.reviews.get(key)
             if review is not None:
                 label_item["review"] = review
+            label_item.setdefault("source", "model")
             labels.append(label_item)
-        item["labels"] = labels
+        manual = self.manual_labels.get(str(frame_seq), [])
+        manual_items = []
+        for offset, entry in enumerate(manual):
+            label_item = dict(entry)
+            label_item["source"] = "manual"
+            label_item["index"] = 10000 + offset
+            label_item.setdefault("class", "objeto")
+            label_item.setdefault("confidence", 1.0)
+            manual_items.append(label_item)
+        item["labels"] = labels + manual_items
+        item["model_label_count"] = len(labels)
+        item["manual_label_count"] = len(manual_items)
         item["index"] = idx
         item["count"] = len(self.manifest)
         return item
@@ -392,6 +427,93 @@ class SessionData:
                 )
         return {"index": idx, "frame_seq": item.get("frame_seq"), "image": item.get("image")}
 
+    def _persist_manual_labels(self) -> None:
+        path = self.root / "manual_labels.json"
+        write_json(
+            path,
+            {
+                "schema_version": 1,
+                "session": str(self.root),
+                "labels": self.manual_labels,
+            },
+        )
+
+    def save_manual_label(self, payload: dict[str, Any]) -> dict[str, Any]:
+        frame_seq = int(payload.get("frame_seq"))
+        bbox_raw = payload.get("bbox_xyxy") or []
+        if not isinstance(bbox_raw, list) or len(bbox_raw) != 4:
+            raise ValueError("bbox_xyxy must be [x1,y1,x2,y2]")
+        bbox = [float(v) for v in bbox_raw]
+        if bbox[2] - bbox[0] < 1.0 or bbox[3] - bbox[1] < 1.0:
+            raise ValueError("bbox is too small")
+        cls = str(payload.get("class", "")).strip()[:80] or "objeto"
+        note = str(payload.get("note", "")).strip()[:400]
+        manual_id = str(payload.get("id") or "").strip()
+        track_id = payload.get("track_id")
+        if track_id is not None:
+            track_id = str(track_id)[:40]
+        ts = datetime.now().isoformat(timespec="seconds")
+        with self.lock:
+            entries = self.manual_labels.setdefault(str(frame_seq), [])
+            existing = next((entry for entry in entries if entry.get("id") == manual_id), None) if manual_id else None
+            if existing is None:
+                manual_id = manual_id or f"m{int(datetime.now().timestamp() * 1000)}-{len(entries)}"
+                entry = {
+                    "id": manual_id,
+                    "frame_seq": frame_seq,
+                    "class": cls,
+                    "bbox_xyxy": [round(v, 2) for v in bbox],
+                    "note": note,
+                    "track_id": track_id,
+                    "created_at": ts,
+                    "updated_at": ts,
+                    "author": "manual",
+                }
+                entries.append(entry)
+            else:
+                existing.update(
+                    {
+                        "class": cls,
+                        "bbox_xyxy": [round(v, 2) for v in bbox],
+                        "note": note,
+                        "track_id": track_id,
+                        "updated_at": ts,
+                    }
+                )
+                entry = existing
+            with (self.root / "manual_labels.jsonl").open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry, ensure_ascii=True, separators=(",", ":")) + "\n")
+            self._persist_manual_labels()
+        return entry
+
+    def delete_manual_label(self, frame_seq: int, manual_id: str) -> bool:
+        manual_id = str(manual_id).strip()
+        if not manual_id:
+            raise ValueError("missing manual id")
+        key = str(int(frame_seq))
+        with self.lock:
+            entries = self.manual_labels.get(key, [])
+            kept = [item for item in entries if item.get("id") != manual_id]
+            removed = len(kept) != len(entries)
+            if not removed:
+                return False
+            if kept:
+                self.manual_labels[key] = kept
+            else:
+                self.manual_labels.pop(key, None)
+            ts = datetime.now().isoformat(timespec="seconds")
+            with (self.root / "manual_labels.jsonl").open("a", encoding="utf-8") as fh:
+                fh.write(
+                    json.dumps(
+                        {"frame_seq": int(frame_seq), "id": manual_id, "deleted_at": ts},
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                )
+            self._persist_manual_labels()
+        return True
+
     def save_review(self, payload: dict[str, Any]) -> dict[str, Any]:
         frame_seq = int(payload.get("frame_seq"))
         label_index = int(payload.get("label_index"))
@@ -444,10 +566,15 @@ def draw_overlay(image: np.ndarray, item: dict[str, Any]) -> np.ndarray:
         x1, y1, x2, y2 = [int(round(float(v))) for v in bbox]
         review = label.get("review") or {}
         is_valid = review.get("valid", True)
-        color = (78, 166, 255) if is_valid else (80, 80, 240)
+        is_manual = label.get("source") == "manual"
+        if is_manual:
+            color = (252, 211, 124)  # cyan-ish in BGR for manual
+        else:
+            color = (78, 166, 255) if is_valid else (80, 80, 240)
         label_class = review.get("class") or label.get("class") or "object"
-        text = f"{label.get('index')} #{label.get('track_id', '-')} {label_class}"
-        if not is_valid:
+        prefix = "M" if is_manual else str(label.get("index"))
+        text = f"{prefix} #{label.get('track_id', '-')} {label_class}"
+        if not is_valid and not is_manual:
             text += " reject"
         cv2.rectangle(output, (x1, y1), (x2, y2), color, 2)
         cv2.rectangle(
@@ -602,6 +729,37 @@ class ReplayerHandler(BaseHTTPRequestHandler):
                 return
             self.send_json({"ok": True, "selected_session_id": active_id, "review": review})
             return
+        if parsed.path == "/api/frame/box":
+            try:
+                payload = self.read_json_body()
+                selected = str(payload.get("session_id") or "").strip() or None
+                active_id, session = self.catalog.load(selected)
+                entry = session.save_manual_label(payload)
+            except Exception as exc:
+                self.send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            self.send_json(
+                {
+                    "ok": True,
+                    "selected_session_id": active_id,
+                    "label": entry,
+                    "classes": session.classes(),
+                }
+            )
+            return
+        if parsed.path == "/api/frame/box/delete":
+            try:
+                payload = self.read_json_body()
+                selected = str(payload.get("session_id") or "").strip() or None
+                frame_seq = int(payload.get("frame_seq"))
+                manual_id = str(payload.get("id") or "").strip()
+                active_id, session = self.catalog.load(selected)
+                removed = session.delete_manual_label(frame_seq, manual_id)
+            except Exception as exc:
+                self.send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            self.send_json({"ok": True, "selected_session_id": active_id, "removed": removed})
+            return
         if parsed.path == "/api/frame/rename":
             try:
                 payload = self.read_json_body()
@@ -702,36 +860,46 @@ INDEX_HTML = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TP2 · Reentrenamiento</title>
+  <title>TP2 / Reentrenamiento</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
       color-scheme: dark;
-      --bg-0: #0a0a0c;
-      --bg-1: #131316;
-      --bg-2: #1a1a1e;
-      --line: #26262b;
-      --line-soft: #1c1c20;
+      --bg-0: #08080a;
+      --bg-1: #111114;
+      --bg-2: #17171b;
+      --bg-3: #1f1f24;
+      --line: #25252c;
+      --line-soft: #1b1b21;
+      --line-strong: #34343d;
       --ink: #ececef;
       --ink-2: #a4a4ab;
-      --muted: #61616a;
+      --ink-3: #76767f;
+      --muted: #54545c;
       --blue: #4ea6ff;
+      --blue-soft: rgba(78,166,255,0.16);
       --blue-deep: #1a3a78;
       --cyan: #7dd3fc;
+      --teal: #5eead4;
       --amber: #fbbf24;
       --red: #f87171;
+      --green: #34d399;
+      --magenta: #f472b6;
+      --display: "Space Grotesk", "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif;
       --body: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
       --shadow: 0 24px 50px rgba(0,0,0,0.55);
+      --ring: 0 0 0 1px rgba(78,166,255,0.55), 0 0 0 4px rgba(78,166,255,0.10);
     }
     * { box-sizing: border-box; }
     html, body {
       margin: 0;
-      min-height: 100%;
+      height: 100%;
       background:
-        radial-gradient(1200px 700px at 92% -10%, rgba(78,166,255,0.06), transparent 60%),
+        radial-gradient(1200px 700px at 88% -10%, rgba(78,166,255,0.07), transparent 60%),
+        radial-gradient(900px 600px at 5% 110%, rgba(94,234,212,0.04), transparent 55%),
         var(--bg-0);
       color: var(--ink);
       font-family: var(--body);
@@ -739,33 +907,67 @@ INDEX_HTML = r"""<!doctype html>
       letter-spacing: 0;
       -webkit-font-smoothing: antialiased;
     }
-    .app { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; gap: 18px; padding: 20px 22px 22px; }
+    body::before {
+      content: "";
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.012) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.012) 1px, transparent 1px);
+      background-size: 32px 32px;
+      mask-image: radial-gradient(circle at 50% 35%, black, transparent 75%);
+    }
+    .app {
+      position: relative; z-index: 1;
+      height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 14px;
+      padding: 14px 18px 16px;
+    }
+    /* HEADER ----------------------------------------------------------------- */
     header {
       display: grid;
-      grid-template-columns: minmax(260px, auto) 1fr auto;
+      grid-template-columns: minmax(280px, auto) 1fr auto;
       align-items: center;
-      gap: 22px;
-      padding-bottom: 14px;
+      gap: 18px;
+      padding-bottom: 11px;
       border-bottom: 1px solid var(--line);
     }
-    .brand { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    .brand { display: flex; align-items: center; gap: 12px; }
     .brand .mark {
-      width: 36px; height: 36px; border-radius: 8px;
+      width: 32px; height: 32px; border-radius: 8px;
       background: linear-gradient(135deg, var(--blue), var(--blue-deep));
       display: grid; place-items: center;
-      box-shadow: 0 6px 18px rgba(78,166,255,0.28), inset 0 1px 0 rgba(255,255,255,0.12);
+      box-shadow: 0 8px 22px rgba(78,166,255,0.32), inset 0 1px 0 rgba(255,255,255,0.18);
+      position: relative;
     }
-    .brand .mark svg { width: 18px; height: 18px; color: #fff; }
-    .brand h1 { margin: 0; font-size: 19px; line-height: 1.1; font-weight: 600; letter-spacing: -0.005em; }
+    .brand .mark::after {
+      content: "";
+      position: absolute; inset: -6px; border-radius: 14px;
+      border: 1px solid rgba(78,166,255,0.18);
+      pointer-events: none;
+    }
+    .brand .mark svg { width: 16px; height: 16px; color: #fff; }
+    .brand .title { display: flex; flex-direction: column; gap: 2px; line-height: 1; }
+    .brand h1 {
+      margin: 0; font-family: var(--display);
+      font-size: 17px; font-weight: 600; letter-spacing: -0.01em;
+    }
     .brand h1 .accent { color: var(--blue); margin: 0 4px; font-weight: 400; }
     .brand h1 .sub { color: var(--ink-2); font-weight: 500; }
-    .brand .meta { font-family: var(--mono); font-size: 10.5px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+    .brand .meta {
+      font-family: var(--mono);
+      font-size: 10px; color: var(--ink-3);
+      letter-spacing: 0.10em; text-transform: uppercase;
+      max-width: 360px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
     .session-select {
       display: grid;
       grid-template-columns: minmax(220px, 1fr) auto;
-      gap: 10px;
+      gap: 8px;
       align-items: center;
     }
+    /* INPUTS / BUTTONS ------------------------------------------------------- */
     select, input, textarea {
       width: 100%;
       border: 1px solid var(--line);
@@ -774,13 +976,15 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--ink);
       font-family: var(--mono);
       font-size: 12px;
-      padding: 9px 10px;
+      padding: 8px 10px;
       outline: none;
+      transition: border-color .12s ease, box-shadow .12s ease, background .12s ease;
     }
-    textarea { min-height: 70px; resize: vertical; font-family: var(--body); }
+    select:focus, input:focus, textarea:focus { border-color: rgba(78,166,255,0.75); box-shadow: var(--ring); }
+    textarea { min-height: 60px; resize: vertical; font-family: var(--body); }
     button {
-      height: 38px;
-      border: 1px solid rgba(78,166,255,0.42);
+      height: 34px;
+      border: 1px solid rgba(78,166,255,0.40);
       border-radius: 7px;
       background: rgba(78,166,255,0.10);
       color: var(--blue);
@@ -790,43 +994,101 @@ INDEX_HTML = r"""<!doctype html>
       letter-spacing: 0.10em;
       text-transform: uppercase;
       cursor: pointer;
-      padding: 0 14px;
+      padding: 0 12px;
+      display: inline-flex; align-items: center; gap: 7px;
+      transition: background .12s ease, border-color .12s ease, transform .04s ease;
     }
-    button:hover { background: rgba(78,166,255,0.16); }
-    button.danger { color: var(--red); border-color: rgba(248,113,113,0.5); background: rgba(248,113,113,0.12); }
-    .pills { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    button:hover { background: rgba(78,166,255,0.18); }
+    button:active { transform: translateY(1px); }
+    button.danger { color: var(--red); border-color: rgba(248,113,113,0.5); background: rgba(248,113,113,0.10); }
+    button.danger:hover { background: rgba(248,113,113,0.20); }
+    button.solid { background: linear-gradient(135deg, var(--blue), #3a7fd0); color: #fff; border-color: transparent; }
+    button.solid:hover { filter: brightness(1.08); }
+    button.subtle { color: var(--ink-2); border-color: var(--line); background: var(--bg-2); }
+    button.subtle:hover { color: var(--ink); border-color: var(--line-strong); }
+    button.toggle.on { color: var(--cyan); border-color: rgba(125,211,252,0.6); background: rgba(125,211,252,0.12); }
+    button .kbd { font-family: var(--mono); font-size: 9.5px; color: currentColor; opacity: .55; padding: 1px 5px; border: 1px solid currentColor; border-radius: 3px; }
+    button.icon { width: 34px; padding: 0; justify-content: center; }
+    button.icon svg { width: 14px; height: 14px; }
+    .pills { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
     .pill {
-      display: inline-flex; align-items: center; gap: 8px;
-      height: 30px; padding: 0 12px;
+      display: inline-flex; align-items: center; gap: 7px;
+      height: 28px; padding: 0 11px;
       border: 1px solid var(--line); border-radius: 999px;
-      background: rgba(26,26,30,0.7);
+      background: rgba(20,20,24,0.7);
       color: var(--ink-2);
+      font-family: var(--mono);
       font-size: 10.5px;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.06em;
       text-transform: uppercase;
       font-weight: 600;
       white-space: nowrap;
     }
-    .pill .dot { width: 7px; height: 7px; border-radius: 99px; background: currentColor; box-shadow: 0 0 12px currentColor; }
+    .pill .dot { width: 6px; height: 6px; border-radius: 99px; background: currentColor; box-shadow: 0 0 10px currentColor; }
+    .pill .num { color: var(--ink); font-variant-numeric: tabular-nums; }
     .pill.ok { color: var(--cyan); } .pill.warn { color: var(--amber); } .pill.bad { color: var(--red); }
-    main { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 390px; gap: 20px; }
-    .stage { min-height: 0; display: grid; grid-template-rows: minmax(320px, 1fr) auto; gap: 14px; }
-    .frame {
+    .pill.ghost { color: var(--ink-3); }
+    /* MAIN GRID --------------------------------------------------------------- */
+    main {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 380px;
+      gap: 16px;
+    }
+    .stage {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) auto;
+      gap: 10px;
+    }
+    /* FRAME STAGE ------------------------------------------------------------- */
+    .frame-wrap {
+      min-height: 0;
       position: relative;
-      min-height: 320px;
+      display: grid;
+      place-items: center;
       border: 1px solid var(--line);
       border-radius: 14px;
-      background: radial-gradient(120% 80% at 50% 50%, #16161a 0%, #08080a 100%);
+      background:
+        radial-gradient(120% 80% at 50% 0%, rgba(78,166,255,0.05) 0%, transparent 60%),
+        radial-gradient(120% 80% at 50% 100%, rgba(0,0,0,0.4) 0%, transparent 60%),
+        #0b0b0f;
       overflow: hidden;
       box-shadow: var(--shadow);
+      padding: 14px;
     }
-    .frame img, .frame video { display: block; width: 100%; height: 100%; max-height: calc(100vh - 220px); object-fit: contain; }
-    .frame video { background: #050507; }
+    .frame-wrap.editing {
+      border-color: rgba(125,211,252,0.45);
+      box-shadow: 0 0 0 1px rgba(125,211,252,0.20), var(--shadow);
+    }
+    .frame {
+      position: relative;
+      max-width: 100%;
+      max-height: 100%;
+      aspect-ratio: 16 / 9;
+      display: block;
+    }
+    .frame img, .frame video {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      border-radius: 6px;
+      background: #050507;
+    }
     .frame.video-mode img { display: none; }
     .frame:not(.video-mode) video { display: none; }
-    .frame::after {
-      content: "";
-      position: absolute; inset: 14px; border-radius: 8px; pointer-events: none;
+    .frame .editor-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+    }
+    .frame.editing .editor-svg { pointer-events: auto; cursor: crosshair; }
+    .frame .corner-marks {
+      position: absolute; inset: 0; border-radius: 6px; pointer-events: none;
       background:
         linear-gradient(to right, var(--blue) 0 14px, transparent 14px) top left/14px 1px no-repeat,
         linear-gradient(to bottom, var(--blue) 0 14px, transparent 14px) top left/1px 14px no-repeat,
@@ -836,52 +1098,200 @@ INDEX_HTML = r"""<!doctype html>
         linear-gradient(to top, var(--blue) 0 14px, transparent 14px) bottom left/1px 14px no-repeat,
         linear-gradient(to left, var(--blue) 0 14px, transparent 14px) bottom right/14px 1px no-repeat,
         linear-gradient(to top, var(--blue) 0 14px, transparent 14px) bottom right/1px 14px no-repeat;
-      opacity: 0.22;
+      opacity: 0.18;
     }
-    .deck, .card {
+    .frame-hud {
+      position: absolute; left: 22px; top: 22px; z-index: 2;
+      display: inline-flex; gap: 6px; align-items: center;
+      padding: 6px 10px; border-radius: 999px;
+      background: rgba(8,8,12,0.7); backdrop-filter: blur(8px);
       border: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(26,26,30,0.7), rgba(19,19,22,0.75));
-      border-radius: 12px;
+      font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--ink-2);
+      pointer-events: none;
     }
-    .deck { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; padding: 12px; }
-    .deck .left, .deck .right { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .timeline { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 86px; gap: 12px; align-items: center; }
-    .timeline input { padding: 0; accent-color: var(--blue); }
-    .speed { width: 84px; padding: 8px 9px; }
-    label { display: inline-flex; gap: 7px; align-items: center; color: var(--ink-2); font-size: 12px; }
-    .pos { font-family: var(--mono); color: var(--ink-2); font-size: 12px; min-width: 86px; text-align: right; }
-    .side { min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 14px; padding-right: 4px; }
-    .card { padding: 16px 16px 14px; }
-    .card h2 { margin: 0 0 12px; font-weight: 600; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; }
-    .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--line-soft); }
+    .frame-hud .dot { width: 6px; height: 6px; border-radius: 99px; background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
+    .frame-hud.editing { color: var(--cyan); border-color: rgba(125,211,252,0.5); }
+    .frame-hint {
+      position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%);
+      padding: 7px 12px; border-radius: 999px;
+      background: rgba(8,8,12,0.78); backdrop-filter: blur(8px);
+      border: 1px solid rgba(125,211,252,0.4); color: var(--cyan);
+      font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em;
+      pointer-events: none;
+      opacity: 0; transition: opacity .25s ease;
+    }
+    .frame.editing .frame-hint { opacity: 1; }
+    /* DECK -------------------------------------------------------------------- */
+    .deck {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(26,26,30,0.78), rgba(17,17,21,0.80));
+      border-radius: 12px;
+      padding: 10px 12px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px 14px;
+    }
+    .deck .row1, .deck .row2 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .deck .row1 { grid-column: 1 / -1; }
+    .deck .row2 { grid-column: 1 / -1; gap: 12px; }
+    .deck .group { display: inline-flex; align-items: center; gap: 6px; padding-right: 6px; border-right: 1px solid var(--line-soft); margin-right: 2px; }
+    .deck .group:last-of-type { border-right: 0; padding-right: 0; margin-right: 0; }
+    .deck .grow { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 12px; }
+    .deck .check { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 11px; padding: 4px 8px; border-radius: 6px; border: 1px solid transparent; }
+    .deck .check input { width: auto; }
+    .deck .check:hover { border-color: var(--line); }
+    .deck .speed { width: 86px; padding: 6px 8px; height: 34px; }
+    .deck .pos {
+      font-family: var(--mono); color: var(--ink-2); font-size: 11.5px;
+      min-width: 70px; text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .deck .pos b { color: var(--ink); font-weight: 600; }
+    .deck .timeline { flex: 1 1 auto; display: flex; align-items: center; gap: 10px; min-width: 200px; }
+    .deck input[type=range] {
+      -webkit-appearance: none; appearance: none;
+      flex: 1 1 auto; height: 6px; padding: 0;
+      background: linear-gradient(90deg, var(--blue) 0%, var(--blue) var(--seek-pct,0%), var(--bg-3) var(--seek-pct,0%));
+      border: 1px solid var(--line);
+      border-radius: 99px;
+    }
+    .deck input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px; height: 14px; border-radius: 99px;
+      background: var(--ink);
+      border: 2px solid var(--blue);
+      box-shadow: 0 0 0 4px rgba(78,166,255,0.18);
+      cursor: ew-resize;
+    }
+    .deck input[type=range]::-moz-range-thumb {
+      width: 14px; height: 14px; border-radius: 99px;
+      background: var(--ink); border: 2px solid var(--blue);
+      box-shadow: 0 0 0 4px rgba(78,166,255,0.18); cursor: ew-resize;
+    }
+    .deck .frame-name {
+      font-family: var(--mono); color: var(--ink-3); font-size: 10.5px;
+      max-width: 240px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    /* SIDEBAR ---------------------------------------------------------------- */
+    .side {
+      min-height: 0; overflow-y: auto;
+      display: grid; align-content: start; gap: 12px;
+      padding-right: 4px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--line-strong) transparent;
+    }
+    .side::-webkit-scrollbar { width: 8px; }
+    .side::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 99px; }
+    .card {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(26,26,30,0.78), rgba(17,17,21,0.78));
+      border-radius: 12px;
+      padding: 13px 14px 12px;
+      animation: cardIn .35s ease both;
+    }
+    @keyframes cardIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    .card h2 {
+      display: flex; align-items: center; gap: 8px;
+      margin: 0 0 10px;
+      font-family: var(--mono);
+      font-weight: 600; font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase;
+      color: var(--ink-2);
+    }
+    .card h2 .glyph {
+      width: 14px; height: 14px; display: grid; place-items: center;
+      color: var(--blue);
+    }
+    .card h2 .badge {
+      margin-left: auto;
+      font-family: var(--mono);
+      font-size: 10px; letter-spacing: 0.06em;
+      color: var(--ink-3); padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line);
+    }
+    .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
     .row:last-child { border-bottom: 0; }
-    .row .k { color: var(--muted); font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; font-size: 10.5px; }
-    .row .v { font-family: var(--mono); color: var(--ink); text-align: right; font-size: 12px; overflow-wrap: anywhere; }
-    .flags, .labels { display: grid; gap: 7px; max-height: 260px; overflow: auto; }
+    .row .k { color: var(--ink-3); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; font-size: 10.5px; }
+    .row .v { font-family: var(--mono); color: var(--ink); text-align: right; font-size: 12px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+    .flags, .labels { display: grid; gap: 6px; max-height: 240px; overflow: auto; }
     .flag, .label-row {
       border: 1px solid var(--line);
-      border-radius: 6px;
-      background: rgba(20,20,24,0.5);
+      border-radius: 7px;
+      background: rgba(20,20,24,0.55);
       padding: 8px 10px;
       font-size: 12px;
     }
     .flag { border-left: 3px solid var(--amber); color: var(--ink-2); }
-    .label-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; cursor: pointer; }
-    .label-row.active { border-color: rgba(78,166,255,0.75); background: rgba(78,166,255,0.14); }
-    .label-row.invalid { border-color: rgba(248,113,113,0.55); background: rgba(248,113,113,0.12); }
-    .label-row .name { color: var(--ink); font-weight: 500; }
-    .label-row small { color: var(--muted); font-family: var(--mono); }
+    .flag b { color: var(--amber); font-weight: 600; }
+    .flag span { display: block; color: var(--ink-3); font-size: 10.5px; font-family: var(--mono); margin-top: 3px; word-break: break-all; }
+    .label-row { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; cursor: pointer; transition: border-color .12s ease, background .12s ease; }
+    .label-row .src {
+      width: 26px; height: 26px; border-radius: 6px;
+      background: var(--bg-3); border: 1px solid var(--line);
+      display: grid; place-items: center;
+      font-family: var(--mono); font-size: 10px; color: var(--ink-2);
+    }
+    .label-row .src.manual { color: var(--cyan); border-color: rgba(125,211,252,0.4); }
+    .label-row .src.invalid { color: var(--red); border-color: rgba(248,113,113,0.45); }
+    .label-row.active { border-color: rgba(78,166,255,0.75); background: rgba(78,166,255,0.13); }
+    .label-row.invalid { border-color: rgba(248,113,113,0.45); background: rgba(248,113,113,0.10); }
+    .label-row.manual { border-color: rgba(125,211,252,0.42); background: rgba(125,211,252,0.07); }
+    .label-row.manual.active { border-color: rgba(125,211,252,0.85); background: rgba(125,211,252,0.16); }
+    .label-row .name { color: var(--ink); font-weight: 500; line-height: 1.2; }
+    .label-row .hint { color: var(--ink-3); font-size: 10.5px; font-family: var(--mono); margin-top: 2px; }
+    .label-row .key { color: var(--ink-2); font-family: var(--mono); font-size: 10.5px; }
     .form { display: grid; gap: 8px; }
-    .inline-form { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 10px; }
-    .quick-classes { display: flex; flex-wrap: wrap; gap: 7px; }
-    .quick-classes button { height: 30px; padding: 0 9px; font-size: 10px; letter-spacing: 0.06em; }
-    .status-select { min-width: 120px; }
+    .inline-form { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    .quick-classes { display: flex; flex-wrap: wrap; gap: 6px; }
+    .quick-classes button { height: 28px; padding: 0 9px; font-size: 10px; letter-spacing: 0.04em; background: var(--bg-2); color: var(--ink-2); border-color: var(--line); }
+    .quick-classes button:hover { color: var(--blue); border-color: rgba(78,166,255,0.55); background: rgba(78,166,255,0.07); }
     .empty { color: var(--muted); border-style: dashed; text-align: center; }
+    .editor-toolbar {
+      display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;
+      margin-top: 8px; padding: 8px 10px;
+      border: 1px dashed rgba(125,211,252,0.28);
+      border-radius: 8px;
+      background: rgba(125,211,252,0.04);
+      color: var(--ink-2);
+    }
+    .editor-toolbar .info { font-size: 11px; color: var(--ink-2); }
+    .editor-toolbar .info b { color: var(--cyan); font-weight: 600; }
+    .editor-toolbar.off { display: none; }
+    .empty-state {
+      padding: 14px 12px;
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      color: var(--ink-3);
+      text-align: center;
+      font-size: 11.5px;
+      font-family: var(--mono);
+    }
+    .progress {
+      height: 4px; border-radius: 99px; background: var(--bg-3);
+      overflow: hidden; margin-top: 8px;
+    }
+    .progress > div { height: 100%; background: linear-gradient(90deg, var(--blue), var(--cyan)); border-radius: 99px; transition: width .3s ease; }
+    .toast {
+      position: fixed; bottom: 22px; left: 50%; transform: translate(-50%, 12px);
+      background: var(--bg-2); color: var(--ink); border: 1px solid var(--line);
+      border-radius: 10px; padding: 9px 14px;
+      font-size: 12px; letter-spacing: 0.02em;
+      box-shadow: var(--shadow);
+      pointer-events: none;
+      opacity: 0; transition: opacity .18s ease, transform .18s ease;
+      z-index: 100;
+    }
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+    .toast.error { border-color: rgba(248,113,113,0.55); color: var(--red); }
+    .toast.ok { border-color: rgba(94,234,212,0.5); color: var(--teal); }
+    /* RESPONSIVE -------------------------------------------------------------- */
     @media (max-width: 1080px) {
-      header { grid-template-columns: 1fr; gap: 14px; }
+      .app { height: auto; }
+      header { grid-template-columns: 1fr; gap: 10px; }
       .pills { justify-content: flex-start; }
       main { grid-template-columns: 1fr; }
-      .frame img { max-height: none; }
+      .stage { grid-template-rows: auto auto; }
+      .frame { aspect-ratio: 16/9; max-height: 60vh; }
+      .side { max-height: none; overflow: visible; }
     }
   </style>
 </head>
@@ -890,69 +1300,109 @@ INDEX_HTML = r"""<!doctype html>
     <header>
       <div class="brand">
         <div class="mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 6h16M4 12h16M4 18h10"/>
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="5" width="18" height="13" rx="2"/>
+            <path d="M7 9l4 3-4 3M13 15h4"/>
           </svg>
         </div>
-        <div>
+        <div class="title">
           <h1>TP2<span class="accent">/</span><span class="sub">Reentrenamiento</span></h1>
           <div class="meta" id="root">--</div>
         </div>
       </div>
       <div class="session-select">
         <select id="session-select"></select>
-        <button id="refresh">Actualizar</button>
+        <button id="refresh" class="subtle" title="Recargar catalogo">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3.5-7.1"/><path d="M21 4v6h-6"/></svg>
+          Actualizar
+        </button>
       </div>
       <div class="pills">
-        <div class="pill ok"><span class="dot"></span><span id="pill-frames">0 fr</span></div>
-        <div class="pill warn"><span class="dot"></span><span id="pill-critical">0 crit</span></div>
-        <div class="pill ok"><span class="dot"></span><span id="pill-reviewed">0 rev</span></div>
+        <div class="pill ok" title="Frames totales"><span class="dot"></span><span class="num" id="pill-frames">0</span> fr</div>
+        <div class="pill warn" title="Frames criticos"><span class="dot"></span><span class="num" id="pill-critical">0</span> crit</div>
+        <div class="pill ok" title="Etiquetas revisadas"><span class="dot"></span><span class="num" id="pill-reviewed">0</span> rev</div>
+        <div class="pill ghost" title="Cuadros manuales"><span class="dot"></span><span class="num" id="pill-manual">0</span> man</div>
       </div>
     </header>
     <main>
       <section class="stage">
-        <div class="frame" id="frame-shell">
-          <img id="frame" alt="recorded frame">
-          <video id="session-video" controls preload="metadata"></video>
+        <div class="frame-wrap" id="frame-wrap">
+          <div class="frame-hud" id="frame-hud"><span class="dot"></span><span id="hud-text">VIEW</span></div>
+          <div class="frame" id="frame-shell">
+            <img id="frame" alt="recorded frame">
+            <video id="session-video" controls preload="metadata"></video>
+            <svg class="editor-svg" id="editor-svg" preserveAspectRatio="xMidYMid meet"></svg>
+            <div class="corner-marks"></div>
+            <div class="frame-hint">Arrastra sobre el frame para crear un cuadro · Escape para salir</div>
+          </div>
         </div>
         <div class="deck">
-          <div class="left">
-            <button id="play">Play</button>
-            <button id="prev">Anterior</button>
-            <button id="next">Siguiente</button>
-            <button id="jump-back">-25</button>
-            <button id="jump-forward">+25</button>
-            <button id="video-mode">Video</button>
-            <label><input id="critical" type="checkbox"> solo criticos</label>
-            <label><input id="overlay" type="checkbox" checked> overlay</label>
-            <select id="speed" class="speed">
-              <option value="4">4 fps</option>
-              <option value="8" selected>8 fps</option>
-              <option value="12">12 fps</option>
-              <option value="20">20 fps</option>
-            </select>
+          <div class="row1">
+            <div class="group">
+              <button id="play" class="solid" title="Play / Pausa (Space)">
+                <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor"><path d="M6 4l14 8-14 8z"/></svg>
+                <span id="play-label">Play</span>
+              </button>
+              <button id="prev" class="subtle icon" title="Anterior (A / <)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+              </button>
+              <button id="next" class="subtle icon" title="Siguiente (D / >)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+              </button>
+              <button id="jump-back" class="subtle" title="-25 frames">-25</button>
+              <button id="jump-forward" class="subtle" title="+25 frames">+25</button>
+            </div>
+            <div class="group">
+              <button id="video-mode" class="subtle toggle" title="Reproducir session.mp4">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+                Video
+              </button>
+              <button id="edit-mode" class="subtle toggle" title="Crear/borrar cuadros (E)">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"/><path d="M14.06 6.19l3.75 3.75"/></svg>
+                Cuadros
+              </button>
+            </div>
+            <div class="group">
+              <label class="check" title="Filtra avanzar/retroceder a frames criticos"><input id="critical" type="checkbox"> criticos</label>
+              <label class="check" title="Mostrar overlay generado por el servidor"><input id="overlay" type="checkbox" checked> overlay</label>
+              <select id="speed" class="speed" title="Velocidad de reproduccion">
+                <option value="4">4 fps</option>
+                <option value="8" selected>8 fps</option>
+                <option value="12">12 fps</option>
+                <option value="20">20 fps</option>
+                <option value="30">30 fps</option>
+              </select>
+            </div>
+            <div class="grow"></div>
+            <span class="pos" id="pos"><b>--</b> / --</span>
           </div>
-          <div class="right"><span class="pos" id="pos">--</span></div>
-          <div class="timeline">
-            <input id="timeline" type="range" min="0" max="0" value="0">
-            <span class="pos" id="frame-name">--</span>
+          <div class="row2">
+            <div class="timeline">
+              <input id="timeline" type="range" min="0" max="0" value="0">
+            </div>
+            <span class="frame-name" id="frame-name">--</span>
           </div>
         </div>
       </section>
       <aside class="side">
         <section class="card">
-          <h2>Sesion</h2>
+          <h2>
+            <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></span>
+            Sesion
+            <span class="badge" id="session-status-badge">sin estado</span>
+          </h2>
           <div class="row"><span class="k">Frames</span><span class="v" id="meta-frames">--</span></div>
           <div class="row"><span class="k">Criticos</span><span class="v" id="meta-critical">--</span></div>
           <div class="row"><span class="k">Imagenes</span><span class="v" id="meta-images">--</span></div>
           <div class="row"><span class="k">Video</span><span class="v" id="meta-video">--</span></div>
           <div class="row"><span class="k">Modificada</span><span class="v" id="meta-modified">--</span></div>
-          <div class="inline-form">
+          <div class="progress" title="Progreso de revision"><div id="meta-progress" style="width:0%"></div></div>
+          <div class="inline-form" style="margin-top:10px">
             <input id="session-name" placeholder="nombre sesion">
-            <button id="rename-session">Renombrar</button>
+            <button id="rename-session" class="subtle">Renombrar</button>
           </div>
-          <div class="form" style="margin-top:10px">
-            <select id="session-status" class="status-select">
+          <div class="form" style="margin-top:8px">
+            <select id="session-status">
               <option value="">sin estado</option>
               <option value="reviewing">reviewing</option>
               <option value="ready">ready</option>
@@ -965,296 +1415,677 @@ INDEX_HTML = r"""<!doctype html>
           </div>
         </section>
         <section class="card">
-          <h2>Frame</h2>
+          <h2>
+            <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+            Frame
+            <span class="badge" id="frame-badge">--</span>
+          </h2>
           <div class="row"><span class="k">Seq</span><span class="v" id="frame-seq">--</span></div>
           <div class="row"><span class="k">Hora</span><span class="v" id="frame-time">--</span></div>
           <div class="row"><span class="k">Inferencia</span><span class="v" id="frame-inf">--</span></div>
           <div class="row"><span class="k">Accion</span><span class="v" id="frame-action">--</span></div>
-          <div class="inline-form">
+          <div class="inline-form" style="margin-top:10px">
             <input id="asset-name" placeholder="renombrar imagen">
-            <button id="rename-asset">Renombrar</button>
+            <button id="rename-asset" class="subtle">Renombrar</button>
+          </div>
+          <div class="editor-toolbar off" id="editor-toolbar">
+            <div class="info">Modo edicion: arrastra para crear. <b id="editor-class-display">objeto</b> sera la clase del nuevo cuadro.</div>
+            <button id="editor-delete" class="danger" disabled>Borrar seleccion</button>
           </div>
         </section>
         <section class="card">
-          <h2>Flags Criticos</h2>
+          <h2>
+            <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 22h20L12 2z"/><path d="M12 9v5"/><circle cx="12" cy="18" r="0.6" fill="currentColor"/></svg></span>
+            Flags Criticos
+            <span class="badge" id="flag-count">0</span>
+          </h2>
           <div class="flags" id="flags"><div class="flag empty">Sin flags</div></div>
         </section>
         <section class="card">
-          <h2>Labels</h2>
+          <h2>
+            <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><circle cx="7" cy="7" r="1.5"/></svg></span>
+            Labels
+            <span class="badge" id="label-count">0</span>
+          </h2>
           <div class="labels" id="labels"><div class="label-row empty">Sin labels</div></div>
         </section>
         <section class="card">
-          <h2>Relabel</h2>
+          <h2>
+            <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20l9-9-9-9"/><path d="M3 12h18"/></svg></span>
+            Relabel
+            <span class="badge" id="relabel-mode">objeto</span>
+          </h2>
           <div class="form">
             <div class="quick-classes" id="quick-classes"></div>
             <select id="class-select"></select>
             <input id="class-input" placeholder="nueva clase">
-            <label><input id="valid" type="checkbox" checked> deteccion valida</label>
+            <label class="check" style="font-size:11.5px"><input id="valid" type="checkbox" checked> deteccion valida</label>
             <textarea id="note" placeholder="nota"></textarea>
-            <button id="save">Guardar label</button>
-            <button class="danger" id="reject">Rechazar deteccion</button>
+            <button id="save" class="solid">Guardar label · <span class="kbd">V</span></button>
+            <button class="danger" id="reject">Rechazar deteccion · <span class="kbd">R</span></button>
           </div>
         </section>
       </aside>
     </main>
   </div>
+  <div class="toast" id="toast"></div>
   <script>
     const $ = id => document.getElementById(id);
-    let catalog = null, session = null, sessionId = null, idx = 0, selected = null, frameData = null;
-    let playTimer = null, videoMode = false;
+    const SVG_NS = "http://www.w3.org/2000/svg";
+
+    const state = {
+      catalog: null,
+      session: null,
+      sessionId: null,
+      idx: 0,
+      selectedLabel: null,
+      selectedManualId: null,
+      frameData: null,
+      playTimer: null,
+      videoMode: false,
+      editMode: false,
+      drawing: null,
+      imgNaturalW: 1280,
+      imgNaturalH: 720,
+    };
+
+    function showToast(message, kind = "") {
+      const el = $("toast");
+      el.textContent = message;
+      el.className = "toast show " + kind;
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(() => el.classList.remove("show"), 2400);
+    }
+
     async function api(path, opts) {
-      const res = await fetch(path, opts || {cache: 'no-store'});
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || 'request failed');
+      const res = await fetch(path, opts || { cache: "no-store" });
+      const data = await res.json().catch(() => ({ ok: false, error: "respuesta invalida" }));
+      if (!data.ok) throw new Error(data.error || "request failed");
       return data;
     }
-    function enc(v) { return encodeURIComponent(v || ''); }
-    function sessionQuery(extra) { return 'session=' + enc(sessionId) + (extra ? '&' + extra : ''); }
-    function currentSummary() {
-      if (!catalog || !sessionId) return null;
-      return (catalog.sessions || []).find(item => item.id === sessionId) || null;
+    function enc(v) { return encodeURIComponent(v || ""); }
+    function sessionQuery(extra) {
+      const base = "session=" + enc(state.sessionId);
+      return extra ? base + "&" + extra : base;
     }
+    function currentSummary() {
+      if (!state.catalog || !state.sessionId) return null;
+      return (state.catalog.sessions || []).find(item => item.id === state.sessionId) || null;
+    }
+
+    /* ----------------------------- DATA / RENDER ----------------------------- */
     async function loadCatalog(preferred) {
-      catalog = await api('/api/sessions' + (preferred ? '?session=' + enc(preferred) : ''));
-      $('root').textContent = catalog.record_root || '--';
-      const select = $('session-select');
-      select.innerHTML = '';
-      if (!(catalog.sessions || []).length) {
-        const opt = document.createElement('option');
-        opt.value = ''; opt.textContent = 'No hay sesiones grabadas';
+      state.catalog = await api("/api/sessions" + (preferred ? "?session=" + enc(preferred) : ""));
+      $("root").textContent = state.catalog.record_root || "--";
+      const select = $("session-select");
+      select.innerHTML = "";
+      if (!(state.catalog.sessions || []).length) {
+        const opt = document.createElement("option");
+        opt.value = ""; opt.textContent = "No hay sesiones grabadas";
         select.appendChild(opt);
         renderEmpty();
         return;
       }
-      for (const item of catalog.sessions) {
-        const opt = document.createElement('option');
+      for (const item of state.catalog.sessions) {
+        const opt = document.createElement("option");
         opt.value = item.id;
-        opt.textContent = item.id + ' · ' + item.frames + ' fr · ' + item.critical + ' crit';
+        const status = item.review_status ? " · " + item.review_status : "";
+        opt.textContent = item.id + " · " + item.frames + " fr · " + item.critical + " crit" + status;
         select.appendChild(opt);
       }
-      sessionId = preferred || catalog.selected_session_id || catalog.sessions[0].id;
-      select.value = sessionId;
-      await loadSession(sessionId);
+      state.sessionId = preferred || state.catalog.selected_session_id || state.catalog.sessions[0].id;
+      select.value = state.sessionId;
+      await loadSession(state.sessionId);
     }
+
     async function loadSession(id) {
-      sessionId = id;
-      session = await api('/api/session?session=' + enc(id));
-      sessionId = session.selected_session_id;
-      $('session-video').src = '/video.mp4?session=' + enc(sessionId) + '&t=' + Date.now();
-      renderClasses(session.classes || []);
+      state.sessionId = id;
+      state.session = await api("/api/session?session=" + enc(id));
+      state.sessionId = state.session.selected_session_id;
+      $("session-video").src = "/video.mp4?session=" + enc(state.sessionId) + "&t=" + Date.now();
+      renderClasses(state.session.classes || []);
       renderSessionMeta();
       renderSessionEditor();
       await loadFrame(0);
     }
+
     function renderSessionMeta() {
       const s = currentSummary() || {};
-      $('pill-frames').textContent = (s.frames || session.frames || 0) + ' fr';
-      $('pill-critical').textContent = (s.critical || (session.critical_indexes || []).length || 0) + ' crit';
-      $('pill-reviewed').textContent = (s.reviewed || 0) + ' rev';
-      $('meta-frames').textContent = s.frames ?? session.frames ?? '--';
-      $('meta-critical').textContent = s.critical ?? (session.critical_indexes || []).length;
-      $('meta-images').textContent = s.images ?? '--';
-      $('meta-video').textContent = s.has_video ? 'session.mp4' : '--';
-      $('meta-modified').textContent = s.modified_at || '--';
-      $('timeline').max = Math.max(0, (session.frames || 1) - 1);
+      const frames = s.frames || state.session.frames || 0;
+      const reviewed = s.reviewed || 0;
+      $("pill-frames").textContent = frames;
+      $("pill-critical").textContent = s.critical || (state.session.critical_indexes || []).length || 0;
+      $("pill-reviewed").textContent = reviewed;
+      $("meta-frames").textContent = frames || "--";
+      $("meta-critical").textContent = s.critical ?? (state.session.critical_indexes || []).length;
+      $("meta-images").textContent = s.images ?? "--";
+      $("meta-video").textContent = s.has_video ? "session.mp4" : "--";
+      $("meta-modified").textContent = s.modified_at || "--";
+      const pct = frames ? Math.min(100, Math.round((reviewed / frames) * 100)) : 0;
+      $("meta-progress").style.width = pct + "%";
+      $("timeline").max = Math.max(0, frames - 1);
+      const status = (s.review_status || "sin estado").toLowerCase();
+      const badge = $("session-status-badge");
+      badge.textContent = status;
+      badge.style.color = status === "ready" ? "var(--teal)" : status === "discard" ? "var(--red)" : status === "reviewing" ? "var(--amber)" : "var(--ink-3)";
     }
+
     function renderSessionEditor() {
-      const meta = session.session_meta || {};
+      const meta = state.session.session_meta || {};
       const review = meta.review || {};
-      $('session-name').value = sessionId || '';
-      $('session-status').value = review.status || '';
-      $('session-tags').value = (review.tags || []).join(', ');
-      $('session-notes').value = review.notes || '';
+      $("session-name").value = state.sessionId || "";
+      $("session-status").value = review.status || "";
+      $("session-tags").value = (review.tags || []).join(", ");
+      $("session-notes").value = review.notes || "";
     }
+
     function renderClasses(classes) {
-      const sel = $('class-select');
-      sel.innerHTML = '';
-      $('quick-classes').innerHTML = '';
-      for (const name of classes) {
-        const opt = document.createElement('option');
+      const sel = $("class-select");
+      sel.innerHTML = "";
+      $("quick-classes").innerHTML = "";
+      const known = classes && classes.length ? classes : ["objeto"];
+      for (const name of known) {
+        const opt = document.createElement("option");
         opt.value = name; opt.textContent = name;
         sel.appendChild(opt);
-        const btn = document.createElement('button');
-        btn.type = 'button';
+        const btn = document.createElement("button");
+        btn.type = "button";
         btn.textContent = name;
-        btn.onclick = () => { $('class-select').value = name; $('class-input').value = ''; saveReview(true); };
-        $('quick-classes').appendChild(btn);
+        btn.onclick = () => {
+          $("class-select").value = name;
+          $("class-input").value = "";
+          updateRelabelBadge();
+          if (state.editMode) showToast("Clase para nuevo cuadro: " + name, "ok");
+          else if (state.selectedLabel != null) saveReview(true);
+        };
+        $("quick-classes").appendChild(btn);
       }
+      updateRelabelBadge();
     }
-    function criticalIndexes() { return session ? session.critical_indexes || [] : []; }
+
+    function updateRelabelBadge() {
+      const cls = ($("class-input").value.trim() || $("class-select").value || "objeto").slice(0, 24);
+      $("relabel-mode").textContent = cls;
+      $("editor-class-display").textContent = cls;
+    }
+
+    function criticalIndexes() { return state.session ? state.session.critical_indexes || [] : []; }
+
     function visibleIndex(delta) {
-      if (!$('critical').checked) return Math.max(0, Math.min(session.frames - 1, idx + delta));
+      if (!$("critical").checked) {
+        return Math.max(0, Math.min(state.session.frames - 1, state.idx + delta));
+      }
       const list = criticalIndexes();
-      if (!list.length) return idx;
-      const cur = list.indexOf(idx);
-      const next = cur < 0 ? (delta >= 0 ? 0 : list.length - 1) : Math.max(0, Math.min(list.length - 1, cur + delta));
+      if (!list.length) return state.idx;
+      const cur = list.indexOf(state.idx);
+      const next = cur < 0 ? (delta >= 0 ? 0 : list.length - 1) : Math.max(0, Math.min(list.length - 1, cur + Math.sign(delta)));
       return list[next];
     }
+
     function stopPlayback() {
-      if (playTimer) clearInterval(playTimer);
-      playTimer = null;
-      $('play').textContent = 'Play';
+      if (state.playTimer) clearInterval(state.playTimer);
+      state.playTimer = null;
+      $("play-label").textContent = "Play";
     }
+
     function togglePlayback() {
-      if (playTimer) { stopPlayback(); return; }
-      const fps = Math.max(1, Number($('speed').value || 8));
-      $('play').textContent = 'Pausa';
-      playTimer = setInterval(() => {
+      if (state.playTimer) { stopPlayback(); return; }
+      if (state.editMode) { showToast("Sal del modo Cuadros para reproducir", "error"); return; }
+      const fps = Math.max(1, Number($("speed").value || 8));
+      $("play-label").textContent = "Pausa";
+      state.playTimer = setInterval(() => {
         const next = visibleIndex(1);
-        if (next === idx || next >= session.frames - 1) stopPlayback();
+        if (next === state.idx || next >= state.session.frames - 1) stopPlayback();
         loadFrame(next);
       }, 1000 / fps);
     }
+
     function setVideoMode(on) {
-      videoMode = !!on;
+      state.videoMode = !!on;
       stopPlayback();
-      $('frame-shell').classList.toggle('video-mode', videoMode);
-      $('video-mode').textContent = videoMode ? 'Frames' : 'Video';
-      if (videoMode) $('session-video').play().catch(() => {});
-      else $('session-video').pause();
+      $("frame-shell").classList.toggle("video-mode", state.videoMode);
+      $("video-mode").classList.toggle("on", state.videoMode);
+      if (state.videoMode) $("session-video").play().catch(() => {});
+      else $("session-video").pause();
+      updateHud();
     }
+
+    function setEditMode(on) {
+      state.editMode = !!on;
+      stopPlayback();
+      const wrap = $("frame-wrap");
+      wrap.classList.toggle("editing", state.editMode);
+      $("frame-shell").classList.toggle("editing", state.editMode);
+      $("edit-mode").classList.toggle("on", state.editMode);
+      $("editor-toolbar").classList.toggle("off", !state.editMode);
+      if (state.editMode) {
+        if (state.videoMode) setVideoMode(false);
+        $("overlay").checked = false;
+        loadFrame(state.idx);
+      } else {
+        $("overlay").checked = true;
+        loadFrame(state.idx);
+      }
+      updateHud();
+    }
+
+    function updateHud() {
+      const hud = $("frame-hud");
+      const text = $("hud-text");
+      hud.classList.toggle("editing", state.editMode);
+      if (state.editMode) text.textContent = "EDIT";
+      else if (state.videoMode) text.textContent = "VIDEO";
+      else text.textContent = "VIEW";
+    }
+
     async function loadFrame(newIdx) {
-      if (!sessionId || !session || !session.frames) { renderEmpty(); return; }
-      idx = Math.max(0, Math.min(session.frames - 1, newIdx));
-      const data = await api('/api/frame?' + sessionQuery('idx=' + idx));
-      frameData = data.frame;
-      selected = null;
-      $('timeline').value = idx;
-      $('frame').src = '/frame.jpg?' + sessionQuery('idx=' + idx + '&overlay=' + ($('overlay').checked ? '1' : '0')) + '&t=' + Date.now();
+      if (!state.sessionId || !state.session || !state.session.frames) { renderEmpty(); return; }
+      state.idx = Math.max(0, Math.min(state.session.frames - 1, newIdx));
+      const data = await api("/api/frame?" + sessionQuery("idx=" + state.idx));
+      state.frameData = data.frame;
+      state.selectedLabel = null;
+      state.selectedManualId = null;
+      $("timeline").value = state.idx;
+      const max = Number($("timeline").max) || 1;
+      $("timeline").style.setProperty("--seek-pct", ((state.idx / max) * 100).toFixed(2) + "%");
+      const overlay = $("overlay").checked && !state.editMode ? "1" : "0";
+      $("frame").src = "/frame.jpg?" + sessionQuery("idx=" + state.idx + "&overlay=" + overlay) + "&t=" + Date.now();
       renderFrame();
     }
+
     function renderFrame() {
-      $('pos').textContent = (idx + 1) + ' / ' + session.frames;
-      $('frame-name').textContent = (frameData.image || 'frame ' + (frameData.frame_seq ?? idx)).split('/').pop();
-      $('frame-seq').textContent = frameData.frame_seq ?? '--';
-      $('frame-time').textContent = frameData.iso_time || '--';
-      $('frame-inf').textContent = frameData.inference_latency_ms == null ? '--' : frameData.inference_latency_ms + ' ms';
-      const autonomy = frameData.autonomy || {};
-      $('frame-action').textContent = autonomy.action || (autonomy.decision || {}).action || '--';
-      $('asset-name').value = frameData.image ? frameData.image.split('/').pop() : '';
-      const flags = (((frameData.critical || {}).flags) || []);
-      $('flags').innerHTML = flags.length ? '' : '<div class="flag empty">Sin flags</div>';
+      const f = state.frameData;
+      $("pos").innerHTML = "<b>" + (state.idx + 1) + "</b> / " + state.session.frames;
+      const filename = (f.image || "frame " + (f.frame_seq ?? state.idx)).split("/").pop();
+      $("frame-name").textContent = filename;
+      $("frame-badge").textContent = "#" + (f.frame_seq ?? "--");
+      $("frame-seq").textContent = f.frame_seq ?? "--";
+      $("frame-time").textContent = f.iso_time || "--";
+      $("frame-inf").textContent = f.inference_latency_ms == null ? "--" : f.inference_latency_ms + " ms";
+      const autonomy = f.autonomy || {};
+      $("frame-action").textContent = autonomy.action || (autonomy.decision || {}).action || "--";
+      $("asset-name").value = f.image ? f.image.split("/").pop() : "";
+      const flags = ((f.critical || {}).flags) || [];
+      $("flag-count").textContent = flags.length;
+      $("flags").innerHTML = flags.length ? "" : '<div class="flag empty">Sin flags</div>';
       for (const flag of flags) {
-        const div = document.createElement('div');
-        div.className = 'flag';
-        div.innerHTML = '<b>' + (flag.rule || '?') + '</b><br><span>' + JSON.stringify(flag) + '</span>';
-        $('flags').appendChild(div);
+        const div = document.createElement("div");
+        div.className = "flag";
+        const detail = Object.entries(flag).filter(([k]) => k !== "rule").map(([k, v]) => k + ": " + JSON.stringify(v)).join(" · ");
+        div.innerHTML = "<b>" + (flag.rule || "?") + "</b><span>" + detail + "</span>";
+        $("flags").appendChild(div);
       }
-      const labels = frameData.labels || [];
-      $('labels').innerHTML = labels.length ? '' : '<div class="label-row empty">Sin labels</div>';
+      const labels = f.labels || [];
+      const manual = labels.filter(l => l.source === "manual").length;
+      $("pill-manual").textContent = manual;
+      $("label-count").textContent = labels.length + (manual ? " · " + manual + "M" : "");
+      $("labels").innerHTML = labels.length ? "" : '<div class="label-row empty">Sin labels</div>';
       labels.forEach((label, i) => {
         const review = label.review || {};
-        const div = document.createElement('div');
-        div.className = 'label-row' + (review.valid === false ? ' invalid' : '') + (selected === i ? ' active' : '');
-        const conf = label.confidence == null ? '--' : Math.round(label.confidence * 100) + '%';
-        div.innerHTML = '<span><span class="name">#' + (label.track_id ?? '-') + ' ' + (review.class || label.class || 'objeto') + '</span><br><small>' + conf + '</small></span><span>' + label.index + '</span>';
+        const isManual = label.source === "manual";
+        const isInvalid = review.valid === false;
+        const div = document.createElement("div");
+        div.className = "label-row" + (isInvalid ? " invalid" : "") + (isManual ? " manual" : "") + (state.selectedLabel === i ? " active" : "");
+        const cls = review.class || label.class || "objeto";
+        const conf = label.confidence == null ? "--" : Math.round(label.confidence * 100) + "%";
+        const trackId = label.track_id == null ? "-" : label.track_id;
+        const srcMark = isManual ? "M" : isInvalid ? "X" : (i + 1);
+        const srcClass = isManual ? "src manual" : isInvalid ? "src invalid" : "src";
+        div.innerHTML =
+          '<span class="' + srcClass + '">' + srcMark + '</span>' +
+          '<span><span class="name">' + cls + '</span><span class="hint">#' + trackId + ' · ' + conf + (isManual ? " · manual" : "") + '</span></span>' +
+          '<span class="key">' + (isManual ? "m" : (i + 1) + "↩") + '</span>';
         div.onclick = () => selectLabel(i);
-        $('labels').appendChild(div);
+        $("labels").appendChild(div);
       });
-      if (labels.length && selected == null) selectLabel(0, false);
+      if (labels.length && state.selectedLabel == null) selectLabel(0, false);
+      drawEditorOverlay();
     }
+
     function renderEmpty() {
-      session = {frames: 0, critical_indexes: []};
-      $('frame').removeAttribute('src');
-      $('pos').textContent = '--';
-      $('frame-name').textContent = '--';
-      $('timeline').value = 0;
-      $('timeline').max = 0;
-      $('pill-frames').textContent = '0 fr';
-      $('pill-critical').textContent = '0 crit';
-      $('pill-reviewed').textContent = '0 rev';
-      $('labels').innerHTML = '<div class="label-row empty">Sin sesiones</div>';
-      $('flags').innerHTML = '<div class="flag empty">Sin flags</div>';
+      state.session = { frames: 0, critical_indexes: [] };
+      $("frame").removeAttribute("src");
+      $("pos").innerHTML = "<b>--</b> / --";
+      $("frame-name").textContent = "--";
+      $("timeline").value = 0;
+      $("timeline").max = 0;
+      $("pill-frames").textContent = "0";
+      $("pill-critical").textContent = "0";
+      $("pill-reviewed").textContent = "0";
+      $("pill-manual").textContent = "0";
+      $("labels").innerHTML = '<div class="label-row empty">Sin sesiones</div>';
+      $("flags").innerHTML = '<div class="flag empty">Sin flags</div>';
     }
-    function selectLabel(i, rerender=true) {
-      selected = i;
-      const label = frameData.labels[i];
+
+    function selectLabel(i, rerender = true) {
+      state.selectedLabel = i;
+      const label = state.frameData.labels[i];
+      if (!label) return;
       const review = label.review || {};
-      $('class-select').value = review.class || label.class || '';
-      $('class-input').value = '';
-      $('valid').checked = review.valid !== false;
-      $('note').value = review.note || '';
+      const isManual = label.source === "manual";
+      $("class-select").value = review.class || label.class || "";
+      $("class-input").value = "";
+      $("valid").checked = review.valid !== false;
+      $("note").value = review.note || label.note || "";
+      state.selectedManualId = isManual ? label.id : null;
+      $("editor-delete").disabled = !isManual;
+      updateRelabelBadge();
       if (rerender) renderFrame();
     }
+
+    /* ----------------------------- API SAVES --------------------------------- */
     async function saveReview(validOverride) {
-      if (selected == null || !frameData) return;
-      const label = frameData.labels[selected];
-      const cls = $('class-input').value.trim() || $('class-select').value || label.class || '';
-      const valid = validOverride == null ? $('valid').checked : validOverride;
-      const data = await api('/api/relabel', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({session_id: sessionId, frame_seq: frameData.frame_seq, label_index: label.index, class: cls, valid, note: $('note').value})
-      });
-      renderClasses(data.classes);
-      await loadCatalog(sessionId);
-      await loadFrame(idx);
+      if (state.selectedLabel == null || !state.frameData) return;
+      const label = state.frameData.labels[state.selectedLabel];
+      if (!label || label.source === "manual") {
+        showToast("Edita cuadros manuales en modo Cuadros", "error");
+        return;
+      }
+      const cls = $("class-input").value.trim() || $("class-select").value || label.class || "";
+      const valid = validOverride == null ? $("valid").checked : validOverride;
+      try {
+        const data = await api("/api/relabel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: state.sessionId,
+            frame_seq: state.frameData.frame_seq,
+            label_index: label.index,
+            class: cls,
+            valid,
+            note: $("note").value,
+          }),
+        });
+        renderClasses(data.classes);
+        await loadCatalog(state.sessionId);
+        await loadFrame(state.idx);
+        showToast(valid ? "Label guardada" : "Deteccion rechazada", "ok");
+      } catch (err) {
+        showToast(err.message, "error");
+      }
     }
+
+    async function saveManualBox(bbox, cls) {
+      try {
+        const data = await api("/api/frame/box", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: state.sessionId,
+            frame_seq: state.frameData.frame_seq,
+            class: cls || "objeto",
+            bbox_xyxy: bbox,
+          }),
+        });
+        renderClasses(data.classes);
+        await loadCatalog(state.sessionId);
+        await loadFrame(state.idx);
+        showToast("Cuadro creado · " + (cls || "objeto"), "ok");
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+    }
+
+    async function deleteSelectedManual() {
+      if (!state.selectedManualId) return;
+      try {
+        await api("/api/frame/box/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: state.sessionId,
+            frame_seq: state.frameData.frame_seq,
+            id: state.selectedManualId,
+          }),
+        });
+        await loadCatalog(state.sessionId);
+        await loadFrame(state.idx);
+        showToast("Cuadro borrado", "ok");
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+    }
+
     async function renameSession() {
-      const nextName = $('session-name').value.trim();
-      if (!nextName || nextName === sessionId) return;
-      const data = await api('/api/session/rename', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({session_id: sessionId, new_id: nextName})
-      });
-      await loadCatalog(data.session.id);
+      const nextName = $("session-name").value.trim();
+      if (!nextName || nextName === state.sessionId) return;
+      try {
+        const data = await api("/api/session/rename", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: state.sessionId, new_id: nextName }),
+        });
+        await loadCatalog(data.session.id);
+        showToast("Sesion renombrada", "ok");
+      } catch (err) { showToast(err.message, "error"); }
     }
+
     async function saveSessionMeta() {
-      const data = await api('/api/session/meta', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          session_id: sessionId,
-          status: $('session-status').value,
-          tags: $('session-tags').value,
-          notes: $('session-notes').value
-        })
-      });
-      session.session_meta = session.session_meta || {};
-      session.session_meta.review = data.review;
-      await loadCatalog(sessionId);
+      try {
+        const data = await api("/api/session/meta", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: state.sessionId,
+            status: $("session-status").value,
+            tags: $("session-tags").value,
+            notes: $("session-notes").value,
+          }),
+        });
+        state.session.session_meta = state.session.session_meta || {};
+        state.session.session_meta.review = data.review;
+        await loadCatalog(state.sessionId);
+        showToast("Metadatos guardados", "ok");
+      } catch (err) { showToast(err.message, "error"); }
     }
+
     async function renameAsset() {
-      if (!frameData) return;
-      const newName = $('asset-name').value.trim();
+      if (!state.frameData) return;
+      const newName = $("asset-name").value.trim();
       if (!newName) return;
-      await api('/api/frame/rename', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({session_id: sessionId, idx, new_name: newName})
-      });
-      await loadFrame(idx);
+      try {
+        await api("/api/frame/rename", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: state.sessionId, idx: state.idx, new_name: newName }),
+        });
+        await loadFrame(state.idx);
+        showToast("Imagen renombrada", "ok");
+      } catch (err) { showToast(err.message, "error"); }
     }
-    $('session-select').onchange = e => loadSession(e.target.value);
-    $('refresh').onclick = () => loadCatalog(sessionId);
-    $('play').onclick = togglePlayback;
-    $('prev').onclick = () => loadFrame(visibleIndex(-1));
-    $('next').onclick = () => loadFrame(visibleIndex(1));
-    $('jump-back').onclick = () => loadFrame(visibleIndex(-25));
-    $('jump-forward').onclick = () => loadFrame(visibleIndex(25));
-    $('video-mode').onclick = () => setVideoMode(!videoMode);
-    $('timeline').oninput = e => loadFrame(Number(e.target.value));
-    $('overlay').onchange = () => loadFrame(idx);
-    $('critical').onchange = () => { if ($('critical').checked && frameData && !((frameData.critical || {}).is_critical)) loadFrame(visibleIndex(1)); };
-    $('save').onclick = () => saveReview(null);
-    $('reject').onclick = () => saveReview(false);
-    $('rename-session').onclick = () => renameSession().catch(err => alert(err.message));
-    $('save-session-meta').onclick = () => saveSessionMeta().catch(err => alert(err.message));
-    $('rename-asset').onclick = () => renameAsset().catch(err => alert(err.message));
-    window.addEventListener('keydown', e => {
-      const tag = (e.target && e.target.tagName || '').toLowerCase();
-      if (['input','textarea','select'].includes(tag)) return;
-      if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') loadFrame(visibleIndex(-1));
-      if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') loadFrame(visibleIndex(1));
-      if (e.key === ' ') { e.preventDefault(); togglePlayback(); }
-      if (e.key.toLowerCase() === 'v') { $('valid').checked = true; saveReview(true); }
-      if (e.key.toLowerCase() === 'r') saveReview(false);
-      const digit = Number(e.key);
-      if (digit >= 1 && digit <= 9 && frameData && frameData.labels && frameData.labels[digit - 1]) selectLabel(digit - 1);
+
+    /* ----------------------------- BBOX EDITOR ------------------------------- */
+    function eventToImageCoords(event) {
+      const svg = $("editor-svg");
+      const rect = svg.getBoundingClientRect();
+      const x = ((event.clientX - rect.left) / rect.width) * state.imgNaturalW;
+      const y = ((event.clientY - rect.top) / rect.height) * state.imgNaturalH;
+      return [Math.max(0, Math.min(state.imgNaturalW, x)), Math.max(0, Math.min(state.imgNaturalH, y))];
+    }
+
+    function drawEditorOverlay() {
+      const svg = $("editor-svg");
+      svg.setAttribute("viewBox", "0 0 " + state.imgNaturalW + " " + state.imgNaturalH);
+      svg.innerHTML = "";
+      if (!state.editMode || !state.frameData) return;
+      const labels = state.frameData.labels || [];
+      labels.forEach((label, i) => {
+        if (!Array.isArray(label.bbox_xyxy) || label.bbox_xyxy.length !== 4) return;
+        const [x1, y1, x2, y2] = label.bbox_xyxy;
+        const w = x2 - x1, h = y2 - y1;
+        const isManual = label.source === "manual";
+        const isSelected = isManual && state.selectedManualId === label.id;
+        const stroke = isManual ? "#7dd3fc" : "#4ea6ff";
+        const fill = isSelected ? "rgba(125,211,252,0.18)" : "rgba(0,0,0,0)";
+        const g = document.createElementNS(SVG_NS, "g");
+        g.setAttribute("data-label-i", i);
+        g.style.cursor = isManual ? "pointer" : "default";
+
+        const rect = document.createElementNS(SVG_NS, "rect");
+        rect.setAttribute("x", x1);
+        rect.setAttribute("y", y1);
+        rect.setAttribute("width", w);
+        rect.setAttribute("height", h);
+        rect.setAttribute("fill", fill);
+        rect.setAttribute("stroke", stroke);
+        rect.setAttribute("stroke-width", isSelected ? 4 : 2.5);
+        rect.setAttribute("stroke-dasharray", isManual ? "0" : "8 6");
+        rect.setAttribute("vector-effect", "non-scaling-stroke");
+        g.appendChild(rect);
+
+        const tagH = Math.max(18, Math.min(34, state.imgNaturalH * 0.04));
+        const tag = document.createElementNS(SVG_NS, "rect");
+        tag.setAttribute("x", x1);
+        tag.setAttribute("y", Math.max(0, y1 - tagH));
+        tag.setAttribute("width", Math.min(state.imgNaturalW - x1, Math.max(120, (label.class || "objeto").length * 12 + 36)));
+        tag.setAttribute("height", tagH);
+        tag.setAttribute("fill", stroke);
+        tag.setAttribute("opacity", "0.95");
+        g.appendChild(tag);
+
+        const text = document.createElementNS(SVG_NS, "text");
+        text.setAttribute("x", x1 + 8);
+        text.setAttribute("y", Math.max(tagH * 0.7, y1 - tagH * 0.3));
+        text.setAttribute("font-family", "IBM Plex Mono, monospace");
+        text.setAttribute("font-size", Math.max(11, Math.min(20, state.imgNaturalH * 0.026)));
+        text.setAttribute("fill", "#0a0a0c");
+        text.setAttribute("font-weight", "600");
+        text.textContent = (isManual ? "M " : "") + (label.class || "objeto");
+        g.appendChild(text);
+
+        if (isManual) {
+          g.addEventListener("mousedown", e => { e.stopPropagation(); selectLabel(i); });
+        }
+        svg.appendChild(g);
+      });
+    }
+
+    function startDraw(event) {
+      if (!state.editMode) return;
+      if (event.button !== 0) return;
+      event.preventDefault();
+      const [x, y] = eventToImageCoords(event);
+      state.drawing = { x0: x, y0: y, x1: x, y1: y };
+      const svg = $("editor-svg");
+      let rect = svg.querySelector("#draw-temp");
+      if (!rect) {
+        rect = document.createElementNS(SVG_NS, "rect");
+        rect.setAttribute("id", "draw-temp");
+        rect.setAttribute("fill", "rgba(125,211,252,0.16)");
+        rect.setAttribute("stroke", "#7dd3fc");
+        rect.setAttribute("stroke-width", 3);
+        rect.setAttribute("stroke-dasharray", "4 4");
+        rect.setAttribute("vector-effect", "non-scaling-stroke");
+        svg.appendChild(rect);
+      }
+      rect.setAttribute("x", x);
+      rect.setAttribute("y", y);
+      rect.setAttribute("width", 0);
+      rect.setAttribute("height", 0);
+    }
+
+    function moveDraw(event) {
+      if (!state.drawing) return;
+      const [x, y] = eventToImageCoords(event);
+      state.drawing.x1 = x; state.drawing.y1 = y;
+      const rect = $("editor-svg").querySelector("#draw-temp");
+      if (!rect) return;
+      const x0 = Math.min(state.drawing.x0, x);
+      const y0 = Math.min(state.drawing.y0, y);
+      rect.setAttribute("x", x0);
+      rect.setAttribute("y", y0);
+      rect.setAttribute("width", Math.abs(x - state.drawing.x0));
+      rect.setAttribute("height", Math.abs(y - state.drawing.y0));
+    }
+
+    function endDraw(event) {
+      if (!state.drawing) return;
+      const draw = state.drawing;
+      state.drawing = null;
+      const svg = $("editor-svg");
+      const tmp = svg.querySelector("#draw-temp");
+      if (tmp) tmp.remove();
+      const x1 = Math.min(draw.x0, draw.x1);
+      const y1 = Math.min(draw.y0, draw.y1);
+      const x2 = Math.max(draw.x0, draw.x1);
+      const y2 = Math.max(draw.y0, draw.y1);
+      if (x2 - x1 < state.imgNaturalW * 0.012 || y2 - y1 < state.imgNaturalH * 0.012) return;
+      const cls = $("class-input").value.trim() || $("class-select").value || "objeto";
+      saveManualBox([x1, y1, x2, y2], cls);
+    }
+
+    /* ----------------------------- WIRING ------------------------------------ */
+    $("session-select").onchange = e => loadSession(e.target.value);
+    $("refresh").onclick = () => loadCatalog(state.sessionId);
+    $("play").onclick = togglePlayback;
+    $("prev").onclick = () => loadFrame(visibleIndex(-1));
+    $("next").onclick = () => loadFrame(visibleIndex(1));
+    $("jump-back").onclick = () => loadFrame(visibleIndex(-25));
+    $("jump-forward").onclick = () => loadFrame(visibleIndex(25));
+    $("video-mode").onclick = () => setVideoMode(!state.videoMode);
+    $("edit-mode").onclick = () => setEditMode(!state.editMode);
+    $("editor-delete").onclick = () => deleteSelectedManual();
+    $("timeline").oninput = e => loadFrame(Number(e.target.value));
+    $("overlay").onchange = () => loadFrame(state.idx);
+    $("critical").onchange = () => {
+      if ($("critical").checked && state.frameData && !((state.frameData.critical || {}).is_critical)) {
+        loadFrame(visibleIndex(1));
+      }
+    };
+    $("save").onclick = () => saveReview(null);
+    $("reject").onclick = () => saveReview(false);
+    $("rename-session").onclick = () => renameSession();
+    $("save-session-meta").onclick = () => saveSessionMeta();
+    $("rename-asset").onclick = () => renameAsset();
+    $("class-input").oninput = updateRelabelBadge;
+    $("class-select").onchange = updateRelabelBadge;
+
+    const svgEl = $("editor-svg");
+    svgEl.addEventListener("mousedown", startDraw);
+    svgEl.addEventListener("mousemove", moveDraw);
+    svgEl.addEventListener("mouseup", endDraw);
+    svgEl.addEventListener("mouseleave", endDraw);
+
+    $("frame").addEventListener("load", () => {
+      const img = $("frame");
+      if (img.naturalWidth && img.naturalHeight) {
+        state.imgNaturalW = img.naturalWidth;
+        state.imgNaturalH = img.naturalHeight;
+        $("frame-shell").style.aspectRatio = img.naturalWidth + "/" + img.naturalHeight;
+        drawEditorOverlay();
+      }
     });
+
+    window.addEventListener("keydown", e => {
+      const tag = (e.target && e.target.tagName || "").toLowerCase();
+      if (["input", "textarea", "select"].includes(tag)) {
+        if (e.key === "Escape" && state.editMode) setEditMode(false);
+        return;
+      }
+      if (e.key === "ArrowLeft" || e.key.toLowerCase() === "a") loadFrame(visibleIndex(-1));
+      else if (e.key === "ArrowRight" || e.key.toLowerCase() === "d") loadFrame(visibleIndex(1));
+      else if (e.key === " ") { e.preventDefault(); togglePlayback(); }
+      else if (e.key.toLowerCase() === "v") { $("valid").checked = true; saveReview(true); }
+      else if (e.key.toLowerCase() === "r") saveReview(false);
+      else if (e.key.toLowerCase() === "e") setEditMode(!state.editMode);
+      else if (e.key === "Escape") { if (state.editMode) setEditMode(false); else stopPlayback(); }
+      else if (e.key === "Delete" || e.key === "Backspace") {
+        if (state.editMode && state.selectedManualId) deleteSelectedManual();
+      } else {
+        const digit = Number(e.key);
+        if (digit >= 1 && digit <= 9 && state.frameData && state.frameData.labels && state.frameData.labels[digit - 1]) {
+          selectLabel(digit - 1);
+        }
+      }
+    });
+
+    $("timeline").addEventListener("input", e => {
+      const max = Number(e.target.max) || 1;
+      e.target.style.setProperty("--seek-pct", ((Number(e.target.value) / max) * 100).toFixed(2) + "%");
+    });
+
     const params = new URLSearchParams(location.search);
-    loadCatalog(params.get('session')).catch(err => alert(err.message));
+    loadCatalog(params.get("session")).catch(err => showToast(err.message, "error"));
   </script>
 </body>
 </html>

@@ -32,6 +32,7 @@ Each session creates a timestamped directory with:
 - `critical/frame_*.jpg`: annotated critical frames.
 - `session.mp4`: annotated video with predictions, track ids, autonomous action, and critical-rule badges.
 - `labels_reviewed.json` and `labels_reviewed.jsonl`: created by the offline replayer after human review.
+- `manual_labels.json` and `manual_labels.jsonl`: created by the offline replayer when an operator draws bounding boxes on frames without detections.
 
 Secrets are not written to session directories.
 
@@ -87,6 +88,7 @@ The replayer supports:
 - viewing overlays from candidate labels and critical rules
 - relabeling a detection class
 - marking detections valid or rejected
+- drawing manual bounding boxes on frames without model detections (Cuadros mode), with delete and class assignment
 - editing review metadata in `session.json` (`status`, tags, notes)
 - renaming a session directory safely within the recording root
 - renaming a selected frame image with a manifest-safe update recorded in `session_edits.jsonl`

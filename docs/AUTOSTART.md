@@ -145,6 +145,8 @@ ops/bin/tp2-status
 - camera stream: `/video.mjpg`
 - control API: `POST /control` applies non-neutral browser commands only while the runtime is in `manual`; neutral manual posts stay unarmed; `POST /control/neutral` releases manual control without leaving `autonomous`; `POST /control/stop` forces manual neutral stop
 - steering trim API: `POST /steering-trim` changes the live compensation value used before UDP send
+- cruise API: `POST /cruise-speed` changes the live autonomous forward throttle
+- turn compensation API: `POST /turn-compensation` enables/tunes the optional periodic right steering pulse
 - mode API: `POST /mode` switches between `manual` and `autonomous`; manual remains the safe startup mode
 - recording API: `POST /recording` starts/stops dataset capture; `GET /recording.json` reports output path and counters
 - safety timeout: `TP2_WEB_CONTROL_TIMEOUT_SEC` forces neutral when browser commands stop

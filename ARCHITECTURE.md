@@ -77,7 +77,7 @@ This path works without introducing a new backend API layer.
 - Operator visibility:
   - `coche.py` exposes annotated live video, remote manual control, autonomous mode, and inference/control status from EPC on `8088/TCP`
   - browser control updates EPC state only; EPC remains the only host that sends UDP commands to the car
-  - steering compensation is mutable from the EPC web UI and is applied after autonomous/lane steering, immediately before UDP command serialization
+  - steering compensation, autonomous cruise throttle, and optional periodic right-turn pulse are mutable from the EPC web UI; steering trim is applied immediately before UDP command serialization and bypassed only for autonomous open turns
   - autonomous driving is an EPC-local decision layer over Roboflow detections; it performs temporal tracking, sign selection, stateful maneuvers, and command smoothing without moving orchestration to Jetson or the car
   - lane assistance is EPC-local OpenCV processing over the same camera frames; it detects the blue/green tape corridor on the black carpet and reports status/correction through `/status.json`
   - session recording is also EPC-local and stores candidate frames, annotated MP4 video, predictions, critical flags, reviewed-label sidecars, and autonomous estimates for dataset improvement under the configured recording directory

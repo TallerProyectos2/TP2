@@ -38,12 +38,13 @@ Normal sessions use one EPC runtime from `servicios/`:
 - Web autonomous mode:
   - operator toggles manual/autonomous from the same web UI
   - EPC uses fresh Roboflow detections to choose continue, turn, stop, crawl, slow, or faster cruise
-  - autonomous forward movement uses positive throttle `+0.65`; stop, ambiguity, stale frame or stale inference still force neutral `0.0`
-  - outgoing UDP steering is trimmed before packet send; current default `TP2_STEERING_TRIM=-0.24` compensates the physical left drift with a stronger rightward correction, and the EPC web UI can change that trim live
+  - autonomous forward movement uses positive throttle `+0.65`; stop, ambiguity, stale frame or stale inference still force neutral `0.0`; the EPC web UI can change cruise throttle live
+  - outgoing UDP steering is trimmed before packet send; current default `TP2_STEERING_TRIM=-0.24` compensates the physical left drift with a stronger rightward correction, the EPC web UI can change that trim live, and open turn maneuvers bypass trim to keep full lock
+  - an optional periodic right-turn pulse can compensate left drift during autonomous forward actions without applying during open turn maneuvers
   - `coche.py` also runs OpenCV lane assist on the camera frame: it detects the continuous blue/green tape lines on the carpet, estimates the current corridor, prefers the right corridor when several lanes are visible, slows during strong recovery, and applies a bounded steering correction only during autonomous forward actions
   - nearest/relevant signs are selected by bounding-box area, confidence, persistence, image zone (`left`, `center`, `right`), and maneuver state
   - default sign thresholds are tuned to act on slightly smaller/farther signs; STOP detections stop immediately and turn decisions begin before the car reaches the sign
-  - detections are tracked across frames; default turn decisions trigger on the first valid confirmed frame to reduce reaction delay
+  - detections are tracked across frames; default turn decisions trigger full-lock 90-degree maneuvers on the first valid confirmed frame, including far turn detections
   - the FSM holds stops, maintains 90-degree open-loop turns for the configured maneuver window, and applies cooldowns to avoid repeating the same sign
   - stale frame or stale inference state forces neutral instead of continuing on old detections
 - Dataset recording mode:
@@ -76,7 +77,7 @@ Normal sessions use one EPC runtime from `servicios/`:
 - `coche.py` exposes the live camera/inference/operator status and remote manual control web view on `8088/TCP`; use `http://100.97.19.112:8088/` from Tailscale during normal EPC-run sessions.
 - Browser control is direct only in manual mode once the operator opens the web UI. Neutral manual posts do not arm the control path, and the watchdog returns active manual commands to neutral instead of holding the last throttle. Manual control release does not leave autonomous mode; the Stop button is the explicit manual neutral stop.
 - The web UI exposes `POST /mode` for `manual` and `autonomous`. Manual is the safe default; autonomous should only be enabled after live camera frames, inference, and lane status are visible.
-- The web UI exposes `POST /steering-trim` for live steering compensation; this trim is added after autonomous and lane steering and before the UDP packet is sent.
+- The web UI exposes `POST /steering-trim`, `POST /cruise-speed`, and `POST /turn-compensation` for live steering trim, cruise throttle, and periodic right-pulse tuning.
 - The web UI exposes `POST /recording` for dataset capture. Default recording state is controlled by `TP2_SESSION_RECORD_AUTOSTART`; normal systemd operation records sessions by default for retraining evidence.
 - `scripts_profesor/car1_grupo4.py` is a professor-style manual-control server adapted for Grupo 4. It intentionally keeps the professor script behavior and binds the LTE runtime address `172.16.0.1:20001`, so do not run it at the same time as `tp2-car-control.service`.
 - `coche.py` defaults its live inference endpoint to Jetson at `http://100.115.99.8:9001` using direct model inference (`TP2_INFERENCE_TARGET=model`, `ROBOFLOW_MODEL_ID=tp2-g4-2026/2`); override these variables only when intentionally using another backend.

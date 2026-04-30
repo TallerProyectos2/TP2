@@ -129,11 +129,74 @@ class RuntimeStateModeTest(unittest.TestCase):
             corrected_steering(NEUTRAL_STEERING, 0.125),
         )
 
+    def test_steering_trim_is_bypassed_for_open_turns(self):
+        state = RuntimeState()
+        with state.lock:
+            state.drive_mode = "autonomous"
+            state.steering = 1.0
+            state.autonomous_decision = decision(action="turn-left", state="turn-left")
+            control = state.control_snapshot_locked()
+
+        self.assertEqual(control["steering_trim"], STEERING_TRIM)
+        self.assertEqual(control["applied_steering_trim"], 0.0)
+        self.assertTrue(control["steering_trim_bypassed"])
+        self.assertEqual(control["effective_steering"], 1.0)
+
     def test_rejects_invalid_live_steering_trim(self):
         state = RuntimeState()
 
         with self.assertRaises(ValueError):
             state.set_steering_trim("nan")
+
+    def test_cruise_speed_can_be_changed_live(self):
+        state = RuntimeState()
+
+        status = state.set_cruise_speed(0.42)
+        config = status["autonomy"]["config"]
+
+        self.assertEqual(config["cruise_throttle"], 0.42)
+        self.assertEqual(config["crawl_throttle"], 0.42)
+        self.assertEqual(config["slow_throttle"], 0.42)
+        self.assertEqual(config["turn_throttle"], 0.42)
+        self.assertEqual(config["fast_throttle"], 0.42)
+
+    def test_rejects_invalid_live_cruise_speed(self):
+        state = RuntimeState()
+
+        with self.assertRaises(ValueError):
+            state.set_cruise_speed("nan")
+
+    def test_turn_compensation_applies_right_pulse_to_forward_actions(self):
+        state = RuntimeState()
+        state.set_turn_compensation(enabled=True, interval_sec=0.1, magnitude=0.2, duration_sec=0.05)
+        with state.lock:
+            state.drive_mode = "autonomous"
+            state.turn_compensation_last_pulse_at = 0.0
+            adjusted = state._apply_turn_compensation_locked(decision(), 1.0)
+            pulse = state.turn_compensation_snapshot_locked(now=1.0)
+
+        self.assertEqual(adjusted.steering, 0.05)
+        self.assertEqual(adjusted.raw_steering, 0.05)
+        self.assertIn("turn-comp=-0.200", adjusted.reason)
+        self.assertTrue(pulse["active"])
+        self.assertEqual(pulse["applied_correction"], -0.2)
+
+    def test_turn_compensation_does_not_compete_with_open_turns(self):
+        state = RuntimeState()
+        state.set_turn_compensation(enabled=True, interval_sec=0.1, magnitude=0.2, duration_sec=0.05)
+        turn = decision(
+            action="turn-right",
+            state="turn-right",
+            reason="turn-test",
+        )
+        with state.lock:
+            state.drive_mode = "autonomous"
+            state.turn_compensation_last_pulse_at = 0.0
+            adjusted = state._apply_turn_compensation_locked(turn, 1.0)
+
+        self.assertEqual(adjusted.steering, turn.steering)
+        self.assertFalse(state.turn_compensation_active)
+        self.assertEqual(state.turn_compensation_reason, "action-turn-right")
 
     def test_autonomous_mode_applies_lane_correction_when_cruising(self):
         state = RuntimeState()

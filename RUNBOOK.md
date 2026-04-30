@@ -61,12 +61,12 @@ The manual order below remains the operational source for troubleshooting.
 - `coche.py` accepts direct remote manual control over the web view and falls back to neutral when web commands stop.
 - `coche.py` exposes `POST /mode` for `manual`/`autonomous`; autonomous mode falls back to neutral when frames or inference become stale.
 - Autonomous forward movement defaults to positive throttle `+0.65`; reverse throttle is not emitted by the autonomous controller.
-- UDP control output applies `TP2_STEERING_TRIM` before sending commands to the car. The default is `-0.24`, a stronger rightward correction for the current physical left drift; `/status.json` reports both requested `steering` and sent `effective_steering`.
-- The live web UI can change steering compensation through `POST /steering-trim`; the selected trim is added after autonomous/lane steering and before UDP send.
+- UDP control output applies `TP2_STEERING_TRIM` before sending commands to the car, except during autonomous open turns where trim is bypassed to keep full lock. The default is `-0.24`; `/status.json` reports requested `steering`, `applied_steering_trim`, and sent `effective_steering`.
+- The live web UI can change steering compensation (`POST /steering-trim`), autonomous cruise speed (`POST /cruise-speed`), and the optional periodic right-turn pulse (`POST /turn-compensation`) without restarting the service.
 - Lane assist is enabled by default with `TP2_LANE_ASSIST_ENABLED=1`; it detects the blue/green tape on the black carpet and applies a bounded correction up to `TP2_LANE_MAX_CORRECTION=0.75` only to autonomous forward actions. It prefers the right corridor when several lanes are visible, slows during strong lane recovery, and exposes `lane.status`, `lane.guidance` and `lane.applied_correction`.
 - Autonomous inference cadence defaults to `0.07 s` minimum spacing between submitted frames.
 - Autonomous sign selection accepts smaller/farther signs by default (`TP2_AUTONOMOUS_MIN_AREA_RATIO=0.003`, `TP2_AUTONOMOUS_NEAR_AREA_RATIO=0.030`); STOP detections stop immediately and turn actions can begin earlier.
-- Turn signs trigger on the first valid confirmed detection by default and execute an open-loop 90-degree maneuver window (`TP2_AUTONOMOUS_TURN_HOLD_SEC`, default `1.20 s`; `TP2_AUTONOMOUS_TURN_DEGREES`, default `90`).
+- Turn signs trigger a full-lock open-loop 90-degree maneuver on the first valid confirmed detection, including far detections (`TP2_AUTONOMOUS_TURN_HOLD_SEC`, default `1.20 s`; `TP2_AUTONOMOUS_TURN_DEGREES`, default `90`).
 - `coche.py` exposes `POST /recording` and `GET /recording.json` for session capture; recordings include candidate frames, annotated MP4 video, predictions, critical flags, autonomous estimates, and selected controls.
 - Normal `tp2-car-control.service` sessions autostart recording under `/srv/tp2/frames/autonomous` and write `manifest.jsonl`, `labels.jsonl`, `critical.jsonl`, `session.mp4`, and optional critical images.
 - The live web UI can launch the retraining/replayer server with `POST /replayer/start`; the replayer reads `/srv/tp2/frames/autonomous` directly and provides a session selector.

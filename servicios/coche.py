@@ -125,8 +125,8 @@ AUTONOMOUS_CONFIG = AutonomousConfig(
     turn_throttle=env_float("TP2_AUTONOMOUS_TURN_THROTTLE", 0.65),
     cruise_throttle=env_float("TP2_AUTONOMOUS_CRUISE_THROTTLE", 0.65),
     fast_throttle=env_float("TP2_AUTONOMOUS_FAST_THROTTLE", 0.65),
-    left_steering=env_float("TP2_AUTONOMOUS_LEFT_STEERING", 0.84),
-    right_steering=env_float("TP2_AUTONOMOUS_RIGHT_STEERING", -0.84),
+    left_steering=env_float("TP2_AUTONOMOUS_LEFT_STEERING", 1.0),
+    right_steering=env_float("TP2_AUTONOMOUS_RIGHT_STEERING", -1.0),
     confirm_frames=env_int("TP2_AUTONOMOUS_CONFIRM_FRAMES", 1),
     safety_confirm_frames=env_int("TP2_AUTONOMOUS_SAFETY_CONFIRM_FRAMES", 1),
     max_track_age_sec=env_float("TP2_AUTONOMOUS_MAX_TRACK_AGE_SEC", 1.2),
@@ -190,6 +190,14 @@ LANE_ASSIST_ACTIONS = env_csv_set(
     "TP2_LANE_ASSIST_ACTIONS",
     {"continue", "speed-30", "speed-90", "approach-stop", "confirming", "cooldown"},
 )
+TURN_COMPENSATION_ENABLED = env_bool("TP2_TURN_COMPENSATION_ENABLED", False)
+TURN_COMPENSATION_INTERVAL_SEC = max(0.0, env_float("TP2_TURN_COMPENSATION_INTERVAL_SEC", 2.5))
+TURN_COMPENSATION_DURATION_SEC = max(0.0, env_float("TP2_TURN_COMPENSATION_DURATION_SEC", 0.18))
+TURN_COMPENSATION_MAGNITUDE = max(0.0, abs(env_float("TP2_TURN_COMPENSATION_MAGNITUDE", 0.20)))
+TURN_COMPENSATION_ACTIONS = env_csv_set(
+    "TP2_TURN_COMPENSATION_ACTIONS",
+    {"continue", "speed-30", "speed-90", "confirming", "cooldown"},
+)
 
 SESSION_RECORD_DIR = Path(os.getenv("TP2_SESSION_RECORD_DIR", "/srv/tp2/frames/autonomous")).expanduser()
 SESSION_RECORD_AUTOSTART = env_bool("TP2_SESSION_RECORD_AUTOSTART", False)
@@ -227,6 +235,19 @@ def finite_float(value: Any, *, name: str = "value") -> float:
     if not math.isfinite(number):
         raise ValueError(f"invalid {name}")
     return number
+
+
+def finite_bool(value: Any, *, name: str = "value") -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on", "enable", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "off", "disable", "disabled", ""}:
+        return False
+    raise ValueError(f"invalid {name}")
 
 
 def corrected_steering(steering: float, steering_trim: float | None = None) -> float:
@@ -1050,7 +1071,8 @@ class RuntimeState:
         self.operator_event_seq = 0
         self.pending_operator_events: list[dict[str, Any]] = []
         self.drive_mode = normalize_drive_mode(DEFAULT_DRIVE_MODE)
-        self.autonomous_controller = AutonomousController(AUTONOMOUS_CONFIG)
+        self.autonomous_config = AUTONOMOUS_CONFIG
+        self.autonomous_controller = AutonomousController(self.autonomous_config)
         self.autonomous_decision = AutonomousDecision(
             active=False,
             steering=NEUTRAL_STEERING,
@@ -1063,6 +1085,18 @@ class RuntimeState:
             target=None,
             candidates=(),
         )
+        self.turn_compensation_enabled = TURN_COMPENSATION_ENABLED
+        self.turn_compensation_interval_sec = TURN_COMPENSATION_INTERVAL_SEC
+        self.turn_compensation_duration_sec = min(
+            TURN_COMPENSATION_DURATION_SEC,
+            TURN_COMPENSATION_INTERVAL_SEC,
+        ) if TURN_COMPENSATION_INTERVAL_SEC > 0 else TURN_COMPENSATION_DURATION_SEC
+        self.turn_compensation_magnitude = TURN_COMPENSATION_MAGNITUDE
+        self.turn_compensation_last_pulse_at: float | None = self.started_at
+        self.turn_compensation_active_until = 0.0
+        self.turn_compensation_active = False
+        self.turn_compensation_applied_correction = 0.0
+        self.turn_compensation_reason = "disabled" if not TURN_COMPENSATION_ENABLED else "waiting"
         if self.drive_mode == "autonomous":
             self.control_source = "autonomous"
 
@@ -1256,6 +1290,7 @@ class RuntimeState:
             prediction_seq=self.predictions_seq,
         )
         decision = self._apply_lane_assist_locked(decision, now)
+        decision = self._apply_turn_compensation_locked(decision, now)
         self.autonomous_decision = decision
         return decision
 
@@ -1314,6 +1349,71 @@ class RuntimeState:
             raw_steering=raw_steering,
             raw_throttle=raw_throttle,
             reason=f"{decision.reason};lane={guidance.source}:{correction:+.3f}{':recovery' if recovery else ''}",
+        )
+
+    def _apply_turn_compensation_locked(
+        self,
+        decision: AutonomousDecision,
+        now: float,
+    ) -> AutonomousDecision:
+        self.turn_compensation_active = False
+        self.turn_compensation_applied_correction = 0.0
+
+        if not self.turn_compensation_enabled:
+            self.turn_compensation_reason = "disabled"
+            return decision
+        if self.drive_mode != "autonomous":
+            self.turn_compensation_reason = "manual-mode"
+            return decision
+        if not decision.active:
+            self.turn_compensation_reason = f"autonomy-{decision.reason}"
+            return decision
+        if decision.throttle <= max(0.05, NEUTRAL_THROTTLE + 0.02):
+            self.turn_compensation_reason = "not-moving-forward"
+            return decision
+        if decision.action not in TURN_COMPENSATION_ACTIONS:
+            self.turn_compensation_reason = f"action-{decision.action}"
+            return decision
+        if self.turn_compensation_interval_sec <= 0.0:
+            self.turn_compensation_reason = "interval-disabled"
+            return decision
+        if self.turn_compensation_duration_sec <= 0.0:
+            self.turn_compensation_reason = "duration-disabled"
+            return decision
+        if self.turn_compensation_magnitude <= 0.0:
+            self.turn_compensation_reason = "magnitude-zero"
+            return decision
+
+        if self.turn_compensation_last_pulse_at is None:
+            self.turn_compensation_last_pulse_at = now
+            self.turn_compensation_reason = "waiting"
+            return decision
+
+        if now >= self.turn_compensation_active_until:
+            elapsed = now - self.turn_compensation_last_pulse_at
+            if elapsed >= self.turn_compensation_interval_sec:
+                self.turn_compensation_last_pulse_at = now
+                self.turn_compensation_active_until = now + self.turn_compensation_duration_sec
+            else:
+                self.turn_compensation_reason = "between-pulses"
+                return decision
+
+        if now >= self.turn_compensation_active_until:
+            self.turn_compensation_reason = "between-pulses"
+            return decision
+
+        correction = -abs(self.turn_compensation_magnitude)
+        steering = round(clamp(decision.steering + correction, -1.0, 1.0, NEUTRAL_STEERING), 3)
+        raw_base = decision.raw_steering if decision.raw_steering is not None else decision.steering
+        raw_steering = round(clamp(raw_base + correction, -1.0, 1.0, NEUTRAL_STEERING), 3)
+        self.turn_compensation_active = True
+        self.turn_compensation_applied_correction = round(correction, 3)
+        self.turn_compensation_reason = "pulse-right"
+        return replace(
+            decision,
+            steering=steering,
+            raw_steering=raw_steering,
+            reason=f"{decision.reason};turn-comp={correction:+.3f}",
         )
 
     def _apply_autonomous_control_locked(self) -> AutonomousDecision:
@@ -1456,8 +1556,90 @@ class RuntimeState:
             self.control_seq += 1
             return self.control_snapshot_locked()
 
+    def set_cruise_speed(self, value: Any) -> dict[str, Any]:
+        speed = round(clamp(finite_float(value, name="cruise_speed"), 0.0, 1.0, AUTONOMOUS_CONFIG.cruise_throttle), 3)
+        with self.lock:
+            self.autonomous_config = replace(
+                self.autonomous_config,
+                crawl_throttle=speed,
+                slow_throttle=speed,
+                turn_throttle=speed,
+                cruise_throttle=speed,
+                fast_throttle=speed,
+            )
+            self.autonomous_controller.update_config(self.autonomous_config)
+            self.autonomous_controller.speed_cap = speed
+            if self.drive_mode == "autonomous":
+                self._apply_autonomous_control_locked()
+            else:
+                self.control_updated_at = wall_time()
+                self.control_seq += 1
+            return {
+                "mode": self.drive_mode,
+                "control": self.control_snapshot_locked(),
+                "autonomy": self.autonomy_snapshot_locked(now=wall_time()),
+            }
+
+    def set_turn_compensation(
+        self,
+        *,
+        enabled: Any | None = None,
+        interval_sec: Any | None = None,
+        magnitude: Any | None = None,
+        duration_sec: Any | None = None,
+    ) -> dict[str, Any]:
+        with self.lock:
+            enabled_value = self.turn_compensation_enabled if enabled is None else finite_bool(enabled, name="enabled")
+            interval_value = (
+                self.turn_compensation_interval_sec
+                if interval_sec is None
+                else round(max(0.0, finite_float(interval_sec, name="interval_sec")), 3)
+            )
+            magnitude_value = (
+                self.turn_compensation_magnitude
+                if magnitude is None
+                else round(clamp(abs(finite_float(magnitude, name="magnitude")), 0.0, 2.0, 0.0), 3)
+            )
+            duration_value = (
+                self.turn_compensation_duration_sec
+                if duration_sec is None
+                else round(max(0.0, finite_float(duration_sec, name="duration_sec")), 3)
+            )
+            if interval_value > 0.0:
+                duration_value = min(duration_value, interval_value)
+
+            changed = (
+                enabled_value != self.turn_compensation_enabled
+                or interval_value != self.turn_compensation_interval_sec
+                or magnitude_value != self.turn_compensation_magnitude
+                or duration_value != self.turn_compensation_duration_sec
+            )
+            self.turn_compensation_enabled = enabled_value
+            self.turn_compensation_interval_sec = interval_value
+            self.turn_compensation_magnitude = magnitude_value
+            self.turn_compensation_duration_sec = duration_value
+            if changed:
+                now = wall_time()
+                self.turn_compensation_last_pulse_at = now
+                self.turn_compensation_active_until = 0.0
+                self.turn_compensation_active = False
+                self.turn_compensation_applied_correction = 0.0
+                self.turn_compensation_reason = "waiting" if enabled_value else "disabled"
+                self.control_updated_at = now
+                self.control_seq += 1
+            return self.turn_compensation_snapshot_locked(now=wall_time())
+
+    def applied_steering_trim_locked(self) -> float:
+        if (
+            self.drive_mode == "autonomous"
+            and self.autonomous_decision.action in {"turn-left", "turn-right"}
+        ):
+            return 0.0
+        return self.steering_trim
+
     def control_snapshot_locked(self) -> dict[str, Any]:
-        effective_steering = corrected_steering(self.steering, self.steering_trim)
+        applied_trim = self.applied_steering_trim_locked()
+        effective_steering = corrected_steering(self.steering, applied_trim)
         return {
             "armed": self.control_armed,
             "source": self.control_source,
@@ -1465,10 +1647,74 @@ class RuntimeState:
             "steering": self.steering,
             "effective_steering": effective_steering,
             "steering_trim": self.steering_trim,
+            "applied_steering_trim": applied_trim,
+            "steering_trim_bypassed": applied_trim != self.steering_trim,
             "steering_trim_default": STEERING_TRIM,
             "throttle": self.throttle,
             "updated_age_sec": max(0.0, wall_time() - self.control_updated_at),
             "seq": self.control_seq,
+        }
+
+    def autonomous_config_snapshot_locked(self) -> dict[str, Any]:
+        config = self.autonomous_config
+        return {
+            "min_confidence": config.min_confidence,
+            "stale_prediction_sec": config.stale_prediction_sec,
+            "max_frame_age_sec": config.max_frame_age_sec,
+            "min_area_ratio": config.min_area_ratio,
+            "near_area_ratio": config.near_area_ratio,
+            "crawl_throttle": config.crawl_throttle,
+            "slow_throttle": config.slow_throttle,
+            "turn_throttle": config.turn_throttle,
+            "cruise_throttle": config.cruise_throttle,
+            "cruise_throttle_default": AUTONOMOUS_CONFIG.cruise_throttle,
+            "fast_throttle": config.fast_throttle,
+            "left_steering": config.left_steering,
+            "right_steering": config.right_steering,
+            "confirm_frames": config.confirm_frames,
+            "safety_confirm_frames": config.safety_confirm_frames,
+            "stop_hold_sec": config.stop_hold_sec,
+            "turn_hold_sec": config.turn_hold_sec,
+            "turn_degrees": config.turn_degrees,
+            "cooldown_sec": config.cooldown_sec,
+            "dry_run": config.dry_run,
+        }
+
+    def turn_compensation_snapshot_locked(self, *, now: float | None = None) -> dict[str, Any]:
+        now = wall_time() if now is None else now
+        active = self.turn_compensation_active and now < self.turn_compensation_active_until
+        next_in: float | None
+        if not self.turn_compensation_enabled or self.turn_compensation_interval_sec <= 0.0:
+            next_in = None
+        elif active:
+            next_in = 0.0
+        elif self.turn_compensation_last_pulse_at is None:
+            next_in = self.turn_compensation_interval_sec
+        else:
+            next_in = max(
+                0.0,
+                self.turn_compensation_interval_sec - (now - self.turn_compensation_last_pulse_at),
+            )
+        return {
+            "enabled": self.turn_compensation_enabled,
+            "interval_sec": self.turn_compensation_interval_sec,
+            "duration_sec": self.turn_compensation_duration_sec,
+            "magnitude": self.turn_compensation_magnitude,
+            "direction": "right",
+            "active": active,
+            "applied_correction": self.turn_compensation_applied_correction if active else 0.0,
+            "next_in_sec": rounded(next_in),
+            "reason": self.turn_compensation_reason,
+            "actions": sorted(TURN_COMPENSATION_ACTIONS),
+        }
+
+    def autonomy_snapshot_locked(self, *, now: float | None = None) -> dict[str, Any]:
+        now = wall_time() if now is None else now
+        return {
+            "mode": self.drive_mode,
+            "decision": self.autonomous_decision.to_status(),
+            "config": self.autonomous_config_snapshot_locked(),
+            "turn_compensation": self.turn_compensation_snapshot_locked(now=now),
         }
 
     def current_lane_guidance_locked(self, *, now: float | None = None) -> LaneGuidance | None:
@@ -1625,29 +1871,7 @@ class RuntimeState:
                 },
                 "lane": self.lane_snapshot_locked(now=now),
                 "control": self.control_snapshot_locked(),
-                "autonomy": {
-                    "mode": self.drive_mode,
-                    "decision": self.autonomous_decision.to_status(),
-                    "config": {
-                        "min_confidence": AUTONOMOUS_CONFIG.min_confidence,
-                        "stale_prediction_sec": AUTONOMOUS_CONFIG.stale_prediction_sec,
-                        "max_frame_age_sec": AUTONOMOUS_CONFIG.max_frame_age_sec,
-                        "min_area_ratio": AUTONOMOUS_CONFIG.min_area_ratio,
-                        "near_area_ratio": AUTONOMOUS_CONFIG.near_area_ratio,
-                        "crawl_throttle": AUTONOMOUS_CONFIG.crawl_throttle,
-                        "slow_throttle": AUTONOMOUS_CONFIG.slow_throttle,
-                        "turn_throttle": AUTONOMOUS_CONFIG.turn_throttle,
-                        "cruise_throttle": AUTONOMOUS_CONFIG.cruise_throttle,
-                        "fast_throttle": AUTONOMOUS_CONFIG.fast_throttle,
-                        "confirm_frames": AUTONOMOUS_CONFIG.confirm_frames,
-                        "safety_confirm_frames": AUTONOMOUS_CONFIG.safety_confirm_frames,
-                        "stop_hold_sec": AUTONOMOUS_CONFIG.stop_hold_sec,
-                        "turn_hold_sec": AUTONOMOUS_CONFIG.turn_hold_sec,
-                        "turn_degrees": AUTONOMOUS_CONFIG.turn_degrees,
-                        "cooldown_sec": AUTONOMOUS_CONFIG.cooldown_sec,
-                        "dry_run": AUTONOMOUS_CONFIG.dry_run,
-                    },
-                },
+                "autonomy": self.autonomy_snapshot_locked(now=now),
                 "recording": self.recorder.snapshot(),
                 "replayer": self.replayer.snapshot(),
                 "car": {
@@ -1990,7 +2214,10 @@ def control_tx_loop(sock: socket.socket, state: RuntimeState) -> None:
                 address,
                 steering,
                 throttle,
-                steering_trim=control.get("steering_trim"),
+                steering_trim=control.get(
+                    "applied_steering_trim",
+                    control.get("steering_trim"),
+                ),
             )
             state.note_tx()
         except OSError as exc:
@@ -2112,6 +2339,53 @@ class LiveHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "error": str(exc)}, status=400)
                 return
             self.send_json({"ok": True, "control": control})
+            return
+        if path in {"/cruise-speed", "/cruise-throttle"}:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            raw = self.rfile.read(min(length, 8192)) if length > 0 else b"{}"
+            try:
+                payload = json.loads(raw.decode("utf-8") or "{}")
+            except json.JSONDecodeError:
+                self.send_json({"ok": False, "error": "invalid json"}, status=400)
+                return
+            if "speed" in payload:
+                speed_value = payload.get("speed")
+            elif "throttle" in payload:
+                speed_value = payload.get("throttle")
+            elif "value" in payload:
+                speed_value = payload.get("value")
+            else:
+                self.send_json({"ok": False, "error": "missing speed"}, status=400)
+                return
+            try:
+                status = self.state.set_cruise_speed(speed_value)
+            except ValueError as exc:
+                self.send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            self.send_json({"ok": True, **status})
+            return
+        if path in {"/turn-compensation", "/turn-compensation-pulse"}:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            raw = self.rfile.read(min(length, 8192)) if length > 0 else b"{}"
+            try:
+                payload = json.loads(raw.decode("utf-8") or "{}")
+            except json.JSONDecodeError:
+                self.send_json({"ok": False, "error": "invalid json"}, status=400)
+                return
+            interval_value = payload.get("interval_sec", payload.get("interval", payload.get("seconds")))
+            duration_value = payload.get("duration_sec", payload.get("duration"))
+            magnitude_value = payload.get("magnitude", payload.get("steering", payload.get("value")))
+            try:
+                status = self.state.set_turn_compensation(
+                    enabled=payload.get("enabled") if "enabled" in payload else None,
+                    interval_sec=interval_value,
+                    magnitude=magnitude_value,
+                    duration_sec=duration_value,
+                )
+            except ValueError as exc:
+                self.send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            self.send_json({"ok": True, "turn_compensation": status})
             return
         if path in {"/control/neutral", "/neutral"}:
             self.send_json({"ok": True, "control": self.state.release_manual_control("neutral")})
@@ -2260,7 +2534,10 @@ def handle_udp_packet(
             address,
             steering,
             throttle,
-            steering_trim=control.get("steering_trim"),
+            steering_trim=control.get(
+                "applied_steering_trim",
+                control.get("steering_trim"),
+            ),
         )
         state.note_tx()
     except OSError as exc:
@@ -3049,6 +3326,50 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       cursor: pointer;
     }
     .trim-edit button:hover { background: rgba(78,166,255,0.14); }
+    .setting-toggle {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 7px 0;
+      border-top: 1px solid var(--line-soft);
+      color: var(--ink-2);
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .setting-toggle input {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--blue);
+    }
+    .compact-fields {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .compact-field {
+      min-width: 0;
+      display: grid;
+      gap: 5px;
+      color: var(--muted);
+      font-family: var(--body);
+      font-size: 9.5px;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      font-weight: 500;
+    }
+    .compact-field input {
+      min-width: 0;
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--bg-1);
+      color: var(--ink);
+      padding: 0 8px;
+      font-family: var(--mono);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
 
     /* sparkline */
     .spark-wrap {
@@ -3325,6 +3646,46 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         </section>
 
         <section class="card">
+          <h2>Marcha <span class="tag" id="cruise-tag">--</span></h2>
+          <div class="trim-panel">
+            <div class="trim-readout">
+              <span class="value" id="cruise-value">0.650</span>
+              <span class="dir" id="cruise-dir">65%</span>
+            </div>
+            <label class="trim-range" for="cruise-range">
+              <span>0</span>
+              <input type="range" id="cruise-range" min="0" max="1" step="0.01" value="0.65">
+              <span>1</span>
+            </label>
+            <div class="trim-edit">
+              <input type="number" id="cruise-input" min="0" max="1" step="0.001" inputmode="decimal" value="0.650" aria-label="Velocidad de crucero">
+              <button type="button" id="cruise-base">Base</button>
+            </div>
+            <h3>Pulso derecha</h3>
+            <label class="setting-toggle" for="turn-comp-enabled">
+              <span>Activado</span>
+              <input type="checkbox" id="turn-comp-enabled">
+            </label>
+            <div class="compact-fields">
+              <label class="compact-field" for="turn-comp-interval">
+                <span>Cada s</span>
+                <input type="number" id="turn-comp-interval" min="0" step="0.1" inputmode="decimal" value="2.5">
+              </label>
+              <label class="compact-field" for="turn-comp-magnitude">
+                <span>Giro</span>
+                <input type="number" id="turn-comp-magnitude" min="0" max="2" step="0.01" inputmode="decimal" value="0.20">
+              </label>
+              <label class="compact-field" for="turn-comp-duration">
+                <span>Duración</span>
+                <input type="number" id="turn-comp-duration" min="0" step="0.01" inputmode="decimal" value="0.18">
+              </label>
+            </div>
+            <div class="row"><span class="k">Pulso</span><span class="v accent" id="turn-comp-status">--</span></div>
+            <div class="row"><span class="k">Siguiente</span><span class="v muted" id="turn-comp-next">--</span></div>
+          </div>
+        </section>
+
+        <section class="card">
           <h2>Compensación <span class="tag" id="trim-tag">--</span></h2>
           <div class="trim-panel">
             <div class="trim-readout">
@@ -3410,6 +3771,14 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       autoLane: $('auto-lane'), autoLaneCorrection: $('auto-lane-correction'),
       autoTarget: $('auto-target'), autoZone: $('auto-zone'), autoReason: $('auto-reason'),
 
+      cruiseTag: $('cruise-tag'), cruiseValue: $('cruise-value'), cruiseDir: $('cruise-dir'),
+      cruiseRange: $('cruise-range'), cruiseInput: $('cruise-input'), cruiseBase: $('cruise-base'),
+      turnCompEnabled: $('turn-comp-enabled'),
+      turnCompInterval: $('turn-comp-interval'),
+      turnCompMagnitude: $('turn-comp-magnitude'),
+      turnCompDuration: $('turn-comp-duration'),
+      turnCompStatus: $('turn-comp-status'), turnCompNext: $('turn-comp-next'),
+
       trimTag: $('trim-tag'), trimValue: $('trim-value'), trimDir: $('trim-dir'),
       trimRange: $('trim-range'), trimInput: $('trim-input'), trimBase: $('trim-base'),
       trimEffective: $('trim-effective'), trimRequested: $('trim-requested'),
@@ -3434,6 +3803,9 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     let manualNeutralPosted = true;
     let trimDefault = -0.08;
     let trimPostTimer = null;
+    let cruiseDefault = 0.65;
+    let cruisePostTimer = null;
+    let turnCompPostTimer = null;
 
     /* sparkline buffers */
     const LAT_BUF = [], FPS_BUF = [];
@@ -3552,6 +3924,98 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       els.trimDir.textContent = trimDirection(trim);
       if (trimPostTimer) clearTimeout(trimPostTimer);
       trimPostTimer = setTimeout(() => postSteeringTrim(trim), 90);
+    }
+
+    function renderCruise(autonomy) {
+      const cfg = (autonomy && autonomy.config) || {};
+      const speed = Number(cfg.cruise_throttle ?? cruiseDefault);
+      cruiseDefault = Number(cfg.cruise_throttle_default ?? cruiseDefault);
+      if (!Number.isFinite(speed)) return;
+      els.cruiseTag.textContent = nfmt(speed, 3);
+      els.cruiseValue.textContent = nfmt(speed, 3);
+      els.cruiseDir.textContent = Math.round(clampNum(speed, 0, 1) * 100) + '%';
+      els.cruiseRange.value = clampNum(speed, Number(els.cruiseRange.min), Number(els.cruiseRange.max)).toFixed(2);
+      if (document.activeElement !== els.cruiseInput) {
+        els.cruiseInput.value = nfmt(speed, 3);
+      }
+    }
+
+    async function postCruiseSpeed(speed) {
+      if (!Number.isFinite(speed)) return;
+      try {
+        const res = await fetch('/cruise-speed', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({speed}),
+          cache: 'no-store',
+        });
+        if (!res.ok) throw new Error('http ' + res.status);
+      } catch (_) {
+        setPillState(els.pillCtrl, 'bad');
+      }
+    }
+
+    function scheduleCruiseSpeed(rawValue) {
+      const speed = Number(rawValue);
+      if (!Number.isFinite(speed)) return;
+      els.cruiseValue.textContent = nfmt(speed, 3);
+      els.cruiseDir.textContent = Math.round(clampNum(speed, 0, 1) * 100) + '%';
+      if (cruisePostTimer) clearTimeout(cruisePostTimer);
+      cruisePostTimer = setTimeout(() => postCruiseSpeed(speed), 90);
+    }
+
+    function renderTurnCompensation(status) {
+      const tc = status || {};
+      const enabled = !!tc.enabled;
+      if (document.activeElement !== els.turnCompEnabled) {
+        els.turnCompEnabled.checked = enabled;
+      }
+      const interval = Number(tc.interval_sec);
+      const magnitude = Number(tc.magnitude);
+      const duration = Number(tc.duration_sec);
+      if (document.activeElement !== els.turnCompInterval && Number.isFinite(interval)) {
+        els.turnCompInterval.value = interval.toFixed(2);
+      }
+      if (document.activeElement !== els.turnCompMagnitude && Number.isFinite(magnitude)) {
+        els.turnCompMagnitude.value = magnitude.toFixed(2);
+      }
+      if (document.activeElement !== els.turnCompDuration && Number.isFinite(duration)) {
+        els.turnCompDuration.value = duration.toFixed(2);
+      }
+      els.turnCompStatus.textContent = enabled
+        ? (tc.active ? 'activo · ' + nfmt(tc.applied_correction, 3) : (tc.reason || 'esperando'))
+        : 'off';
+      els.turnCompNext.textContent = tc.next_in_sec == null ? '--' : nfmt(tc.next_in_sec, 2) + ' s';
+    }
+
+    function currentTurnCompPayload() {
+      return {
+        enabled: els.turnCompEnabled.checked,
+        interval_sec: Number(els.turnCompInterval.value),
+        magnitude: Number(els.turnCompMagnitude.value),
+        duration_sec: Number(els.turnCompDuration.value),
+      };
+    }
+
+    async function postTurnCompensation() {
+      const payload = currentTurnCompPayload();
+      if (!Number.isFinite(payload.interval_sec) || !Number.isFinite(payload.magnitude) || !Number.isFinite(payload.duration_sec)) return;
+      try {
+        const res = await fetch('/turn-compensation', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload),
+          cache: 'no-store',
+        });
+        if (!res.ok) throw new Error('http ' + res.status);
+      } catch (_) {
+        setPillState(els.pillCtrl, 'bad');
+      }
+    }
+
+    function scheduleTurnCompensation() {
+      if (turnCompPostTimer) clearTimeout(turnCompPostTimer);
+      turnCompPostTimer = setTimeout(postTurnCompensation, 120);
     }
 
     /* highlight WASD on keypress */
@@ -3690,6 +4154,20 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       els.trimInput.value = trimDefault.toFixed(3);
       scheduleSteeringTrim(trimDefault);
     });
+    els.cruiseRange.addEventListener('input', () => {
+      els.cruiseInput.value = Number(els.cruiseRange.value).toFixed(3);
+      scheduleCruiseSpeed(els.cruiseRange.value);
+    });
+    els.cruiseInput.addEventListener('input', () => scheduleCruiseSpeed(els.cruiseInput.value));
+    els.cruiseInput.addEventListener('change', () => postCruiseSpeed(Number(els.cruiseInput.value)));
+    els.cruiseBase.addEventListener('click', () => {
+      els.cruiseInput.value = cruiseDefault.toFixed(3);
+      scheduleCruiseSpeed(cruiseDefault);
+    });
+    els.turnCompEnabled.addEventListener('change', scheduleTurnCompensation);
+    els.turnCompInterval.addEventListener('input', scheduleTurnCompensation);
+    els.turnCompMagnitude.addEventListener('input', scheduleTurnCompensation);
+    els.turnCompDuration.addEventListener('input', scheduleTurnCompensation);
 
     /* manual control loop */
     setInterval(() => {
@@ -3873,6 +4351,8 @@ LIVE_VIEW_HTML = r"""<!doctype html>
           renderControl(remoteSteer, remoteThr);
         }
         renderTrim(data.control);
+        renderCruise(data.autonomy || {});
+        renderTurnCompensation((data.autonomy && data.autonomy.turn_compensation) || {});
 
         /* autonomy card */
         els.autoMode.textContent = data.control.mode === 'autonomous' ? 'autónomo' : 'manual';

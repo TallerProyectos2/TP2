@@ -54,8 +54,8 @@ class AutonomousConfig:
     turn_throttle: float = 0.65
     cruise_throttle: float = 0.65
     fast_throttle: float = 0.65
-    left_steering: float = 0.84
-    right_steering: float = -0.84
+    left_steering: float = 1.0
+    right_steering: float = -1.0
     confirm_frames: int = 1
     safety_confirm_frames: int = 1
     max_track_age_sec: float = 1.2
@@ -303,6 +303,13 @@ class AutonomousController:
         self.track_cooldowns: dict[int, float] = {}
         self.speed_cap = config.cruise_throttle
 
+    def update_config(self, config: AutonomousConfig, *, reset_filter: bool = False) -> None:
+        self.config = config
+        self.tracker.config = config
+        self.filter.config = config
+        if reset_filter:
+            self.filter.reset()
+
     def decide(
         self,
         predictions: list[dict[str, Any]],
@@ -391,6 +398,7 @@ class AutonomousController:
                 reason="maneuver-hold",
                 target=target,
                 candidates=observations,
+                urgent=True,
             )
 
         if self.cooldown_until > now:
@@ -513,21 +521,7 @@ class AutonomousController:
         *,
         left: bool,
     ) -> AutonomousDecision:
-        strength = turn_strength(target)
         steering_target = self.config.left_steering if left else self.config.right_steering
-        steering = blend(self.config.neutral_steering, steering_target, strength)
-        if target.distance == "far":
-            return self._decision(
-                now,
-                steering=steering,
-                throttle=min(self.config.slow_throttle, self.speed_cap),
-                action="prepare-left" if left else "prepare-right",
-                state=STATE_APPROACH,
-                reason=f"{target.label}:far-{target.zone}",
-                target=target,
-                candidates=tuple(observations),
-            )
-
         self.state = STATE_TURN_LEFT if left else STATE_TURN_RIGHT
         self.active_track_id = target.track_id
         self.maneuver_until = now + self.config.turn_hold_sec
@@ -619,7 +613,7 @@ class AutonomousController:
         turns = [
             item
             for item in observations
-            if item.label in TURN_SIGNS and item.distance != "far" and self._is_confirmed(item)
+            if item.label in TURN_SIGNS and self._is_confirmed(item)
         ]
         if len(turns) < 2:
             return None

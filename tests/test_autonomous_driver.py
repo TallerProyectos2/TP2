@@ -74,8 +74,8 @@ class AutonomousDriverTest(unittest.TestCase):
         right = self.decide_confirmed([prediction(SIGN_TURN_RIGHT, x=480, width=180, height=180)])
         self.assertEqual(left.action, "turn-left")
         self.assertEqual(right.action, "turn-right")
-        self.assertGreater(left.steering, self.config.neutral_steering)
-        self.assertLess(right.steering, self.config.neutral_steering)
+        self.assertEqual(left.steering, self.config.left_steering)
+        self.assertEqual(right.steering, self.config.right_steering)
 
     def test_closer_sign_wins_over_far_side_sign(self):
         decision = self.decide_confirmed(
@@ -191,14 +191,26 @@ class AutonomousDriverTest(unittest.TestCase):
     def test_turn_starts_on_first_detection_for_faster_decision(self):
         decision = self.decide([prediction(SIGN_TURN_LEFT, x=160, width=180, height=180)])
         self.assertEqual(decision.action, "turn-left")
+        self.assertEqual(decision.raw_steering, self.config.left_steering)
+        self.assertEqual(decision.steering, self.config.left_steering)
         self.assertEqual(decision.raw_throttle, 0.65)
         self.assertIn("turn-90", decision.reason)
 
     def test_mid_distance_turn_starts_before_sign_is_close(self):
         decision = self.decide([prediction(SIGN_TURN_RIGHT, x=480, width=65, height=65)])
         self.assertEqual(decision.action, "turn-right")
+        self.assertEqual(decision.raw_steering, self.config.right_steering)
+        self.assertEqual(decision.steering, self.config.right_steering)
         self.assertEqual(decision.target.distance, "mid")
         self.assertIn("turn-90", decision.reason)
+
+    def test_far_turn_starts_full_lock_instead_of_prepare(self):
+        decision = self.decide([prediction(SIGN_TURN_RIGHT, x=480, width=50, height=50)])
+        self.assertEqual(decision.action, "turn-right")
+        self.assertEqual(decision.state, "turn-right")
+        self.assertEqual(decision.target.distance, "far")
+        self.assertEqual(decision.raw_steering, self.config.right_steering)
+        self.assertEqual(decision.steering, self.config.right_steering)
 
     def test_turn_hold_is_configured_for_ninety_degree_maneuver(self):
         controller = AutonomousController(self.config)

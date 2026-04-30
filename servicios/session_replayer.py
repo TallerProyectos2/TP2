@@ -980,6 +980,11 @@ INDEX_HTML = r"""<!doctype html>
       outline: none;
       transition: border-color .12s ease, box-shadow .12s ease, background .12s ease;
     }
+    input[type=checkbox], input[type=radio] {
+      width: auto;
+      padding: 0;
+      accent-color: var(--blue);
+    }
     select:focus, input:focus, textarea:focus { border-color: rgba(78,166,255,0.75); box-shadow: var(--ring); }
     textarea { min-height: 60px; resize: vertical; font-family: var(--body); }
     button {
@@ -997,9 +1002,11 @@ INDEX_HTML = r"""<!doctype html>
       padding: 0 12px;
       display: inline-flex; align-items: center; gap: 7px;
       transition: background .12s ease, border-color .12s ease, transform .04s ease;
+      white-space: nowrap;
     }
     button:hover { background: rgba(78,166,255,0.18); }
     button:active { transform: translateY(1px); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
     button.danger { color: var(--red); border-color: rgba(248,113,113,0.5); background: rgba(248,113,113,0.10); }
     button.danger:hover { background: rgba(248,113,113,0.20); }
     button.solid { background: linear-gradient(135deg, var(--blue), #3a7fd0); color: #fff; border-color: transparent; }
@@ -1063,10 +1070,13 @@ INDEX_HTML = r"""<!doctype html>
     }
     .frame {
       position: relative;
-      max-width: 100%;
+      width: 100%;
+      height: auto;
       max-height: 100%;
       aspect-ratio: 16 / 9;
       display: block;
+      background: #050507;
+      border-radius: 6px;
     }
     .frame img, .frame video {
       position: absolute;
@@ -1076,7 +1086,6 @@ INDEX_HTML = r"""<!doctype html>
       object-fit: contain;
       display: block;
       border-radius: 6px;
-      background: #050507;
     }
     .frame.video-mode img { display: none; }
     .frame:not(.video-mode) video { display: none; }
@@ -1129,17 +1138,24 @@ INDEX_HTML = r"""<!doctype html>
       border-radius: 12px;
       padding: 10px 12px;
       display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 8px 14px;
+      gap: 8px;
     }
-    .deck .row1, .deck .row2 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .deck .row1 { grid-column: 1 / -1; }
-    .deck .row2 { grid-column: 1 / -1; gap: 12px; }
+    .deck .row1, .deck .row2, .deck .row3 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .deck .row2 { gap: 12px; }
+    .deck .row3 {
+      gap: 10px; padding: 8px 10px;
+      border: 1px dashed rgba(125,211,252,0.38);
+      border-radius: 8px;
+      background: rgba(125,211,252,0.04);
+      color: var(--ink-2);
+      font-size: 11.5px;
+    }
+    .deck .row3.off { display: none; }
+    .deck .row3 .info b { color: var(--cyan); font-weight: 600; }
     .deck .group { display: inline-flex; align-items: center; gap: 6px; padding-right: 6px; border-right: 1px solid var(--line-soft); margin-right: 2px; }
     .deck .group:last-of-type { border-right: 0; padding-right: 0; margin-right: 0; }
     .deck .grow { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 12px; }
-    .deck .check { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 11px; padding: 4px 8px; border-radius: 6px; border: 1px solid transparent; }
-    .deck .check input { width: auto; }
+    .deck .check { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 11px; padding: 4px 8px; border-radius: 6px; border: 1px solid transparent; cursor: pointer; }
     .deck .check:hover { border-color: var(--line); }
     .deck .speed { width: 86px; padding: 6px 8px; height: 34px; }
     .deck .pos {
@@ -1175,22 +1191,87 @@ INDEX_HTML = r"""<!doctype html>
     }
     /* SIDEBAR ---------------------------------------------------------------- */
     .side {
-      min-height: 0; overflow-y: auto;
-      display: grid; align-content: start; gap: 12px;
-      padding-right: 4px;
-      scrollbar-width: thin;
-      scrollbar-color: var(--line-strong) transparent;
+      min-height: 0;
+      display: grid; grid-template-rows: auto auto 1fr; gap: 10px;
+      padding-right: 2px;
     }
-    .side::-webkit-scrollbar { width: 8px; }
-    .side::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 99px; }
+    /* CONTEXT STRIP ----------------------------------------------------------- */
+    .ctx-strip {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      background: var(--line);
+    }
+    .ctx-strip .ctx {
+      display: flex; flex-direction: column; gap: 2px;
+      padding: 9px 12px;
+      background: linear-gradient(180deg, rgba(26,26,30,0.80), rgba(17,17,21,0.80));
+      min-width: 0;
+    }
+    .ctx-strip .ctx .label {
+      font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase;
+      color: var(--ink-3);
+    }
+    .ctx-strip .ctx .value {
+      font-family: var(--mono); font-size: 12.5px;
+      color: var(--ink); font-variant-numeric: tabular-nums;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .ctx-strip .ctx .value.tag {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11px; font-weight: 500;
+    }
+    .ctx-strip .ctx .value .dot { width: 6px; height: 6px; border-radius: 99px; background: currentColor; box-shadow: 0 0 8px currentColor; }
+    .ctx-strip .ctx.action-continue .value { color: var(--teal); }
+    .ctx-strip .ctx.action-stop .value { color: var(--red); }
+    .ctx-strip .ctx.action-turn .value { color: var(--amber); }
+    .ctx-strip .ctx.action-yield .value { color: var(--cyan); }
+    /* TABS ---------------------------------------------------------------- */
+    .tabs {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 4px; padding: 4px;
+      border-radius: 10px; border: 1px solid var(--line);
+      background: var(--bg-2);
+    }
+    .tab {
+      height: 30px; padding: 0 10px;
+      border: 0; background: transparent;
+      color: var(--ink-3);
+      font-family: var(--display); font-size: 11px; font-weight: 600;
+      letter-spacing: 0.14em; text-transform: uppercase;
+      border-radius: 7px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 7px;
+    }
+    .tab .badge {
+      font-family: var(--mono); font-size: 9.5px; font-weight: 500;
+      color: var(--ink-3);
+      padding: 1px 6px; border-radius: 99px;
+      background: var(--bg-1); border: 1px solid var(--line);
+    }
+    .tab:hover { color: var(--ink-2); }
+    .tab.active { background: linear-gradient(180deg, rgba(26,26,30,0.95), rgba(17,17,21,0.95)); color: var(--ink); box-shadow: 0 0 0 1px var(--line-strong), inset 0 1px 0 rgba(255,255,255,0.04); }
+    .tab.active .badge { color: var(--blue); border-color: rgba(78,166,255,0.45); }
+    /* TAB PANELS ---------------------------------------------------------- */
+    .tab-host {
+      min-height: 0; overflow-y: auto;
+      display: grid; gap: 12px; align-content: start;
+      padding-right: 4px;
+      scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent;
+    }
+    .tab-host::-webkit-scrollbar { width: 8px; }
+    .tab-host::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 99px; }
+    .tab-panel { display: none; gap: 12px; grid-template-columns: 1fr; }
+    .tab-panel.active { display: grid; animation: tabIn .25s ease both; }
+    @keyframes tabIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
     .card {
       border: 1px solid var(--line);
       background: linear-gradient(180deg, rgba(26,26,30,0.78), rgba(17,17,21,0.78));
       border-radius: 12px;
       padding: 13px 14px 12px;
-      animation: cardIn .35s ease both;
     }
-    @keyframes cardIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
     .card h2 {
       display: flex; align-items: center; gap: 8px;
       margin: 0 0 10px;
@@ -1207,55 +1288,125 @@ INDEX_HTML = r"""<!doctype html>
       font-family: var(--mono);
       font-size: 10px; letter-spacing: 0.06em;
       color: var(--ink-3); padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line);
+      max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
     .row:last-child { border-bottom: 0; }
     .row .k { color: var(--ink-3); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; font-size: 10.5px; }
     .row .v { font-family: var(--mono); color: var(--ink); text-align: right; font-size: 12px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-    .flags, .labels { display: grid; gap: 6px; max-height: 240px; overflow: auto; }
-    .flag, .label-row {
+    .flags { display: grid; gap: 6px; max-height: 240px; overflow: auto; }
+    .flag {
       border: 1px solid var(--line);
+      border-left: 3px solid var(--amber);
       border-radius: 7px;
       background: rgba(20,20,24,0.55);
       padding: 8px 10px;
       font-size: 12px;
+      color: var(--ink-2);
     }
-    .flag { border-left: 3px solid var(--amber); color: var(--ink-2); }
     .flag b { color: var(--amber); font-weight: 600; }
     .flag span { display: block; color: var(--ink-3); font-size: 10.5px; font-family: var(--mono); margin-top: 3px; word-break: break-all; }
-    .label-row { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; cursor: pointer; transition: border-color .12s ease, background .12s ease; }
+    /* LABELS LIST --------------------------------------------------------- */
+    .labels { display: grid; gap: 6px; max-height: 230px; overflow: auto; padding-right: 4px; }
+    .label-row {
+      display: grid; grid-template-columns: 28px 1fr auto;
+      gap: 10px; align-items: center;
+      border: 1px solid var(--line); border-radius: 8px;
+      background: rgba(20,20,24,0.55);
+      padding: 7px 10px;
+      cursor: pointer;
+      transition: border-color .12s, background .12s, transform .04s;
+    }
+    .label-row:hover { border-color: var(--line-strong); background: rgba(28,28,33,0.7); }
     .label-row .src {
       width: 26px; height: 26px; border-radius: 6px;
       background: var(--bg-3); border: 1px solid var(--line);
       display: grid; place-items: center;
-      font-family: var(--mono); font-size: 10px; color: var(--ink-2);
+      font-family: var(--mono); font-size: 10.5px; color: var(--ink-2);
+      font-weight: 600;
     }
-    .label-row .src.manual { color: var(--cyan); border-color: rgba(125,211,252,0.4); }
-    .label-row .src.invalid { color: var(--red); border-color: rgba(248,113,113,0.45); }
+    .label-row .src.manual { color: var(--cyan); border-color: rgba(125,211,252,0.45); background: rgba(125,211,252,0.06); }
+    .label-row .src.invalid { color: var(--red); border-color: rgba(248,113,113,0.45); background: rgba(248,113,113,0.06); }
+    .label-row .name { color: var(--ink); font-weight: 500; line-height: 1.2; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .label-row .hint { color: var(--ink-3); font-size: 10.5px; font-family: var(--mono); margin-top: 2px; }
+    .label-row .key { color: var(--ink-2); font-family: var(--mono); font-size: 10.5px; }
     .label-row.active { border-color: rgba(78,166,255,0.75); background: rgba(78,166,255,0.13); }
+    .label-row.active .key { color: var(--blue); }
     .label-row.invalid { border-color: rgba(248,113,113,0.45); background: rgba(248,113,113,0.10); }
     .label-row.manual { border-color: rgba(125,211,252,0.42); background: rgba(125,211,252,0.07); }
     .label-row.manual.active { border-color: rgba(125,211,252,0.85); background: rgba(125,211,252,0.16); }
-    .label-row .name { color: var(--ink); font-weight: 500; line-height: 1.2; }
-    .label-row .hint { color: var(--ink-3); font-size: 10.5px; font-family: var(--mono); margin-top: 2px; }
-    .label-row .key { color: var(--ink-2); font-family: var(--mono); font-size: 10.5px; }
+    /* RELABEL FORM -------------------------------------------------------- */
+    .relabel {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(20,20,24,0.7), rgba(15,15,19,0.7));
+      border-radius: 12px;
+      padding: 12px 14px;
+      display: grid;
+      gap: 10px;
+    }
+    .relabel .selected-bar {
+      display: grid; grid-template-columns: 28px 1fr auto;
+      gap: 10px; align-items: center;
+      padding: 8px 10px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: var(--bg-2);
+    }
+    .relabel .selected-bar .src { width: 26px; height: 26px; border-radius: 6px; background: var(--bg-3); border: 1px solid var(--line); display: grid; place-items: center; font-family: var(--mono); font-size: 10px; color: var(--ink-2); }
+    .relabel .selected-bar .label { color: var(--ink); font-weight: 600; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .relabel .selected-bar .meta { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+    .relabel .selected-bar.empty { color: var(--ink-3); font-family: var(--mono); font-size: 11px; padding: 12px; text-align: center; grid-template-columns: 1fr; }
+    .class-search {
+      position: relative;
+    }
+    .class-search input { padding-left: 30px; }
+    .class-search svg {
+      position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+      width: 13px; height: 13px; color: var(--ink-3);
+      pointer-events: none;
+    }
+    .quick-classes {
+      display: flex; flex-wrap: wrap; gap: 5px;
+      max-height: 132px; overflow-y: auto;
+      padding: 2px 4px 2px 0;
+      scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent;
+    }
+    .quick-classes::-webkit-scrollbar { width: 6px; }
+    .quick-classes::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 99px; }
+    .chip {
+      max-width: 100%;
+      height: auto; min-height: 26px;
+      padding: 4px 9px;
+      font-family: var(--body); font-size: 10.5px; letter-spacing: 0.02em;
+      text-transform: none;
+      font-weight: 500;
+      color: var(--ink-2);
+      border: 1px solid var(--line);
+      background: var(--bg-2);
+      border-radius: 999px;
+      cursor: pointer;
+      white-space: normal;
+      text-align: left;
+      line-height: 1.25;
+      transition: all .12s;
+    }
+    .chip:hover { color: var(--ink); border-color: var(--line-strong); background: var(--bg-3); }
+    .chip.active { color: var(--blue); border-color: rgba(78,166,255,0.6); background: rgba(78,166,255,0.10); }
+    .chip[hidden] { display: none; }
+    .relabel .field-row { display: grid; grid-template-columns: 1fr; gap: 6px; }
+    .relabel .toggle-line {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px;
+      padding: 8px 10px;
+      border: 1px solid var(--line); border-radius: 7px;
+      background: var(--bg-2);
+    }
+    .relabel .toggle-line .lbl { font-size: 12px; color: var(--ink-2); display: inline-flex; align-items: center; gap: 8px; }
+    .relabel .toggle-line .lbl .kbd { font-family: var(--mono); font-size: 9.5px; color: var(--ink-3); padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px; }
+    .relabel .actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    .relabel .actions button { width: 100%; justify-content: center; }
     .form { display: grid; gap: 8px; }
     .inline-form { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
-    .quick-classes { display: flex; flex-wrap: wrap; gap: 6px; }
-    .quick-classes button { height: 28px; padding: 0 9px; font-size: 10px; letter-spacing: 0.04em; background: var(--bg-2); color: var(--ink-2); border-color: var(--line); }
-    .quick-classes button:hover { color: var(--blue); border-color: rgba(78,166,255,0.55); background: rgba(78,166,255,0.07); }
-    .empty { color: var(--muted); border-style: dashed; text-align: center; }
-    .editor-toolbar {
-      display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;
-      margin-top: 8px; padding: 8px 10px;
-      border: 1px dashed rgba(125,211,252,0.28);
-      border-radius: 8px;
-      background: rgba(125,211,252,0.04);
-      color: var(--ink-2);
-    }
-    .editor-toolbar .info { font-size: 11px; color: var(--ink-2); }
-    .editor-toolbar .info b { color: var(--cyan); font-weight: 600; }
-    .editor-toolbar.off { display: none; }
     .empty-state {
       padding: 14px 12px;
       border: 1px dashed var(--line);
@@ -1291,7 +1442,7 @@ INDEX_HTML = r"""<!doctype html>
       main { grid-template-columns: 1fr; }
       .stage { grid-template-rows: auto auto; }
       .frame { aspect-ratio: 16/9; max-height: 60vh; }
-      .side { max-height: none; overflow: visible; }
+      .side { grid-template-rows: auto auto auto; max-height: none; overflow: visible; }
     }
   </style>
 </head>
@@ -1382,89 +1533,122 @@ INDEX_HTML = r"""<!doctype html>
             </div>
             <span class="frame-name" id="frame-name">--</span>
           </div>
+          <div class="row3 off" id="editor-banner">
+            <span class="info">Modo cuadros · arrastra sobre el frame · clase: <b id="editor-class-display">objeto</b></span>
+            <span class="grow"></span>
+            <button id="editor-delete" class="danger" disabled>Borrar seleccion</button>
+          </div>
         </div>
       </section>
       <aside class="side">
-        <section class="card">
-          <h2>
-            <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></span>
-            Sesion
-            <span class="badge" id="session-status-badge">sin estado</span>
-          </h2>
-          <div class="row"><span class="k">Frames</span><span class="v" id="meta-frames">--</span></div>
-          <div class="row"><span class="k">Criticos</span><span class="v" id="meta-critical">--</span></div>
-          <div class="row"><span class="k">Imagenes</span><span class="v" id="meta-images">--</span></div>
-          <div class="row"><span class="k">Video</span><span class="v" id="meta-video">--</span></div>
-          <div class="row"><span class="k">Modificada</span><span class="v" id="meta-modified">--</span></div>
-          <div class="progress" title="Progreso de revision"><div id="meta-progress" style="width:0%"></div></div>
-          <div class="inline-form" style="margin-top:10px">
-            <input id="session-name" placeholder="nombre sesion">
-            <button id="rename-session" class="subtle">Renombrar</button>
+        <div class="ctx-strip" id="ctx-strip">
+          <div class="ctx" id="ctx-seq"><span class="label">Frame</span><span class="value">#--</span></div>
+          <div class="ctx" id="ctx-time"><span class="label">Hora</span><span class="value">--</span></div>
+          <div class="ctx" id="ctx-action"><span class="label">Accion</span><span class="value tag"><span class="dot"></span><span id="ctx-action-text">--</span></span></div>
+          <div class="ctx" id="ctx-inf"><span class="label">Inferencia</span><span class="value">-- ms</span></div>
+        </div>
+        <nav class="tabs" role="tablist">
+          <button class="tab active" data-tab="revision" role="tab">Revision <span class="badge" id="tab-badge-revision">0</span></button>
+          <button class="tab" data-tab="sesion" role="tab">Sesion <span class="badge" id="tab-badge-sesion">--</span></button>
+          <button class="tab" data-tab="datos" role="tab">Datos <span class="badge" id="tab-badge-datos">0</span></button>
+        </nav>
+        <div class="tab-host">
+          <!-- ============== REVISION ============================================ -->
+          <div class="tab-panel active" id="panel-revision" role="tabpanel">
+            <section class="card" style="padding:12px">
+              <h2>
+                <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><circle cx="7" cy="7" r="1.5"/></svg></span>
+                Detecciones
+                <span class="badge" id="label-count">0</span>
+              </h2>
+              <div class="labels" id="labels"><div class="empty-state">Sin labels</div></div>
+            </section>
+            <div class="relabel">
+              <div class="selected-bar empty" id="selected-bar">Selecciona una deteccion para relabelar</div>
+              <div class="class-search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+                <input id="class-search" placeholder="filtrar clases · escribe nueva clase">
+              </div>
+              <div class="quick-classes" id="quick-classes"></div>
+              <div class="field-row">
+                <select id="class-select"></select>
+              </div>
+              <div class="toggle-line">
+                <span class="lbl">deteccion valida <span class="kbd">V</span></span>
+                <input id="valid" type="checkbox" checked>
+              </div>
+              <textarea id="note" placeholder="nota opcional"></textarea>
+              <div class="actions">
+                <button id="save" class="solid">Guardar label · <span class="kbd">V</span></button>
+                <button id="reject" class="danger">Rechazar · <span class="kbd">R</span></button>
+              </div>
+            </div>
           </div>
-          <div class="form" style="margin-top:8px">
-            <select id="session-status">
-              <option value="">sin estado</option>
-              <option value="reviewing">reviewing</option>
-              <option value="ready">ready</option>
-              <option value="needs-capture">needs-capture</option>
-              <option value="discard">discard</option>
-            </select>
-            <input id="session-tags" placeholder="tags separados por coma">
-            <textarea id="session-notes" placeholder="notas sesion"></textarea>
-            <button id="save-session-meta">Guardar sesion</button>
+          <!-- ============== SESION ============================================== -->
+          <div class="tab-panel" id="panel-sesion" role="tabpanel">
+            <section class="card">
+              <h2>
+                <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></span>
+                Sesion
+                <span class="badge" id="session-status-badge">sin estado</span>
+              </h2>
+              <div class="row"><span class="k">Frames</span><span class="v" id="meta-frames">--</span></div>
+              <div class="row"><span class="k">Criticos</span><span class="v" id="meta-critical">--</span></div>
+              <div class="row"><span class="k">Imagenes</span><span class="v" id="meta-images">--</span></div>
+              <div class="row"><span class="k">Video</span><span class="v" id="meta-video">--</span></div>
+              <div class="row"><span class="k">Modificada</span><span class="v" id="meta-modified">--</span></div>
+              <div class="progress" title="Progreso de revision"><div id="meta-progress" style="width:0%"></div></div>
+            </section>
+            <section class="card">
+              <h2>
+                <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4v16h16v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span>
+                Metadatos
+              </h2>
+              <div class="form">
+                <div class="inline-form">
+                  <input id="session-name" placeholder="nombre sesion">
+                  <button id="rename-session" class="subtle">Renombrar</button>
+                </div>
+                <select id="session-status">
+                  <option value="">sin estado</option>
+                  <option value="reviewing">reviewing</option>
+                  <option value="ready">ready</option>
+                  <option value="needs-capture">needs-capture</option>
+                  <option value="discard">discard</option>
+                </select>
+                <input id="session-tags" placeholder="tags separados por coma">
+                <textarea id="session-notes" placeholder="notas sesion"></textarea>
+                <button id="save-session-meta" class="solid">Guardar sesion</button>
+              </div>
+            </section>
           </div>
-        </section>
-        <section class="card">
-          <h2>
-            <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
-            Frame
-            <span class="badge" id="frame-badge">--</span>
-          </h2>
-          <div class="row"><span class="k">Seq</span><span class="v" id="frame-seq">--</span></div>
-          <div class="row"><span class="k">Hora</span><span class="v" id="frame-time">--</span></div>
-          <div class="row"><span class="k">Inferencia</span><span class="v" id="frame-inf">--</span></div>
-          <div class="row"><span class="k">Accion</span><span class="v" id="frame-action">--</span></div>
-          <div class="inline-form" style="margin-top:10px">
-            <input id="asset-name" placeholder="renombrar imagen">
-            <button id="rename-asset" class="subtle">Renombrar</button>
+          <!-- ============== DATOS =============================================== -->
+          <div class="tab-panel" id="panel-datos" role="tabpanel">
+            <section class="card">
+              <h2>
+                <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 22h20L12 2z"/><path d="M12 9v5"/><circle cx="12" cy="18" r="0.6" fill="currentColor"/></svg></span>
+                Flags Criticos
+                <span class="badge" id="flag-count">0</span>
+              </h2>
+              <div class="flags" id="flags"><div class="empty-state">Sin flags</div></div>
+            </section>
+            <section class="card">
+              <h2>
+                <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+                Frame
+                <span class="badge" id="frame-badge">--</span>
+              </h2>
+              <div class="row"><span class="k">Seq</span><span class="v" id="frame-seq">--</span></div>
+              <div class="row"><span class="k">Hora</span><span class="v" id="frame-time">--</span></div>
+              <div class="row"><span class="k">Inferencia</span><span class="v" id="frame-inf">--</span></div>
+              <div class="row"><span class="k">Accion</span><span class="v" id="frame-action">--</span></div>
+              <div class="inline-form" style="margin-top:10px">
+                <input id="asset-name" placeholder="renombrar imagen">
+                <button id="rename-asset" class="subtle">Renombrar</button>
+              </div>
+            </section>
           </div>
-          <div class="editor-toolbar off" id="editor-toolbar">
-            <div class="info">Modo edicion: arrastra para crear. <b id="editor-class-display">objeto</b> sera la clase del nuevo cuadro.</div>
-            <button id="editor-delete" class="danger" disabled>Borrar seleccion</button>
-          </div>
-        </section>
-        <section class="card">
-          <h2>
-            <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 22h20L12 2z"/><path d="M12 9v5"/><circle cx="12" cy="18" r="0.6" fill="currentColor"/></svg></span>
-            Flags Criticos
-            <span class="badge" id="flag-count">0</span>
-          </h2>
-          <div class="flags" id="flags"><div class="flag empty">Sin flags</div></div>
-        </section>
-        <section class="card">
-          <h2>
-            <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><circle cx="7" cy="7" r="1.5"/></svg></span>
-            Labels
-            <span class="badge" id="label-count">0</span>
-          </h2>
-          <div class="labels" id="labels"><div class="label-row empty">Sin labels</div></div>
-        </section>
-        <section class="card">
-          <h2>
-            <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20l9-9-9-9"/><path d="M3 12h18"/></svg></span>
-            Relabel
-            <span class="badge" id="relabel-mode">objeto</span>
-          </h2>
-          <div class="form">
-            <div class="quick-classes" id="quick-classes"></div>
-            <select id="class-select"></select>
-            <input id="class-input" placeholder="nueva clase">
-            <label class="check" style="font-size:11.5px"><input id="valid" type="checkbox" checked> deteccion valida</label>
-            <textarea id="note" placeholder="nota"></textarea>
-            <button id="save" class="solid">Guardar label · <span class="kbd">V</span></button>
-            <button class="danger" id="reject">Rechazar deteccion · <span class="kbd">R</span></button>
-          </div>
-        </section>
+        </div>
       </aside>
     </main>
   </div>
@@ -1485,6 +1669,8 @@ INDEX_HTML = r"""<!doctype html>
       videoMode: false,
       editMode: false,
       drawing: null,
+      classFilter: "",
+      activeTab: "revision",
       imgNaturalW: 1280,
       imgNaturalH: 720,
     };
@@ -1568,6 +1754,7 @@ INDEX_HTML = r"""<!doctype html>
       const badge = $("session-status-badge");
       badge.textContent = status;
       badge.style.color = status === "ready" ? "var(--teal)" : status === "discard" ? "var(--red)" : status === "reviewing" ? "var(--amber)" : "var(--ink-3)";
+      $("tab-badge-sesion").textContent = status === "sin estado" ? (s.modified_at ? s.modified_at.slice(5, 10) : "--") : status.slice(0, 6);
     }
 
     function renderSessionEditor() {
@@ -1581,32 +1768,52 @@ INDEX_HTML = r"""<!doctype html>
 
     function renderClasses(classes) {
       const sel = $("class-select");
+      const known = classes && classes.length ? Array.from(new Set(classes)).sort() : ["objeto"];
       sel.innerHTML = "";
-      $("quick-classes").innerHTML = "";
-      const known = classes && classes.length ? classes : ["objeto"];
+      const blank = document.createElement("option");
+      blank.value = ""; blank.textContent = "(sin clase)";
+      sel.appendChild(blank);
       for (const name of known) {
         const opt = document.createElement("option");
         opt.value = name; opt.textContent = name;
         sel.appendChild(opt);
+      }
+      const wrap = $("quick-classes");
+      wrap.innerHTML = "";
+      for (const name of known) {
         const btn = document.createElement("button");
         btn.type = "button";
+        btn.className = "chip";
+        btn.dataset.cls = name.toLowerCase();
         btn.textContent = name;
-        btn.onclick = () => {
-          $("class-select").value = name;
-          $("class-input").value = "";
-          updateRelabelBadge();
-          if (state.editMode) showToast("Clase para nuevo cuadro: " + name, "ok");
-          else if (state.selectedLabel != null) saveReview(true);
-        };
-        $("quick-classes").appendChild(btn);
+        btn.onclick = () => activateClass(name);
+        wrap.appendChild(btn);
       }
-      updateRelabelBadge();
+      filterClasses();
     }
 
-    function updateRelabelBadge() {
-      const cls = ($("class-input").value.trim() || $("class-select").value || "objeto").slice(0, 24);
-      $("relabel-mode").textContent = cls;
-      $("editor-class-display").textContent = cls;
+    function activateClass(name) {
+      $("class-select").value = name;
+      $("class-search").value = name;
+      state.classFilter = name.toLowerCase();
+      filterClasses(true);
+      if (state.editMode) {
+        $("editor-class-display").textContent = name;
+        showToast("Clase para nuevo cuadro: " + name, "ok");
+      } else if (state.selectedLabel != null) {
+        saveReview(true);
+      }
+    }
+
+    function filterClasses(highlightExact = false) {
+      const q = state.classFilter.trim();
+      const wrap = $("quick-classes");
+      const exact = $("class-select").value.toLowerCase();
+      wrap.querySelectorAll(".chip").forEach(chip => {
+        const cls = chip.dataset.cls;
+        chip.hidden = q && !cls.includes(q);
+        chip.classList.toggle("active", cls === exact && (highlightExact || !q || cls.includes(q)));
+      });
     }
 
     function criticalIndexes() { return state.session ? state.session.critical_indexes || [] : []; }
@@ -1657,15 +1864,14 @@ INDEX_HTML = r"""<!doctype html>
       wrap.classList.toggle("editing", state.editMode);
       $("frame-shell").classList.toggle("editing", state.editMode);
       $("edit-mode").classList.toggle("on", state.editMode);
-      $("editor-toolbar").classList.toggle("off", !state.editMode);
+      $("editor-banner").classList.toggle("off", !state.editMode);
       if (state.editMode) {
         if (state.videoMode) setVideoMode(false);
         $("overlay").checked = false;
-        loadFrame(state.idx);
       } else {
         $("overlay").checked = true;
-        loadFrame(state.idx);
       }
+      loadFrame(state.idx);
       updateHud();
     }
 
@@ -1676,6 +1882,12 @@ INDEX_HTML = r"""<!doctype html>
       if (state.editMode) text.textContent = "EDIT";
       else if (state.videoMode) text.textContent = "VIDEO";
       else text.textContent = "VIEW";
+    }
+
+    function setTab(name) {
+      state.activeTab = name;
+      document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
+      document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === "panel-" + name));
     }
 
     async function loadFrame(newIdx) {
@@ -1698,16 +1910,35 @@ INDEX_HTML = r"""<!doctype html>
       $("pos").innerHTML = "<b>" + (state.idx + 1) + "</b> / " + state.session.frames;
       const filename = (f.image || "frame " + (f.frame_seq ?? state.idx)).split("/").pop();
       $("frame-name").textContent = filename;
+
+      // Context strip
+      $("ctx-seq").querySelector(".value").textContent = "#" + (f.frame_seq ?? "--");
+      const isoTime = (f.iso_time || "").split("T")[1] || (f.iso_time || "--");
+      $("ctx-time").querySelector(".value").textContent = isoTime;
+      const autonomy = f.autonomy || {};
+      const action = autonomy.action || (autonomy.decision || {}).action || "--";
+      $("ctx-action-text").textContent = action;
+      const ctxAction = $("ctx-action");
+      ctxAction.className = "ctx";
+      if (/stop|halt|brake/.test(action)) ctxAction.classList.add("action-stop");
+      else if (/turn|left|right/.test(action)) ctxAction.classList.add("action-turn");
+      else if (/yield|slow/.test(action)) ctxAction.classList.add("action-yield");
+      else ctxAction.classList.add("action-continue");
+      $("ctx-inf").querySelector(".value").textContent = f.inference_latency_ms == null ? "-- ms" : f.inference_latency_ms + " ms";
+
+      // Datos tab values
       $("frame-badge").textContent = "#" + (f.frame_seq ?? "--");
       $("frame-seq").textContent = f.frame_seq ?? "--";
       $("frame-time").textContent = f.iso_time || "--";
       $("frame-inf").textContent = f.inference_latency_ms == null ? "--" : f.inference_latency_ms + " ms";
-      const autonomy = f.autonomy || {};
-      $("frame-action").textContent = autonomy.action || (autonomy.decision || {}).action || "--";
+      $("frame-action").textContent = action;
       $("asset-name").value = f.image ? f.image.split("/").pop() : "";
+
+      // Flags
       const flags = ((f.critical || {}).flags) || [];
       $("flag-count").textContent = flags.length;
-      $("flags").innerHTML = flags.length ? "" : '<div class="flag empty">Sin flags</div>';
+      $("tab-badge-datos").textContent = flags.length;
+      $("flags").innerHTML = flags.length ? "" : '<div class="empty-state">Sin flags</div>';
       for (const flag of flags) {
         const div = document.createElement("div");
         div.className = "flag";
@@ -1715,11 +1946,15 @@ INDEX_HTML = r"""<!doctype html>
         div.innerHTML = "<b>" + (flag.rule || "?") + "</b><span>" + detail + "</span>";
         $("flags").appendChild(div);
       }
+
+      // Labels list
       const labels = f.labels || [];
       const manual = labels.filter(l => l.source === "manual").length;
       $("pill-manual").textContent = manual;
       $("label-count").textContent = labels.length + (manual ? " · " + manual + "M" : "");
-      $("labels").innerHTML = labels.length ? "" : '<div class="label-row empty">Sin labels</div>';
+      $("tab-badge-revision").textContent = labels.length;
+      const list = $("labels");
+      list.innerHTML = labels.length ? "" : '<div class="empty-state">Sin labels en este frame · entra en <b>Cuadros</b> para crear uno</div>';
       labels.forEach((label, i) => {
         const review = label.review || {};
         const isManual = label.source === "manual";
@@ -1733,13 +1968,34 @@ INDEX_HTML = r"""<!doctype html>
         const srcClass = isManual ? "src manual" : isInvalid ? "src invalid" : "src";
         div.innerHTML =
           '<span class="' + srcClass + '">' + srcMark + '</span>' +
-          '<span><span class="name">' + cls + '</span><span class="hint">#' + trackId + ' · ' + conf + (isManual ? " · manual" : "") + '</span></span>' +
+          '<span><span class="name">' + cls + '</span><div class="hint">#' + trackId + ' · ' + conf + (isManual ? " · manual" : "") + '</div></span>' +
           '<span class="key">' + (isManual ? "m" : (i + 1) + "↩") + '</span>';
         div.onclick = () => selectLabel(i);
-        $("labels").appendChild(div);
+        list.appendChild(div);
       });
       if (labels.length && state.selectedLabel == null) selectLabel(0, false);
+      else updateSelectedBar();
       drawEditorOverlay();
+    }
+
+    function updateSelectedBar() {
+      const bar = $("selected-bar");
+      if (state.selectedLabel == null || !state.frameData) {
+        bar.className = "selected-bar empty";
+        bar.textContent = "Selecciona una deteccion para relabelar";
+        return;
+      }
+      const label = state.frameData.labels[state.selectedLabel];
+      if (!label) return;
+      const review = label.review || {};
+      const isManual = label.source === "manual";
+      const cls = review.class || label.class || "objeto";
+      const conf = label.confidence == null ? "--" : Math.round(label.confidence * 100) + "%";
+      bar.className = "selected-bar";
+      bar.innerHTML =
+        '<span class="src ' + (isManual ? "manual" : "") + '" style="border-color:' + (isManual ? "rgba(125,211,252,0.5)" : "var(--line-strong)") + '">' + (isManual ? "M" : state.selectedLabel + 1) + '</span>' +
+        '<span class="label">' + cls + '</span>' +
+        '<span class="meta">#' + (label.track_id ?? "-") + ' · ' + conf + (isManual ? " · manual" : "") + '</span>';
     }
 
     function renderEmpty() {
@@ -1753,8 +2009,8 @@ INDEX_HTML = r"""<!doctype html>
       $("pill-critical").textContent = "0";
       $("pill-reviewed").textContent = "0";
       $("pill-manual").textContent = "0";
-      $("labels").innerHTML = '<div class="label-row empty">Sin sesiones</div>';
-      $("flags").innerHTML = '<div class="flag empty">Sin flags</div>';
+      $("labels").innerHTML = '<div class="empty-state">Sin sesiones</div>';
+      $("flags").innerHTML = '<div class="empty-state">Sin flags</div>';
     }
 
     function selectLabel(i, rerender = true) {
@@ -1763,25 +2019,34 @@ INDEX_HTML = r"""<!doctype html>
       if (!label) return;
       const review = label.review || {};
       const isManual = label.source === "manual";
-      $("class-select").value = review.class || label.class || "";
-      $("class-input").value = "";
+      const cls = review.class || label.class || "";
+      $("class-select").value = cls;
+      $("class-search").value = cls;
+      state.classFilter = cls.toLowerCase();
       $("valid").checked = review.valid !== false;
       $("note").value = review.note || label.note || "";
       state.selectedManualId = isManual ? label.id : null;
       $("editor-delete").disabled = !isManual;
-      updateRelabelBadge();
-      if (rerender) renderFrame();
+      filterClasses(true);
+      updateSelectedBar();
+      if (rerender) {
+        document.querySelectorAll(".label-row").forEach((row, idx) => row.classList.toggle("active", idx === i));
+        drawEditorOverlay();
+      }
     }
 
     /* ----------------------------- API SAVES --------------------------------- */
     async function saveReview(validOverride) {
-      if (state.selectedLabel == null || !state.frameData) return;
+      if (state.selectedLabel == null || !state.frameData) {
+        showToast("Selecciona una deteccion primero", "error");
+        return;
+      }
       const label = state.frameData.labels[state.selectedLabel];
       if (!label || label.source === "manual") {
         showToast("Edita cuadros manuales en modo Cuadros", "error");
         return;
       }
-      const cls = $("class-input").value.trim() || $("class-select").value || label.class || "";
+      const cls = $("class-search").value.trim() || $("class-select").value || label.class || "";
       const valid = validOverride == null ? $("valid").checked : validOverride;
       try {
         const data = await api("/api/relabel", {
@@ -1800,9 +2065,7 @@ INDEX_HTML = r"""<!doctype html>
         await loadCatalog(state.sessionId);
         await loadFrame(state.idx);
         showToast(valid ? "Label guardada" : "Deteccion rechazada", "ok");
-      } catch (err) {
-        showToast(err.message, "error");
-      }
+      } catch (err) { showToast(err.message, "error"); }
     }
 
     async function saveManualBox(bbox, cls) {
@@ -1821,9 +2084,7 @@ INDEX_HTML = r"""<!doctype html>
         await loadCatalog(state.sessionId);
         await loadFrame(state.idx);
         showToast("Cuadro creado · " + (cls || "objeto"), "ok");
-      } catch (err) {
-        showToast(err.message, "error");
-      }
+      } catch (err) { showToast(err.message, "error"); }
     }
 
     async function deleteSelectedManual() {
@@ -1841,9 +2102,7 @@ INDEX_HTML = r"""<!doctype html>
         await loadCatalog(state.sessionId);
         await loadFrame(state.idx);
         showToast("Cuadro borrado", "ok");
-      } catch (err) {
-        showToast(err.message, "error");
-      }
+      } catch (err) { showToast(err.message, "error"); }
     }
 
     async function renameSession() {
@@ -1898,6 +2157,7 @@ INDEX_HTML = r"""<!doctype html>
     function eventToImageCoords(event) {
       const svg = $("editor-svg");
       const rect = svg.getBoundingClientRect();
+      if (!rect.width || !rect.height) return [0, 0];
       const x = ((event.clientX - rect.left) / rect.width) * state.imgNaturalW;
       const y = ((event.clientY - rect.top) / rect.height) * state.imgNaturalH;
       return [Math.max(0, Math.min(state.imgNaturalW, x)), Math.max(0, Math.min(state.imgNaturalH, y))];
@@ -1914,7 +2174,7 @@ INDEX_HTML = r"""<!doctype html>
         const [x1, y1, x2, y2] = label.bbox_xyxy;
         const w = x2 - x1, h = y2 - y1;
         const isManual = label.source === "manual";
-        const isSelected = isManual && state.selectedManualId === label.id;
+        const isSelected = (isManual && state.selectedManualId === label.id) || state.selectedLabel === i;
         const stroke = isManual ? "#7dd3fc" : "#4ea6ff";
         const fill = isSelected ? "rgba(125,211,252,0.18)" : "rgba(0,0,0,0)";
         const g = document.createElementNS(SVG_NS, "g");
@@ -2010,11 +2270,12 @@ INDEX_HTML = r"""<!doctype html>
       const x2 = Math.max(draw.x0, draw.x1);
       const y2 = Math.max(draw.y0, draw.y1);
       if (x2 - x1 < state.imgNaturalW * 0.012 || y2 - y1 < state.imgNaturalH * 0.012) return;
-      const cls = $("class-input").value.trim() || $("class-select").value || "objeto";
+      const cls = $("class-search").value.trim() || $("class-select").value || "objeto";
       saveManualBox([x1, y1, x2, y2], cls);
     }
 
     /* ----------------------------- WIRING ------------------------------------ */
+    document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => setTab(t.dataset.tab)));
     $("session-select").onchange = e => loadSession(e.target.value);
     $("refresh").onclick = () => loadCatalog(state.sessionId);
     $("play").onclick = togglePlayback;
@@ -2037,8 +2298,17 @@ INDEX_HTML = r"""<!doctype html>
     $("rename-session").onclick = () => renameSession();
     $("save-session-meta").onclick = () => saveSessionMeta();
     $("rename-asset").onclick = () => renameAsset();
-    $("class-input").oninput = updateRelabelBadge;
-    $("class-select").onchange = updateRelabelBadge;
+    $("class-search").addEventListener("input", e => {
+      state.classFilter = e.target.value.toLowerCase();
+      $("class-select").value = e.target.value.trim();
+      filterClasses();
+    });
+    $("class-select").onchange = e => {
+      $("class-search").value = e.target.value;
+      state.classFilter = e.target.value.toLowerCase();
+      filterClasses(true);
+      if (state.editMode) $("editor-class-display").textContent = e.target.value || "objeto";
+    };
 
     const svgEl = $("editor-svg");
     svgEl.addEventListener("mousedown", startDraw);
@@ -2051,9 +2321,12 @@ INDEX_HTML = r"""<!doctype html>
       if (img.naturalWidth && img.naturalHeight) {
         state.imgNaturalW = img.naturalWidth;
         state.imgNaturalH = img.naturalHeight;
-        $("frame-shell").style.aspectRatio = img.naturalWidth + "/" + img.naturalHeight;
+        $("frame-shell").style.aspectRatio = img.naturalWidth + " / " + img.naturalHeight;
         drawEditorOverlay();
       }
+    });
+    $("frame").addEventListener("error", () => {
+      showToast("No se pudo cargar el frame", "error");
     });
 
     window.addEventListener("keydown", e => {
@@ -2071,6 +2344,12 @@ INDEX_HTML = r"""<!doctype html>
       else if (e.key === "Escape") { if (state.editMode) setEditMode(false); else stopPlayback(); }
       else if (e.key === "Delete" || e.key === "Backspace") {
         if (state.editMode && state.selectedManualId) deleteSelectedManual();
+      } else if (e.key === "Tab") {
+        e.preventDefault();
+        const order = ["revision", "sesion", "datos"];
+        const dir = e.shiftKey ? -1 : 1;
+        const idx = order.indexOf(state.activeTab);
+        setTab(order[(idx + dir + order.length) % order.length]);
       } else {
         const digit = Number(e.key);
         if (digit >= 1 && digit <= 9 && state.frameData && state.frameData.labels && state.frameData.labels[digit - 1]) {

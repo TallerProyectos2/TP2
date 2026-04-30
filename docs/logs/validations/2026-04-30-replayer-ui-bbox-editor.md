@@ -62,6 +62,17 @@ End-to-end smoke test (ad-hoc Python harness):
   retain their previous shape, with `frame_payload` now also exposing
   `model_label_count` and `manual_label_count` for the UI counters.
 
+## Follow-up rework
+
+Second iteration based on operator feedback:
+
+- Frame rendering bug: the previous CSS used `aspect-ratio + max-width: 100% + max-height: 100%` on the `.frame` container with no explicit dimension. In a grid `place-items: center` parent the element collapsed to 0×0 in some viewports, leaving an empty stage. Replaced with `width: 100%; height: auto; max-height: 100%; aspect-ratio: 16/9`, which sizes to the largest 16:9 box that fits the available space and is then overridden by the loaded image's natural ratio via `frame-shell.style.aspectRatio`.
+- Right panel restructured into three tabs (`Revision`, `Sesion`, `Datos`) plus a sticky context strip showing frame seq, hora, accion, and inferencia latency. The relabel workflow now lives in `Revision` with a class search input that filters chips, a selected-detection bar above the form, and a properly inline `deteccion valida` toggle. `Sesion` carries session metadata and rename. `Datos` carries flags criticos, raw frame metadata, and the asset rename.
+- Editor toolbar moved into the deck (row3) so it is visible regardless of which sidebar tab is active when in `Cuadros` mode.
+- Fixed `input[type=checkbox]` defaulting to `width: 100%` from the generic input rule, which was stretching the relabel checkbox.
+- Truncated `card h2 .badge` with `max-width + ellipsis` so long class names no longer overflow the panel header.
+- Visual confirmation in Chrome against a synthetic session: the frame image renders with the server-side overlay; tab switches load Datos content; entering Cuadros mode swaps to the SVG editor with dashed strokes for model boxes and the in-deck banner.
+
 ## Out of scope
 
 - No firmware changes.

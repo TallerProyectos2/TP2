@@ -81,10 +81,15 @@ http://100.97.19.112:8090/
 The replayer supports:
 
 - selecting any session directory under the recording root
+- playing the recorded `session.mp4` in-browser when present, or stepping through extracted frames
+- fast movement with a timeline, frame jumps, playback speed, critical-frame filtering, and keyboard-driven review
 - stepping through all frames or critical frames only
 - viewing overlays from candidate labels and critical rules
 - relabeling a detection class
 - marking detections valid or rejected
+- editing review metadata in `session.json` (`status`, tags, notes)
+- renaming a session directory safely within the recording root
+- renaming a selected frame image with a manifest-safe update recorded in `session_edits.jsonl`
 - writing reviewed labels without modifying the original manifest
 
 Reviewed labels are saved in:
@@ -93,6 +98,8 @@ Reviewed labels are saved in:
 labels_reviewed.json
 labels_reviewed.jsonl
 ```
+
+Frame image renames intentionally update `manifest.jsonl` so the session remains self-consistent after file cleanup. Label review decisions still stay in `labels_reviewed.json` and `labels_reviewed.jsonl`.
 
 ## Retraining Flow
 

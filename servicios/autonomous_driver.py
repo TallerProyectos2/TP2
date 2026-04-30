@@ -65,6 +65,7 @@ class AutonomousConfig:
     ambiguous_score_ratio: float = 0.82
     stop_hold_sec: float = 1.15
     turn_hold_sec: float = 1.20
+    turn_pulse_enabled: bool = True
     turn_degrees: int = 90
     cooldown_sec: float = 0.85
     distance_scale: float = 0.32
@@ -522,6 +523,18 @@ class AutonomousController:
         left: bool,
     ) -> AutonomousDecision:
         steering_target = self.config.left_steering if left else self.config.right_steering
+        if not self.config.turn_pulse_enabled:
+            return self._decision(
+                now,
+                steering=steering_target,
+                throttle=min(self.config.turn_throttle, self.speed_cap),
+                action="turn-left" if left else "turn-right",
+                state=STATE_APPROACH,
+                reason=f"{target.label}:{target.distance}-{target.zone}:pulse-disabled",
+                target=target,
+                candidates=tuple(observations),
+            )
+
         self.state = STATE_TURN_LEFT if left else STATE_TURN_RIGHT
         self.active_track_id = target.track_id
         self.maneuver_until = now + self.config.turn_hold_sec

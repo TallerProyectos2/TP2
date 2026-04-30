@@ -115,7 +115,10 @@ class RuntimeStateModeTest(unittest.TestCase):
 
         self.assertEqual(control["steering_trim"], STEERING_TRIM)
         self.assertEqual(control["steering_trim_default"], STEERING_TRIM)
-        self.assertEqual(control["effective_steering"], corrected_steering(NEUTRAL_STEERING))
+        self.assertEqual(
+            control["effective_steering"],
+            corrected_steering(NEUTRAL_STEERING, control["applied_steering_trim"]),
+        )
         self.assertLess(control["effective_steering"], control["steering"])
 
     def test_steering_trim_can_be_changed_live(self):
@@ -197,6 +200,36 @@ class RuntimeStateModeTest(unittest.TestCase):
         self.assertEqual(adjusted.steering, turn.steering)
         self.assertFalse(state.turn_compensation_active)
         self.assertEqual(state.turn_compensation_reason, "action-turn-right")
+
+    def test_runtime_settings_update_and_save_defaults(self):
+        state = RuntimeState()
+        with tempfile.TemporaryDirectory() as tmp:
+            state.settings_path = Path(tmp) / "defaults.json"
+
+            settings = state.update_runtime_settings(
+                {
+                    "values": {
+                        "steering_trim": -0.31,
+                        "cruise_throttle": 0.44,
+                        "turn_pulse_enabled": False,
+                        "turn_compensation_enabled": True,
+                        "turn_compensation_interval_sec": 0.5,
+                        "turn_compensation_duration_sec": 0.2,
+                        "turn_compensation_magnitude": 0.33,
+                    }
+                }
+            )
+            saved = state.save_current_settings_as_defaults()
+
+            self.assertEqual(settings["values"]["steering_trim"], -0.31)
+            self.assertEqual(settings["values"]["cruise_throttle"], 0.44)
+            self.assertFalse(settings["values"]["turn_pulse_enabled"])
+            self.assertTrue(settings["values"]["turn_compensation_enabled"])
+            self.assertEqual(settings["values"]["turn_compensation_interval_sec"], 0.5)
+            self.assertEqual(settings["values"]["turn_compensation_duration_sec"], 0.2)
+            self.assertEqual(settings["values"]["turn_compensation_magnitude"], 0.33)
+            self.assertTrue(saved["persisted"])
+            self.assertTrue(state.settings_path.exists())
 
     def test_autonomous_mode_applies_lane_correction_when_cruising(self):
         state = RuntimeState()

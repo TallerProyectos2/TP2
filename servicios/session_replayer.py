@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import threading
 from dataclasses import dataclass
@@ -61,6 +62,26 @@ def is_session_dir(path: Path) -> bool:
     return path.is_dir() and (path / "manifest.jsonl").exists()
 
 
+SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$")
+
+
+def safe_entry_name(value: str, *, suffix: str | None = None) -> str:
+    name = Path(str(value).strip()).name
+    if suffix and not name.lower().endswith(suffix.lower()):
+        name += suffix
+    if not SAFE_NAME_RE.fullmatch(name):
+        raise ValueError("invalid safe name")
+    return name
+
+
+def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        for row in rows:
+            fh.write(json.dumps(row, ensure_ascii=True, separators=(",", ":")) + "\n")
+    tmp.replace(path)
+
+
 @dataclass(frozen=True)
 class SessionSummary:
     id: str
@@ -71,6 +92,8 @@ class SessionSummary:
     images: int
     has_video: bool
     started_at: str | None
+    review_status: str | None
+    tags: list[str]
     modified_at: str
 
 
@@ -127,6 +150,20 @@ class SessionCatalog:
             raise ValueError("session id escapes record root")
         return candidate
 
+    def rename(self, session_id: str, new_id: str) -> SessionSummary:
+        old_path = self.session_path(session_id)
+        if not is_session_dir(old_path):
+            raise FileNotFoundError(f"No manifest.jsonl for session {session_id}")
+        new_name = safe_entry_name(new_id)
+        new_path = (self.record_root / new_name).resolve()
+        if not path_is_relative_to(new_path, self.record_root):
+            raise ValueError("new session id escapes record root")
+        if new_path.exists():
+            raise FileExistsError(f"session already exists: {new_name}")
+        old_path.rename(new_path)
+        self.initial_session_id = new_name
+        return self._summarize(new_path)
+
     def _summarize(self, path: Path) -> SessionSummary:
         manifest = read_jsonl(path / "manifest.jsonl")
         critical = sum(1 for item in manifest if (item.get("critical") or {}).get("is_critical"))
@@ -142,11 +179,17 @@ class SessionCatalog:
         images_dir = path / "images"
         images = len(list(images_dir.glob("*.jpg"))) if images_dir.exists() else 0
         started_at = None
+        review_status = None
+        tags: list[str] = []
         session_meta = path / "session.json"
         if session_meta.exists():
             try:
                 payload = json.loads(session_meta.read_text(encoding="utf-8"))
                 started_at = payload.get("started_at")
+                review = payload.get("review") if isinstance(payload.get("review"), dict) else {}
+                review_status = review.get("status")
+                raw_tags = review.get("tags")
+                tags = [str(item) for item in raw_tags] if isinstance(raw_tags, list) else []
             except json.JSONDecodeError:
                 started_at = None
         mtime = datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds")
@@ -159,6 +202,8 @@ class SessionCatalog:
             images=images,
             has_video=(path / "session.mp4").exists(),
             started_at=started_at,
+            review_status=review_status,
+            tags=tags,
             modified_at=mtime,
         )
 
@@ -207,6 +252,16 @@ class SessionData:
                 values.add(str(label_class))
         return sorted(values)
 
+    def session_meta(self) -> dict[str, Any]:
+        meta_path = self.root / "session.json"
+        if not meta_path.exists():
+            return {}
+        try:
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+            return payload if isinstance(payload, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+
     def critical_indexes(self) -> list[int]:
         return [
             idx
@@ -231,6 +286,12 @@ class SessionData:
         item["index"] = idx
         item["count"] = len(self.manifest)
         return item
+
+    def video_path(self) -> Path | None:
+        path = (self.root / "session.mp4").resolve()
+        if path.exists() and path_is_relative_to(path, self.root):
+            return path
+        return None
 
     def image_for_index(self, idx: int, *, overlay: bool) -> np.ndarray:
         item = self.frame_payload(idx)
@@ -265,6 +326,71 @@ class SessionData:
             return frame if ok else None
         finally:
             cap.release()
+
+    def save_session_meta(self, payload: dict[str, Any]) -> dict[str, Any]:
+        status = str(payload.get("status", "")).strip()[:60]
+        notes = str(payload.get("notes", "")).strip()[:4000]
+        tags_raw = payload.get("tags", [])
+        if isinstance(tags_raw, str):
+            tags = [part.strip() for part in tags_raw.split(",")]
+        elif isinstance(tags_raw, list):
+            tags = [str(item).strip() for item in tags_raw]
+        else:
+            tags = []
+        tags = [tag[:40] for tag in tags if tag][:16]
+        with self.lock:
+            meta = self.session_meta()
+            review = meta.get("review") if isinstance(meta.get("review"), dict) else {}
+            review.update(
+                {
+                    "status": status or review.get("status", ""),
+                    "tags": tags,
+                    "notes": notes,
+                    "updated_at": datetime.now().isoformat(timespec="seconds"),
+                }
+            )
+            meta["review"] = review
+            write_json(self.root / "session.json", meta)
+        return review
+
+    def rename_frame_asset(self, idx: int, new_name: str) -> dict[str, Any]:
+        if not self.manifest:
+            raise IndexError("empty session")
+        idx = max(0, min(idx, len(self.manifest) - 1))
+        item = self.manifest[idx]
+        image_rel = item.get("image")
+        if not image_rel:
+            raise FileNotFoundError("frame has no image asset")
+        old_path = (self.root / str(image_rel)).resolve()
+        if not old_path.exists() or not path_is_relative_to(old_path, self.root):
+            raise FileNotFoundError("image asset not found")
+        safe_name = safe_entry_name(new_name, suffix=old_path.suffix or ".jpg")
+        new_path = (old_path.parent / safe_name).resolve()
+        if not path_is_relative_to(new_path, self.root):
+            raise ValueError("new image name escapes session")
+        if new_path.exists() and new_path != old_path:
+            raise FileExistsError(f"image already exists: {safe_name}")
+        with self.lock:
+            if new_path != old_path:
+                old_path.rename(new_path)
+            item["image"] = str(new_path.relative_to(self.root))
+            write_jsonl(self.root / "manifest.jsonl", self.manifest)
+            with (self.root / "session_edits.jsonl").open("a", encoding="utf-8") as fh:
+                fh.write(
+                    json.dumps(
+                        {
+                            "ts": datetime.now().isoformat(timespec="seconds"),
+                            "type": "rename_frame_asset",
+                            "frame_index": idx,
+                            "frame_seq": item.get("frame_seq"),
+                            "image": item["image"],
+                        },
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                )
+        return {"index": idx, "frame_seq": item.get("frame_seq"), "image": item.get("image")}
 
     def save_review(self, payload: dict[str, Any]) -> dict[str, Any]:
         frame_seq = int(payload.get("frame_seq"))
@@ -392,6 +518,7 @@ class ReplayerHandler(BaseHTTPRequestHandler):
                     "frames": len(session.manifest),
                     "critical_indexes": session.critical_indexes(),
                     "classes": session.classes(),
+                    "session_meta": session.session_meta(),
                     "sessions": sessions,
                 }
             except FileNotFoundError:
@@ -403,6 +530,7 @@ class ReplayerHandler(BaseHTTPRequestHandler):
                     "frames": 0,
                     "critical_indexes": [],
                     "classes": [],
+                    "session_meta": {},
                     "sessions": sessions,
                 }
             self.send_json(payload)
@@ -437,17 +565,61 @@ class ReplayerHandler(BaseHTTPRequestHandler):
                 return
             self.send_bytes(encoded.tobytes(), "image/jpeg")
             return
+        if parsed.path == "/video.mp4":
+            selected = params.get("session", [None])[0]
+            try:
+                _active_id, session = self.catalog.load(selected)
+                video_path = session.video_path()
+                if video_path is None:
+                    raise FileNotFoundError("session.mp4 not found")
+                self.send_file(video_path, "video/mp4")
+            except FileNotFoundError as exc:
+                self.send_json({"ok": False, "error": str(exc)}, status=404)
+            return
         self.send_error(404, "not found")
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/api/session/rename":
+            try:
+                payload = self.read_json_body()
+                selected = str(payload.get("session_id") or "").strip()
+                new_id = str(payload.get("new_id") or "").strip()
+                summary = self.catalog.rename(selected, new_id)
+            except Exception as exc:
+                self.send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            self.send_json({"ok": True, "session": summary.__dict__})
+            return
+        if parsed.path == "/api/session/meta":
+            try:
+                payload = self.read_json_body()
+                selected = str(payload.get("session_id") or "").strip() or None
+                active_id, session = self.catalog.load(selected)
+                review = session.save_session_meta(payload)
+            except Exception as exc:
+                self.send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            self.send_json({"ok": True, "selected_session_id": active_id, "review": review})
+            return
+        if parsed.path == "/api/frame/rename":
+            try:
+                payload = self.read_json_body()
+                selected = str(payload.get("session_id") or "").strip() or None
+                idx = int(payload.get("idx", 0))
+                new_name = str(payload.get("new_name") or "").strip()
+                active_id, session = self.catalog.load(selected)
+                frame = session.rename_frame_asset(idx, new_name)
+            except Exception as exc:
+                self.send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            self.send_json({"ok": True, "selected_session_id": active_id, "frame": frame})
+            return
         if parsed.path != "/api/relabel":
             self.send_error(404, "not found")
             return
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        raw = self.rfile.read(min(length, 65536)) if length > 0 else b"{}"
         try:
-            payload = json.loads(raw.decode("utf-8") or "{}")
+            payload = self.read_json_body()
             selected = str(payload.get("session_id") or "").strip() or None
             active_id, session = self.catalog.load(selected)
             review = session.save_review(payload)
@@ -463,6 +635,14 @@ class ReplayerHandler(BaseHTTPRequestHandler):
             }
         )
 
+    def read_json_body(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        raw = self.rfile.read(min(length, 65536)) if length > 0 else b"{}"
+        payload = json.loads(raw.decode("utf-8") or "{}")
+        if not isinstance(payload, dict):
+            raise ValueError("json body must be an object")
+        return payload
+
     def send_json(self, payload: dict[str, Any], status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
         self.send_bytes(body, "application/json", status=status)
@@ -477,6 +657,44 @@ class ReplayerHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def send_file(self, path: Path, content_type: str) -> None:
+        size = path.stat().st_size
+        if size <= 0:
+            self.send_bytes(b"", content_type)
+            return
+        start = 0
+        end = size - 1
+        status = 200
+        range_header = self.headers.get("Range")
+        if range_header:
+            match = re.match(r"bytes=(\d*)-(\d*)", range_header)
+            if match:
+                status = 206
+                if match.group(1):
+                    start = int(match.group(1))
+                if match.group(2):
+                    end = int(match.group(2))
+                start = max(0, min(start, size - 1))
+                end = max(start, min(end, size - 1))
+        length = end - start + 1
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Cache-Control", "no-store")
+        if status == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Content-Length", str(length))
+        self.end_headers()
+        remaining = length
+        with path.open("rb") as fh:
+            fh.seek(start)
+            while remaining > 0:
+                chunk = fh.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
 
 
 INDEX_HTML = r"""<!doctype html>
@@ -602,7 +820,10 @@ INDEX_HTML = r"""<!doctype html>
       overflow: hidden;
       box-shadow: var(--shadow);
     }
-    .frame img { display: block; width: 100%; height: 100%; max-height: calc(100vh - 220px); object-fit: contain; }
+    .frame img, .frame video { display: block; width: 100%; height: 100%; max-height: calc(100vh - 220px); object-fit: contain; }
+    .frame video { background: #050507; }
+    .frame.video-mode img { display: none; }
+    .frame:not(.video-mode) video { display: none; }
     .frame::after {
       content: "";
       position: absolute; inset: 14px; border-radius: 8px; pointer-events: none;
@@ -622,8 +843,11 @@ INDEX_HTML = r"""<!doctype html>
       background: linear-gradient(180deg, rgba(26,26,30,0.7), rgba(19,19,22,0.75));
       border-radius: 12px;
     }
-    .deck { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 12px; flex-wrap: wrap; }
+    .deck { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; padding: 12px; }
     .deck .left, .deck .right { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .timeline { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 86px; gap: 12px; align-items: center; }
+    .timeline input { padding: 0; accent-color: var(--blue); }
+    .speed { width: 84px; padding: 8px 9px; }
     label { display: inline-flex; gap: 7px; align-items: center; color: var(--ink-2); font-size: 12px; }
     .pos { font-family: var(--mono); color: var(--ink-2); font-size: 12px; min-width: 86px; text-align: right; }
     .side { min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 14px; padding-right: 4px; }
@@ -648,6 +872,10 @@ INDEX_HTML = r"""<!doctype html>
     .label-row .name { color: var(--ink); font-weight: 500; }
     .label-row small { color: var(--muted); font-family: var(--mono); }
     .form { display: grid; gap: 8px; }
+    .inline-form { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 10px; }
+    .quick-classes { display: flex; flex-wrap: wrap; gap: 7px; }
+    .quick-classes button { height: 30px; padding: 0 9px; font-size: 10px; letter-spacing: 0.06em; }
+    .status-select { min-width: 120px; }
     .empty { color: var(--muted); border-style: dashed; text-align: center; }
     @media (max-width: 1080px) {
       header { grid-template-columns: 1fr; gap: 14px; }
@@ -683,15 +911,32 @@ INDEX_HTML = r"""<!doctype html>
     </header>
     <main>
       <section class="stage">
-        <div class="frame"><img id="frame" alt="recorded frame"></div>
+        <div class="frame" id="frame-shell">
+          <img id="frame" alt="recorded frame">
+          <video id="session-video" controls preload="metadata"></video>
+        </div>
         <div class="deck">
           <div class="left">
+            <button id="play">Play</button>
             <button id="prev">Anterior</button>
             <button id="next">Siguiente</button>
+            <button id="jump-back">-25</button>
+            <button id="jump-forward">+25</button>
+            <button id="video-mode">Video</button>
             <label><input id="critical" type="checkbox"> solo criticos</label>
             <label><input id="overlay" type="checkbox" checked> overlay</label>
+            <select id="speed" class="speed">
+              <option value="4">4 fps</option>
+              <option value="8" selected>8 fps</option>
+              <option value="12">12 fps</option>
+              <option value="20">20 fps</option>
+            </select>
           </div>
           <div class="right"><span class="pos" id="pos">--</span></div>
+          <div class="timeline">
+            <input id="timeline" type="range" min="0" max="0" value="0">
+            <span class="pos" id="frame-name">--</span>
+          </div>
         </div>
       </section>
       <aside class="side">
@@ -702,6 +947,22 @@ INDEX_HTML = r"""<!doctype html>
           <div class="row"><span class="k">Imagenes</span><span class="v" id="meta-images">--</span></div>
           <div class="row"><span class="k">Video</span><span class="v" id="meta-video">--</span></div>
           <div class="row"><span class="k">Modificada</span><span class="v" id="meta-modified">--</span></div>
+          <div class="inline-form">
+            <input id="session-name" placeholder="nombre sesion">
+            <button id="rename-session">Renombrar</button>
+          </div>
+          <div class="form" style="margin-top:10px">
+            <select id="session-status" class="status-select">
+              <option value="">sin estado</option>
+              <option value="reviewing">reviewing</option>
+              <option value="ready">ready</option>
+              <option value="needs-capture">needs-capture</option>
+              <option value="discard">discard</option>
+            </select>
+            <input id="session-tags" placeholder="tags separados por coma">
+            <textarea id="session-notes" placeholder="notas sesion"></textarea>
+            <button id="save-session-meta">Guardar sesion</button>
+          </div>
         </section>
         <section class="card">
           <h2>Frame</h2>
@@ -709,6 +970,10 @@ INDEX_HTML = r"""<!doctype html>
           <div class="row"><span class="k">Hora</span><span class="v" id="frame-time">--</span></div>
           <div class="row"><span class="k">Inferencia</span><span class="v" id="frame-inf">--</span></div>
           <div class="row"><span class="k">Accion</span><span class="v" id="frame-action">--</span></div>
+          <div class="inline-form">
+            <input id="asset-name" placeholder="renombrar imagen">
+            <button id="rename-asset">Renombrar</button>
+          </div>
         </section>
         <section class="card">
           <h2>Flags Criticos</h2>
@@ -721,6 +986,7 @@ INDEX_HTML = r"""<!doctype html>
         <section class="card">
           <h2>Relabel</h2>
           <div class="form">
+            <div class="quick-classes" id="quick-classes"></div>
             <select id="class-select"></select>
             <input id="class-input" placeholder="nueva clase">
             <label><input id="valid" type="checkbox" checked> deteccion valida</label>
@@ -735,6 +1001,7 @@ INDEX_HTML = r"""<!doctype html>
   <script>
     const $ = id => document.getElementById(id);
     let catalog = null, session = null, sessionId = null, idx = 0, selected = null, frameData = null;
+    let playTimer = null, videoMode = false;
     async function api(path, opts) {
       const res = await fetch(path, opts || {cache: 'no-store'});
       const data = await res.json();
@@ -773,8 +1040,10 @@ INDEX_HTML = r"""<!doctype html>
       sessionId = id;
       session = await api('/api/session?session=' + enc(id));
       sessionId = session.selected_session_id;
+      $('session-video').src = '/video.mp4?session=' + enc(sessionId) + '&t=' + Date.now();
       renderClasses(session.classes || []);
       renderSessionMeta();
+      renderSessionEditor();
       await loadFrame(0);
     }
     function renderSessionMeta() {
@@ -787,14 +1056,29 @@ INDEX_HTML = r"""<!doctype html>
       $('meta-images').textContent = s.images ?? '--';
       $('meta-video').textContent = s.has_video ? 'session.mp4' : '--';
       $('meta-modified').textContent = s.modified_at || '--';
+      $('timeline').max = Math.max(0, (session.frames || 1) - 1);
+    }
+    function renderSessionEditor() {
+      const meta = session.session_meta || {};
+      const review = meta.review || {};
+      $('session-name').value = sessionId || '';
+      $('session-status').value = review.status || '';
+      $('session-tags').value = (review.tags || []).join(', ');
+      $('session-notes').value = review.notes || '';
     }
     function renderClasses(classes) {
       const sel = $('class-select');
       sel.innerHTML = '';
+      $('quick-classes').innerHTML = '';
       for (const name of classes) {
         const opt = document.createElement('option');
         opt.value = name; opt.textContent = name;
         sel.appendChild(opt);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = name;
+        btn.onclick = () => { $('class-select').value = name; $('class-input').value = ''; saveReview(true); };
+        $('quick-classes').appendChild(btn);
       }
     }
     function criticalIndexes() { return session ? session.critical_indexes || [] : []; }
@@ -806,22 +1090,48 @@ INDEX_HTML = r"""<!doctype html>
       const next = cur < 0 ? (delta >= 0 ? 0 : list.length - 1) : Math.max(0, Math.min(list.length - 1, cur + delta));
       return list[next];
     }
+    function stopPlayback() {
+      if (playTimer) clearInterval(playTimer);
+      playTimer = null;
+      $('play').textContent = 'Play';
+    }
+    function togglePlayback() {
+      if (playTimer) { stopPlayback(); return; }
+      const fps = Math.max(1, Number($('speed').value || 8));
+      $('play').textContent = 'Pausa';
+      playTimer = setInterval(() => {
+        const next = visibleIndex(1);
+        if (next === idx || next >= session.frames - 1) stopPlayback();
+        loadFrame(next);
+      }, 1000 / fps);
+    }
+    function setVideoMode(on) {
+      videoMode = !!on;
+      stopPlayback();
+      $('frame-shell').classList.toggle('video-mode', videoMode);
+      $('video-mode').textContent = videoMode ? 'Frames' : 'Video';
+      if (videoMode) $('session-video').play().catch(() => {});
+      else $('session-video').pause();
+    }
     async function loadFrame(newIdx) {
       if (!sessionId || !session || !session.frames) { renderEmpty(); return; }
       idx = Math.max(0, Math.min(session.frames - 1, newIdx));
       const data = await api('/api/frame?' + sessionQuery('idx=' + idx));
       frameData = data.frame;
       selected = null;
+      $('timeline').value = idx;
       $('frame').src = '/frame.jpg?' + sessionQuery('idx=' + idx + '&overlay=' + ($('overlay').checked ? '1' : '0')) + '&t=' + Date.now();
       renderFrame();
     }
     function renderFrame() {
       $('pos').textContent = (idx + 1) + ' / ' + session.frames;
+      $('frame-name').textContent = (frameData.image || 'frame ' + (frameData.frame_seq ?? idx)).split('/').pop();
       $('frame-seq').textContent = frameData.frame_seq ?? '--';
       $('frame-time').textContent = frameData.iso_time || '--';
       $('frame-inf').textContent = frameData.inference_latency_ms == null ? '--' : frameData.inference_latency_ms + ' ms';
       const autonomy = frameData.autonomy || {};
       $('frame-action').textContent = autonomy.action || (autonomy.decision || {}).action || '--';
+      $('asset-name').value = frameData.image ? frameData.image.split('/').pop() : '';
       const flags = (((frameData.critical || {}).flags) || []);
       $('flags').innerHTML = flags.length ? '' : '<div class="flag empty">Sin flags</div>';
       for (const flag of flags) {
@@ -841,12 +1151,15 @@ INDEX_HTML = r"""<!doctype html>
         div.onclick = () => selectLabel(i);
         $('labels').appendChild(div);
       });
-      if (labels.length) selectLabel(0, false);
+      if (labels.length && selected == null) selectLabel(0, false);
     }
     function renderEmpty() {
       session = {frames: 0, critical_indexes: []};
       $('frame').removeAttribute('src');
       $('pos').textContent = '--';
+      $('frame-name').textContent = '--';
+      $('timeline').value = 0;
+      $('timeline').max = 0;
       $('pill-frames').textContent = '0 fr';
       $('pill-critical').textContent = '0 crit';
       $('pill-reviewed').textContent = '0 rev';
@@ -877,17 +1190,68 @@ INDEX_HTML = r"""<!doctype html>
       await loadCatalog(sessionId);
       await loadFrame(idx);
     }
+    async function renameSession() {
+      const nextName = $('session-name').value.trim();
+      if (!nextName || nextName === sessionId) return;
+      const data = await api('/api/session/rename', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({session_id: sessionId, new_id: nextName})
+      });
+      await loadCatalog(data.session.id);
+    }
+    async function saveSessionMeta() {
+      const data = await api('/api/session/meta', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          session_id: sessionId,
+          status: $('session-status').value,
+          tags: $('session-tags').value,
+          notes: $('session-notes').value
+        })
+      });
+      session.session_meta = session.session_meta || {};
+      session.session_meta.review = data.review;
+      await loadCatalog(sessionId);
+    }
+    async function renameAsset() {
+      if (!frameData) return;
+      const newName = $('asset-name').value.trim();
+      if (!newName) return;
+      await api('/api/frame/rename', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({session_id: sessionId, idx, new_name: newName})
+      });
+      await loadFrame(idx);
+    }
     $('session-select').onchange = e => loadSession(e.target.value);
     $('refresh').onclick = () => loadCatalog(sessionId);
+    $('play').onclick = togglePlayback;
     $('prev').onclick = () => loadFrame(visibleIndex(-1));
     $('next').onclick = () => loadFrame(visibleIndex(1));
+    $('jump-back').onclick = () => loadFrame(visibleIndex(-25));
+    $('jump-forward').onclick = () => loadFrame(visibleIndex(25));
+    $('video-mode').onclick = () => setVideoMode(!videoMode);
+    $('timeline').oninput = e => loadFrame(Number(e.target.value));
     $('overlay').onchange = () => loadFrame(idx);
     $('critical').onchange = () => { if ($('critical').checked && frameData && !((frameData.critical || {}).is_critical)) loadFrame(visibleIndex(1)); };
     $('save').onclick = () => saveReview(null);
     $('reject').onclick = () => saveReview(false);
+    $('rename-session').onclick = () => renameSession().catch(err => alert(err.message));
+    $('save-session-meta').onclick = () => saveSessionMeta().catch(err => alert(err.message));
+    $('rename-asset').onclick = () => renameAsset().catch(err => alert(err.message));
     window.addEventListener('keydown', e => {
-      if (e.key === 'ArrowLeft') loadFrame(visibleIndex(-1));
-      if (e.key === 'ArrowRight') loadFrame(visibleIndex(1));
+      const tag = (e.target && e.target.tagName || '').toLowerCase();
+      if (['input','textarea','select'].includes(tag)) return;
+      if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') loadFrame(visibleIndex(-1));
+      if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') loadFrame(visibleIndex(1));
+      if (e.key === ' ') { e.preventDefault(); togglePlayback(); }
+      if (e.key.toLowerCase() === 'v') { $('valid').checked = true; saveReview(true); }
+      if (e.key.toLowerCase() === 'r') saveReview(false);
+      const digit = Number(e.key);
+      if (digit >= 1 && digit <= 9 && frameData && frameData.labels && frameData.labels[digit - 1]) selectLabel(digit - 1);
     });
     const params = new URLSearchParams(location.search);
     loadCatalog(params.get('session')).catch(err => alert(err.message));

@@ -96,6 +96,9 @@ ENABLE_INFERENCE = env_bool("TP2_ENABLE_INFERENCE", True)
 NEUTRAL_STEERING = env_float("TP2_NEUTRAL_STEERING", 0.25)
 STEERING_TRIM = env_float("TP2_STEERING_TRIM", -0.24)
 NEUTRAL_THROTTLE = env_float("TP2_NEUTRAL_THROTTLE", 0.0)
+MANUAL_FORWARD_THROTTLE = env_float("TP2_MANUAL_FORWARD_THROTTLE", 0.60)
+MANUAL_REVERSE_THROTTLE = env_float("TP2_MANUAL_REVERSE_THROTTLE", -0.50)
+MANUAL_BRAKE_THROTTLE = env_float("TP2_MANUAL_BRAKE_THROTTLE", -0.90)
 CONTROL_TIMEOUT_SEC = env_float("TP2_WEB_CONTROL_TIMEOUT_SEC", 0.45)
 CONTROL_TX_HZ = max(1.0, env_float("TP2_CONTROL_TX_HZ", 20.0))
 CLIENT_ADDR_TTL_SEC = env_float("TP2_CLIENT_ADDR_TTL_SEC", 3.0)
@@ -136,6 +139,7 @@ AUTONOMOUS_CONFIG = AutonomousConfig(
     ambiguous_score_ratio=env_float("TP2_AUTONOMOUS_AMBIGUOUS_SCORE_RATIO", 0.82),
     stop_hold_sec=env_float("TP2_AUTONOMOUS_STOP_HOLD_SEC", 1.15),
     turn_hold_sec=env_float("TP2_AUTONOMOUS_TURN_HOLD_SEC", 1.20),
+    turn_pulse_enabled=env_bool("TP2_AUTONOMOUS_TURN_PULSE_ENABLED", True),
     turn_degrees=env_int("TP2_AUTONOMOUS_TURN_DEGREES", 90),
     cooldown_sec=env_float("TP2_AUTONOMOUS_COOLDOWN_SEC", 0.85),
     distance_scale=env_float("TP2_AUTONOMOUS_DISTANCE_SCALE", 0.32),
@@ -215,6 +219,9 @@ SESSION_RECORD_TRACK_CENTER_DISTANCE = env_float("TP2_SESSION_RECORD_TRACK_CENTE
 ENABLE_SESSION_REPLAYER = env_bool("TP2_ENABLE_SESSION_REPLAYER", True)
 SESSION_REPLAYER_HOST = os.getenv("TP2_SESSION_REPLAYER_HOST", "0.0.0.0")
 SESSION_REPLAYER_PORT = env_int("TP2_SESSION_REPLAYER_PORT", 8090)
+CONTROL_DEFAULTS_PATH = Path(
+    os.getenv("TP2_CONTROL_DEFAULTS_PATH", "~/.config/tp2/coche-control-defaults.json")
+).expanduser()
 
 EXIT_EVENT = threading.Event()
 
@@ -253,6 +260,112 @@ def finite_bool(value: Any, *, name: str = "value") -> bool:
 def corrected_steering(steering: float, steering_trim: float | None = None) -> float:
     trim = STEERING_TRIM if steering_trim is None else finite_float(steering_trim, name="steering_trim")
     return round(clamp(float(steering) + trim, -1.0, 1.0, NEUTRAL_STEERING), 3)
+
+
+RUNTIME_SETTING_RANGES: dict[str, tuple[float, float]] = {
+    "steering_trim": (-1.0, 1.0),
+    "manual_forward_throttle": (0.0, 1.0),
+    "manual_reverse_throttle": (-1.0, 0.0),
+    "manual_brake_throttle": (-1.0, 0.0),
+    "crawl_throttle": (0.0, 1.0),
+    "slow_throttle": (0.0, 1.0),
+    "turn_throttle": (0.0, 1.0),
+    "cruise_throttle": (0.0, 1.0),
+    "fast_throttle": (0.0, 1.0),
+    "left_steering": (-1.0, 1.0),
+    "right_steering": (-1.0, 1.0),
+    "stop_hold_sec": (0.0, 5.0),
+    "turn_hold_sec": (0.0, 5.0),
+    "cooldown_sec": (0.0, 5.0),
+    "min_area_ratio": (0.0001, 0.1),
+    "near_area_ratio": (0.0001, 0.25),
+    "lane_recovery_throttle": (0.0, 1.0),
+    "lane_steering_gain": (0.0, 5.0),
+    "lane_heading_gain": (0.0, 3.0),
+    "lane_max_correction": (0.0, 1.0),
+    "lane_target_center_x": (0.0, 1.0),
+    "lane_min_confidence": (0.0, 1.0),
+    "turn_compensation_interval_sec": (0.0, 60.0),
+    "turn_compensation_duration_sec": (0.0, 10.0),
+    "turn_compensation_magnitude": (0.0, 2.0),
+}
+RUNTIME_BOOL_SETTINGS = {"turn_pulse_enabled", "lane_enabled", "turn_compensation_enabled"}
+AUTONOMOUS_RUNTIME_FIELDS = {
+    "crawl_throttle",
+    "slow_throttle",
+    "turn_throttle",
+    "cruise_throttle",
+    "fast_throttle",
+    "left_steering",
+    "right_steering",
+    "stop_hold_sec",
+    "turn_hold_sec",
+    "cooldown_sec",
+    "min_area_ratio",
+    "near_area_ratio",
+    "turn_pulse_enabled",
+}
+LANE_RUNTIME_FIELDS = {
+    "lane_enabled": "enabled",
+    "lane_steering_gain": "steering_gain",
+    "lane_heading_gain": "heading_gain",
+    "lane_max_correction": "max_correction",
+    "lane_target_center_x": "target_center_x",
+    "lane_min_confidence": "min_confidence",
+}
+
+
+def normalize_runtime_setting(name: str, value: Any) -> float | bool | None:
+    if name in RUNTIME_BOOL_SETTINGS:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            return value.strip().lower() not in {"0", "false", "no", "off", ""}
+        return None
+    value_range = RUNTIME_SETTING_RANGES.get(name)
+    if value_range is None:
+        return None
+    low, high = value_range
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(clamp(number, low, high, low), 4)
+
+
+def runtime_setting_defaults() -> dict[str, Any]:
+    return {
+        "steering_trim": STEERING_TRIM,
+        "manual_forward_throttle": MANUAL_FORWARD_THROTTLE,
+        "manual_reverse_throttle": MANUAL_REVERSE_THROTTLE,
+        "manual_brake_throttle": MANUAL_BRAKE_THROTTLE,
+        "crawl_throttle": AUTONOMOUS_CONFIG.crawl_throttle,
+        "slow_throttle": AUTONOMOUS_CONFIG.slow_throttle,
+        "turn_throttle": AUTONOMOUS_CONFIG.turn_throttle,
+        "cruise_throttle": AUTONOMOUS_CONFIG.cruise_throttle,
+        "fast_throttle": AUTONOMOUS_CONFIG.fast_throttle,
+        "left_steering": AUTONOMOUS_CONFIG.left_steering,
+        "right_steering": AUTONOMOUS_CONFIG.right_steering,
+        "stop_hold_sec": AUTONOMOUS_CONFIG.stop_hold_sec,
+        "turn_hold_sec": AUTONOMOUS_CONFIG.turn_hold_sec,
+        "turn_pulse_enabled": AUTONOMOUS_CONFIG.turn_pulse_enabled,
+        "cooldown_sec": AUTONOMOUS_CONFIG.cooldown_sec,
+        "min_area_ratio": AUTONOMOUS_CONFIG.min_area_ratio,
+        "near_area_ratio": AUTONOMOUS_CONFIG.near_area_ratio,
+        "lane_enabled": LANE_CONFIG.enabled,
+        "lane_recovery_throttle": LANE_RECOVERY_THROTTLE,
+        "lane_steering_gain": LANE_CONFIG.steering_gain,
+        "lane_heading_gain": LANE_CONFIG.heading_gain,
+        "lane_max_correction": LANE_CONFIG.max_correction,
+        "lane_target_center_x": LANE_CONFIG.target_center_x,
+        "lane_min_confidence": LANE_CONFIG.min_confidence,
+        "turn_compensation_enabled": TURN_COMPENSATION_ENABLED,
+        "turn_compensation_interval_sec": TURN_COMPENSATION_INTERVAL_SEC,
+        "turn_compensation_duration_sec": TURN_COMPENSATION_DURATION_SEC,
+        "turn_compensation_magnitude": TURN_COMPENSATION_MAGNITUDE,
+    }
 
 
 def monotonic_ms() -> int:
@@ -1039,7 +1152,19 @@ class RuntimeState:
         self.latest_frame_seq = 0
         self.latest_frame_at: float | None = None
         self.frame_decode_errors = 0
-        self.lane_detector = LaneDetector(LANE_CONFIG)
+        self.settings_path = CONTROL_DEFAULTS_PATH
+        self.settings_saved_at: str | None = None
+        self.settings_last_error: str | None = None
+        self.steering_trim = STEERING_TRIM
+        self.manual_forward_throttle = MANUAL_FORWARD_THROTTLE
+        self.manual_reverse_throttle = MANUAL_REVERSE_THROTTLE
+        self.manual_brake_throttle = MANUAL_BRAKE_THROTTLE
+        self.autonomous_config = AUTONOMOUS_CONFIG
+        self.lane_config = LANE_CONFIG
+        self.lane_recovery_throttle = LANE_RECOVERY_THROTTLE
+        self.lane_assist_actions = set(LANE_ASSIST_ACTIONS)
+
+        self.lane_detector = LaneDetector(self.lane_config)
         self.lane_guidance: LaneGuidance | None = None
         self.lane_guidance_at: float | None = None
         self.lane_frames = 0
@@ -1071,7 +1196,6 @@ class RuntimeState:
         self.operator_event_seq = 0
         self.pending_operator_events: list[dict[str, Any]] = []
         self.drive_mode = normalize_drive_mode(DEFAULT_DRIVE_MODE)
-        self.autonomous_config = AUTONOMOUS_CONFIG
         self.autonomous_controller = AutonomousController(self.autonomous_config)
         self.autonomous_decision = AutonomousDecision(
             active=False,
@@ -1100,6 +1224,8 @@ class RuntimeState:
         if self.drive_mode == "autonomous":
             self.control_source = "autonomous"
 
+        self._load_saved_control_defaults_locked()
+
         self.recorder = SessionRecorder(
             SESSION_RECORD_DIR,
             autostart=SESSION_RECORD_AUTOSTART,
@@ -1119,6 +1245,192 @@ class RuntimeState:
 
         self.web_stream_clients = 0
         self.web_control_posts = 0
+
+    def _load_saved_control_defaults_locked(self) -> None:
+        if not self.settings_path.exists():
+            return
+        try:
+            payload = json.loads(self.settings_path.read_text(encoding="utf-8"))
+            values = payload.get("values", payload)
+            if not isinstance(values, dict):
+                raise ValueError("settings values must be an object")
+            self._apply_runtime_settings_locked(values, rebuild=True)
+            saved_at = payload.get("saved_at")
+            self.settings_saved_at = str(saved_at) if saved_at else None
+            self.settings_last_error = None
+        except Exception as exc:
+            self.settings_last_error = f"load defaults: {exc}"
+
+    def _runtime_settings_values_locked(self) -> dict[str, Any]:
+        return {
+            "steering_trim": round(self.steering_trim, 4),
+            "manual_forward_throttle": round(self.manual_forward_throttle, 4),
+            "manual_reverse_throttle": round(self.manual_reverse_throttle, 4),
+            "manual_brake_throttle": round(self.manual_brake_throttle, 4),
+            "crawl_throttle": round(self.autonomous_config.crawl_throttle, 4),
+            "slow_throttle": round(self.autonomous_config.slow_throttle, 4),
+            "turn_throttle": round(self.autonomous_config.turn_throttle, 4),
+            "cruise_throttle": round(self.autonomous_config.cruise_throttle, 4),
+            "fast_throttle": round(self.autonomous_config.fast_throttle, 4),
+            "left_steering": round(self.autonomous_config.left_steering, 4),
+            "right_steering": round(self.autonomous_config.right_steering, 4),
+            "stop_hold_sec": round(self.autonomous_config.stop_hold_sec, 4),
+            "turn_hold_sec": round(self.autonomous_config.turn_hold_sec, 4),
+            "turn_pulse_enabled": bool(self.autonomous_config.turn_pulse_enabled),
+            "cooldown_sec": round(self.autonomous_config.cooldown_sec, 4),
+            "min_area_ratio": round(self.autonomous_config.min_area_ratio, 4),
+            "near_area_ratio": round(self.autonomous_config.near_area_ratio, 4),
+            "lane_enabled": bool(self.lane_config.enabled),
+            "lane_recovery_throttle": round(self.lane_recovery_throttle, 4),
+            "lane_steering_gain": round(self.lane_config.steering_gain, 4),
+            "lane_heading_gain": round(self.lane_config.heading_gain, 4),
+            "lane_max_correction": round(self.lane_config.max_correction, 4),
+            "lane_target_center_x": round(self.lane_config.target_center_x, 4),
+            "lane_min_confidence": round(self.lane_config.min_confidence, 4),
+            "turn_compensation_enabled": bool(self.turn_compensation_enabled),
+            "turn_compensation_interval_sec": round(self.turn_compensation_interval_sec, 4),
+            "turn_compensation_duration_sec": round(self.turn_compensation_duration_sec, 4),
+            "turn_compensation_magnitude": round(self.turn_compensation_magnitude, 4),
+        }
+
+    def _apply_runtime_settings_locked(self, values: dict[str, Any], *, rebuild: bool) -> dict[str, Any]:
+        normalized: dict[str, Any] = {}
+        for name, value in values.items():
+            clean = normalize_runtime_setting(str(name), value)
+            if clean is not None:
+                normalized[str(name)] = clean
+
+        if not normalized:
+            return self._runtime_settings_values_locked()
+
+        if "steering_trim" in normalized:
+            self.steering_trim = float(normalized["steering_trim"])
+        if "manual_forward_throttle" in normalized:
+            self.manual_forward_throttle = float(normalized["manual_forward_throttle"])
+        if "manual_reverse_throttle" in normalized:
+            self.manual_reverse_throttle = float(normalized["manual_reverse_throttle"])
+        if "manual_brake_throttle" in normalized:
+            self.manual_brake_throttle = float(normalized["manual_brake_throttle"])
+        if "lane_recovery_throttle" in normalized:
+            self.lane_recovery_throttle = float(normalized["lane_recovery_throttle"])
+
+        autonomous_updates = {
+            key: normalized[key]
+            for key in AUTONOMOUS_RUNTIME_FIELDS
+            if key in normalized
+        }
+        if autonomous_updates:
+            self.autonomous_config = replace(self.autonomous_config, **autonomous_updates)
+            if rebuild:
+                self.autonomous_controller = AutonomousController(self.autonomous_config)
+
+        lane_updates = {
+            target: normalized[source]
+            for source, target in LANE_RUNTIME_FIELDS.items()
+            if source in normalized
+        }
+        if lane_updates:
+            self.lane_config = replace(self.lane_config, **lane_updates)
+            if rebuild:
+                self.lane_detector = LaneDetector(self.lane_config)
+                self.lane_guidance = None
+                self.lane_guidance_at = None
+                self.lane_assist_active = False
+                self.lane_assist_correction = 0.0
+                self.lane_assist_reason = "settings-updated"
+
+        turn_compensation_fields = {
+            "turn_compensation_enabled",
+            "turn_compensation_interval_sec",
+            "turn_compensation_duration_sec",
+            "turn_compensation_magnitude",
+        }
+        if turn_compensation_fields.intersection(normalized):
+            enabled_value = bool(normalized.get("turn_compensation_enabled", self.turn_compensation_enabled))
+            interval_value = float(
+                normalized.get(
+                    "turn_compensation_interval_sec",
+                    self.turn_compensation_interval_sec,
+                )
+            )
+            duration_value = float(
+                normalized.get(
+                    "turn_compensation_duration_sec",
+                    self.turn_compensation_duration_sec,
+                )
+            )
+            magnitude_value = abs(
+                float(
+                    normalized.get(
+                        "turn_compensation_magnitude",
+                        self.turn_compensation_magnitude,
+                    )
+                )
+            )
+            if interval_value > 0.0:
+                duration_value = min(duration_value, interval_value)
+            self.turn_compensation_enabled = enabled_value
+            self.turn_compensation_interval_sec = round(max(0.0, interval_value), 3)
+            self.turn_compensation_duration_sec = round(max(0.0, duration_value), 3)
+            self.turn_compensation_magnitude = round(clamp(magnitude_value, 0.0, 2.0, 0.0), 3)
+            now = wall_time()
+            self.turn_compensation_last_pulse_at = now
+            self.turn_compensation_active_until = 0.0
+            self.turn_compensation_active = False
+            self.turn_compensation_applied_correction = 0.0
+            self.turn_compensation_reason = "waiting" if enabled_value else "disabled"
+
+        if rebuild and autonomous_updates and self.drive_mode == "autonomous":
+            self.autonomous_controller.filter.reset()
+            self._apply_autonomous_control_locked()
+        self.control_seq += 1
+        return self._runtime_settings_values_locked()
+
+    def update_runtime_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        raw_values = payload.get("values", payload)
+        if not isinstance(raw_values, dict):
+            raise ValueError("settings payload must be an object")
+        with self.lock:
+            values = self._apply_runtime_settings_locked(raw_values, rebuild=True)
+            self.settings_last_error = None
+            return self.settings_snapshot_locked(values=values)
+
+    def save_current_settings_as_defaults(self) -> dict[str, Any]:
+        with self.lock:
+            values = self._runtime_settings_values_locked()
+            payload = {
+                "schema_version": 1,
+                "saved_at": datetime.now().isoformat(timespec="seconds"),
+                "values": values,
+            }
+            try:
+                self.settings_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = self.settings_path.with_suffix(self.settings_path.suffix + ".tmp")
+                tmp.write_text(
+                    json.dumps(payload, indent=2, ensure_ascii=True) + "\n",
+                    encoding="utf-8",
+                )
+                tmp.replace(self.settings_path)
+                self.settings_saved_at = payload["saved_at"]
+                self.settings_last_error = None
+            except Exception as exc:
+                self.settings_last_error = f"save defaults: {exc}"
+            return self.settings_snapshot_locked(values=values)
+
+    def settings_snapshot_locked(self, *, values: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {
+            "path": str(self.settings_path),
+            "persisted": self.settings_path.exists(),
+            "saved_at": self.settings_saved_at,
+            "last_error": self.settings_last_error,
+            "defaults": runtime_setting_defaults(),
+            "values": values or self._runtime_settings_values_locked(),
+            "ranges": {
+                key: {"min": bounds[0], "max": bounds[1]}
+                for key, bounds in RUNTIME_SETTING_RANGES.items()
+            },
+            "bools": sorted(RUNTIME_BOOL_SETTINGS),
+        }
 
     def note_packet(
         self,
@@ -1156,7 +1468,7 @@ class RuntimeState:
         now = wall_time()
         lane_guidance: LaneGuidance | None = None
         lane_error: str | None = None
-        if LANE_CONFIG.enabled:
+        if self.lane_config.enabled:
             try:
                 lane_guidance = self.lane_detector.detect(frame, now=now)
             except Exception as exc:
@@ -1165,7 +1477,7 @@ class RuntimeState:
             self.latest_frame = frame
             self.latest_frame_seq += 1
             self.latest_frame_at = now
-            if LANE_CONFIG.enabled:
+            if self.lane_config.enabled:
                 if lane_guidance is not None:
                     self.lane_guidance = lane_guidance
                     self.lane_guidance_at = now
@@ -1302,7 +1614,8 @@ class RuntimeState:
         self.lane_assist_active = False
         self.lane_assist_correction = 0.0
 
-        if not LANE_CONFIG.enabled:
+        lane_config = self.lane_config
+        if not lane_config.enabled:
             self.lane_assist_reason = "disabled"
             return decision
         if self.drive_mode != "autonomous":
@@ -1314,7 +1627,7 @@ class RuntimeState:
         if decision.throttle <= max(0.05, NEUTRAL_THROTTLE + 0.02):
             self.lane_assist_reason = "not-moving-forward"
             return decision
-        if decision.action not in LANE_ASSIST_ACTIONS:
+        if decision.action not in self.lane_assist_actions:
             self.lane_assist_reason = f"action-{decision.action}"
             return decision
 
@@ -1322,21 +1635,21 @@ class RuntimeState:
         if guidance is None:
             self.lane_assist_reason = "no-lane"
             return decision
-        if not guidance.is_usable(LANE_CONFIG):
+        if not guidance.is_usable(lane_config):
             self.lane_assist_reason = f"lane-unusable:{guidance.reason}"
             return decision
 
-        correction = clamp(guidance.correction, -LANE_CONFIG.max_correction, LANE_CONFIG.max_correction, 0.0)
+        correction = clamp(guidance.correction, -lane_config.max_correction, lane_config.max_correction, 0.0)
         steering = round(clamp(decision.steering + correction, -1.0, 1.0, NEUTRAL_STEERING), 3)
         raw_base = decision.raw_steering if decision.raw_steering is not None else decision.steering
         raw_steering = round(clamp(raw_base + correction, -1.0, 1.0, NEUTRAL_STEERING), 3)
         throttle = decision.throttle
         raw_throttle = decision.raw_throttle
-        recovery = abs(guidance.center_error) >= LANE_CONFIG.departure_center_error
+        recovery = abs(guidance.center_error) >= lane_config.departure_center_error
         if recovery:
-            throttle = round(clamp(min(decision.throttle, LANE_RECOVERY_THROTTLE), 0.0, 1.0, NEUTRAL_THROTTLE), 3)
+            throttle = round(clamp(min(decision.throttle, self.lane_recovery_throttle), 0.0, 1.0, NEUTRAL_THROTTLE), 3)
             if raw_throttle is not None:
-                raw_throttle = round(clamp(min(raw_throttle, LANE_RECOVERY_THROTTLE), 0.0, 1.0, NEUTRAL_THROTTLE), 3)
+                raw_throttle = round(clamp(min(raw_throttle, self.lane_recovery_throttle), 0.0, 1.0, NEUTRAL_THROTTLE), 3)
         self.lane_assist_active = True
         self.lane_assist_correction = round(correction, 3)
         self.lane_assist_reason = f"{guidance.source}:{guidance.reason}"
@@ -1675,6 +1988,7 @@ class RuntimeState:
             "safety_confirm_frames": config.safety_confirm_frames,
             "stop_hold_sec": config.stop_hold_sec,
             "turn_hold_sec": config.turn_hold_sec,
+            "turn_pulse_enabled": config.turn_pulse_enabled,
             "turn_degrees": config.turn_degrees,
             "cooldown_sec": config.cooldown_sec,
             "dry_run": config.dry_run,
@@ -1717,6 +2031,10 @@ class RuntimeState:
             "turn_compensation": self.turn_compensation_snapshot_locked(now=now),
         }
 
+    def current_lane_config(self) -> LaneDetectorConfig:
+        with self.lock:
+            return self.lane_config
+
     def current_lane_guidance_locked(self, *, now: float | None = None) -> LaneGuidance | None:
         if self.lane_guidance is None:
             return None
@@ -1731,8 +2049,9 @@ class RuntimeState:
     def lane_snapshot_locked(self, *, now: float | None = None) -> dict[str, Any]:
         now = wall_time() if now is None else now
         guidance = self.current_lane_guidance_locked(now=now)
-        usable = False if guidance is None else guidance.is_usable(LANE_CONFIG)
-        if not LANE_CONFIG.enabled:
+        lane_config = self.lane_config
+        usable = False if guidance is None else guidance.is_usable(lane_config)
+        if not lane_config.enabled:
             status = "disabled"
         elif self.lane_error:
             status = "error"
@@ -1745,7 +2064,7 @@ class RuntimeState:
         else:
             status = "searching"
         return {
-            "enabled": LANE_CONFIG.enabled,
+            "enabled": lane_config.enabled,
             "status": status,
             "usable": usable,
             "assist_active": self.lane_assist_active,
@@ -1756,19 +2075,19 @@ class RuntimeState:
             "error": self.lane_error,
             "guidance": None if guidance is None else guidance.to_status(),
             "config": {
-                "roi_top_ratio": LANE_CONFIG.roi_top_ratio,
-                "target_center_x": LANE_CONFIG.target_center_x,
-                "min_confidence": LANE_CONFIG.min_confidence,
-                "stale_sec": LANE_CONFIG.stale_sec,
-                "expected_lane_width_ratio": LANE_CONFIG.expected_lane_width_ratio,
-                "max_partial_lane_width_ratio": LANE_CONFIG.max_partial_lane_width_ratio,
-                "preferred_corridor": LANE_CONFIG.preferred_corridor,
-                "departure_center_error": LANE_CONFIG.departure_center_error,
-                "recovery_throttle": LANE_RECOVERY_THROTTLE,
-                "steering_gain": LANE_CONFIG.steering_gain,
-                "heading_gain": LANE_CONFIG.heading_gain,
-                "max_correction": LANE_CONFIG.max_correction,
-                "assist_actions": sorted(LANE_ASSIST_ACTIONS),
+                "roi_top_ratio": lane_config.roi_top_ratio,
+                "target_center_x": lane_config.target_center_x,
+                "min_confidence": lane_config.min_confidence,
+                "stale_sec": lane_config.stale_sec,
+                "expected_lane_width_ratio": lane_config.expected_lane_width_ratio,
+                "max_partial_lane_width_ratio": lane_config.max_partial_lane_width_ratio,
+                "preferred_corridor": lane_config.preferred_corridor,
+                "departure_center_error": lane_config.departure_center_error,
+                "recovery_throttle": self.lane_recovery_throttle,
+                "steering_gain": lane_config.steering_gain,
+                "heading_gain": lane_config.heading_gain,
+                "max_correction": lane_config.max_correction,
+                "assist_actions": sorted(self.lane_assist_actions),
             },
         }
 
@@ -1872,6 +2191,7 @@ class RuntimeState:
                 "lane": self.lane_snapshot_locked(now=now),
                 "control": self.control_snapshot_locked(),
                 "autonomy": self.autonomy_snapshot_locked(now=now),
+                "settings": self.settings_snapshot_locked(),
                 "recording": self.recorder.snapshot(),
                 "replayer": self.replayer.snapshot(),
                 "car": {
@@ -2111,7 +2431,7 @@ def build_stream_frame(state: RuntimeState) -> bytes:
 
     lane_guidance = state.current_lane_guidance()
     if lane_guidance is not None:
-        frame = draw_lane_overlay(frame, lane_guidance, LANE_CONFIG)
+        frame = draw_lane_overlay(frame, lane_guidance, state.current_lane_config())
 
     frame = draw_status_overlay(frame, context, snapshot)
     return encode_jpeg(frame)
@@ -2253,6 +2573,9 @@ class LiveHandler(BaseHTTPRequestHandler):
             self.stream_video()
         elif path == "/recording.json":
             self.send_json({"ok": True, "recording": self.state.recorder.snapshot()})
+        elif path in {"/settings.json", "/control-settings.json"}:
+            with self.state.lock:
+                self.send_json({"ok": True, "settings": self.state.settings_snapshot_locked()})
         elif path == "/replayer.json":
             self.send_json(
                 {
@@ -2386,6 +2709,21 @@ class LiveHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "error": str(exc)}, status=400)
                 return
             self.send_json({"ok": True, "turn_compensation": status})
+            return
+        if path in {"/settings", "/control-settings"}:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            raw = self.rfile.read(min(length, 65536)) if length > 0 else b"{}"
+            try:
+                payload = json.loads(raw.decode("utf-8") or "{}")
+                settings = self.state.update_runtime_settings(payload)
+            except Exception as exc:
+                self.send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            self.send_json({"ok": True, "settings": settings})
+            return
+        if path in {"/settings/defaults", "/control/defaults"}:
+            settings = self.state.save_current_settings_as_defaults()
+            self.send_json({"ok": settings.get("last_error") is None, "settings": settings})
             return
         if path in {"/control/neutral", "/neutral"}:
             self.send_json({"ok": True, "control": self.state.release_manual_control("neutral")})
@@ -3370,6 +3708,34 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       font-size: 12px;
       font-variant-numeric: tabular-nums;
     }
+    .settings-actions {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line-soft);
+    }
+    button.default {
+      height: 38px;
+      border: 1px solid rgba(251,191,36,0.42);
+      background: rgba(251,191,36,0.10);
+      color: var(--amber);
+      font-family: var(--body);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      border-radius: 7px;
+      cursor: pointer;
+      text-transform: uppercase;
+    }
+    button.default:hover { background: rgba(251,191,36,0.16); }
+    .settings-path {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
 
     /* sparkline */
     .spark-wrap {
@@ -3703,6 +4069,10 @@ LIVE_VIEW_HTML = r"""<!doctype html>
             </div>
             <div class="row"><span class="k">Giro enviado</span><span class="v accent" id="trim-effective">--</span></div>
             <div class="row"><span class="k">Giro solicitado</span><span class="v muted" id="trim-requested">--</span></div>
+            <div class="settings-actions">
+              <button type="button" class="default" id="save-defaults">Guardar como default</button>
+              <span class="settings-path" id="settings-path">--</span>
+            </div>
           </div>
         </section>
 
@@ -3770,6 +4140,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       autoMode: $('auto-mode'), autoAction: $('auto-action'),
       autoLane: $('auto-lane'), autoLaneCorrection: $('auto-lane-correction'),
       autoTarget: $('auto-target'), autoZone: $('auto-zone'), autoReason: $('auto-reason'),
+      settingsPath: $('settings-path'), saveDefaults: $('save-defaults'),
 
       cruiseTag: $('cruise-tag'), cruiseValue: $('cruise-value'), cruiseDir: $('cruise-dir'),
       cruiseRange: $('cruise-range'), cruiseInput: $('cruise-input'), cruiseBase: $('cruise-base'),
@@ -3806,6 +4177,11 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     let cruiseDefault = 0.65;
     let cruisePostTimer = null;
     let turnCompPostTimer = null;
+    let controlSettings = {
+      manual_forward_throttle: 0.60,
+      manual_reverse_throttle: -0.50,
+      manual_brake_throttle: -0.90,
+    };
 
     /* sparkline buffers */
     const LAT_BUF = [], FPS_BUF = [];
@@ -3826,6 +4202,45 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     }
     function clampNum(v, a, b) { return Math.max(a, Math.min(b, v)); }
     function nfmt(v, d=2) { return v == null || Number.isNaN(+v) ? '--' : Number(v).toFixed(d); }
+
+    function renderSettings(settings) {
+      if (!settings || !settings.values) return;
+      Object.assign(controlSettings, settings.values);
+      if (els.settingsPath) {
+        els.settingsPath.textContent = (settings.persisted ? 'default · ' : 'runtime · ') + (settings.path || '--');
+      }
+    }
+
+    async function saveDefaults() {
+      if (trimPostTimer) {
+        clearTimeout(trimPostTimer);
+        trimPostTimer = null;
+        await postSteeringTrim(Number(els.trimInput.value));
+      }
+      if (cruisePostTimer) {
+        clearTimeout(cruisePostTimer);
+        cruisePostTimer = null;
+        await postCruiseSpeed(Number(els.cruiseInput.value));
+      }
+      if (turnCompPostTimer) {
+        clearTimeout(turnCompPostTimer);
+        turnCompPostTimer = null;
+        await postTurnCompensation();
+      }
+      try {
+        const res = await fetch('/settings/defaults', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: '{}',
+          cache: 'no-store',
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'defaults');
+        renderSettings(data.settings);
+      } catch (_) {
+        if (els.settingsPath) els.settingsPath.textContent = 'error guardando default';
+      }
+    }
 
     function tickWallClock() {
       const d = new Date();
@@ -3848,9 +4263,9 @@ LIVE_VIEW_HTML = r"""<!doctype html>
 
     function axisFromKeys() {
       let throttle = 0.0;
-      if (keys.has('w') || keys.has('arrowup')) throttle = 0.6;
-      if (keys.has('s') || keys.has('arrowdown')) throttle = -0.5;
-      if (keys.has('x') || keys.has(' ')) throttle = -0.9;
+      if (keys.has('w') || keys.has('arrowup')) throttle = Number(controlSettings.manual_forward_throttle || 0.60);
+      if (keys.has('s') || keys.has('arrowdown')) throttle = Number(controlSettings.manual_reverse_throttle || -0.50);
+      if (keys.has('x') || keys.has(' ')) throttle = Number(controlSettings.manual_brake_throttle || -0.90);
       let steering = NEUTRAL_STEERING;
       const left = keys.has('a') || keys.has('arrowleft');
       const right = keys.has('d') || keys.has('arrowright');
@@ -3923,7 +4338,10 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       els.trimValue.textContent = nfmt(trim, 3);
       els.trimDir.textContent = trimDirection(trim);
       if (trimPostTimer) clearTimeout(trimPostTimer);
-      trimPostTimer = setTimeout(() => postSteeringTrim(trim), 90);
+      trimPostTimer = setTimeout(() => {
+        trimPostTimer = null;
+        postSteeringTrim(trim);
+      }, 90);
     }
 
     function renderCruise(autonomy) {
@@ -3961,7 +4379,10 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       els.cruiseValue.textContent = nfmt(speed, 3);
       els.cruiseDir.textContent = Math.round(clampNum(speed, 0, 1) * 100) + '%';
       if (cruisePostTimer) clearTimeout(cruisePostTimer);
-      cruisePostTimer = setTimeout(() => postCruiseSpeed(speed), 90);
+      cruisePostTimer = setTimeout(() => {
+        cruisePostTimer = null;
+        postCruiseSpeed(speed);
+      }, 90);
     }
 
     function renderTurnCompensation(status) {
@@ -4015,7 +4436,10 @@ LIVE_VIEW_HTML = r"""<!doctype html>
 
     function scheduleTurnCompensation() {
       if (turnCompPostTimer) clearTimeout(turnCompPostTimer);
-      turnCompPostTimer = setTimeout(postTurnCompensation, 120);
+      turnCompPostTimer = setTimeout(() => {
+        turnCompPostTimer = null;
+        postTurnCompensation();
+      }, 120);
     }
 
     /* highlight WASD on keypress */
@@ -4168,6 +4592,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     els.turnCompInterval.addEventListener('input', scheduleTurnCompensation);
     els.turnCompMagnitude.addEventListener('input', scheduleTurnCompensation);
     els.turnCompDuration.addEventListener('input', scheduleTurnCompensation);
+    if (els.saveDefaults) els.saveDefaults.addEventListener('click', saveDefaults);
 
     /* manual control loop */
     setInterval(() => {
@@ -4220,6 +4645,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         const res = await fetch('/status.json', { cache: 'no-store' });
         const data = await res.json();
         const now = performance.now() / 1000;
+        if (data.settings) renderSettings(data.settings);
 
         /* link */
         const pktAge = data.udp.last_packet_age_sec;

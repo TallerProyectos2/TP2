@@ -65,6 +65,7 @@ Operational files are stored in repo `servicios/` and validated on EPC under `/h
   - session recorder under `TP2_SESSION_RECORD_DIR` for dataset candidates, annotated MP4, critical flags, and offline relabeling inputs
   - `session_replayer.py` review server for frame replay and label correction, launchable from the `coche.py` web UI and backed by a session selector over the recording root
   - manual web control is gated by drive mode; stale manual posts cannot switch an active autonomous session back to manual
+  - live web tuning can adjust manual throttle, autonomous cruise/turn pulse values, steering trim, lane-assist correction, and turn compensation at runtime through `/settings`; `POST /settings/defaults` persists the current values to a host-local `TP2_CONTROL_DEFAULTS_PATH` file outside the repository
   - autonomous forward commands are clamped to non-negative throttle and default to `+0.65`; the web UI can update the live cruise throttle with `POST /cruise-speed`
   - outgoing UDP steering applies live steering trim (`TP2_STEERING_TRIM=-0.24` default) to compensate the current physical left drift; trim is bypassed during autonomous open turns to preserve full-lock steering; `/status.json` exposes `effective_steering`, and the web UI can update trim with `POST /steering-trim`
   - optional periodic right-turn compensation (`POST /turn-compensation`) can add a short right steering pulse during autonomous forward actions without competing with open turn maneuvers
@@ -99,6 +100,8 @@ Operational files are stored in repo `servicios/` and validated on EPC under `/h
   - `POST /turn-compensation`: update optional periodic right-turn pulse settings
   - `GET /recording.json`: inspect current recording state
   - `POST /replayer/start`: start the session replayer on `TP2_SESSION_REPLAYER_PORT` (default `8090`)
+  - `POST /settings`: update runtime control tuning
+  - `POST /settings/defaults`: persist current runtime tuning as the machine default outside the repo
 - `9001/TCP`: local inference endpoint (when started)
 - Remote inference offload last validated from EPC to Jetson: `100.115.99.8:9001`
 

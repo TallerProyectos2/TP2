@@ -37,6 +37,8 @@ Normal sessions use one EPC runtime from `servicios/`:
   - optional Roboflow inference overlay on live camera frames
 - Web autonomous mode:
   - operator toggles manual/autonomous from the same web UI
+  - runtime tuning in the same web UI can adjust manual throttle, autonomous cruise/turn pulse values, steering trim, and lane-assist correction without moving control off EPC
+  - `POST /settings/defaults` saves the currently tuned values to a host-local defaults file; this file is machine configuration and must not be committed
   - EPC uses fresh Roboflow detections to choose continue, turn, stop, crawl, slow, or faster cruise
   - autonomous forward movement uses positive throttle `+0.65`; stop, ambiguity, stale frame or stale inference still force neutral `0.0`; the EPC web UI can change cruise throttle live
   - outgoing UDP steering is trimmed before packet send; current default `TP2_STEERING_TRIM=-0.24` compensates the physical left drift with a stronger rightward correction, the EPC web UI can change that trim live, and open turn maneuvers bypass trim to keep full lock

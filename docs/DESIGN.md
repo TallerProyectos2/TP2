@@ -47,12 +47,15 @@ This avoids destabilizing the validated EPC+eNodeB+car path.
   - UDP payload stream to EPC scripts
   - UDP control response from EPC to car
   - mode selection stays in EPC web runtime; manual browser commands and autonomous decisions both produce the same `C + steering + throttle` packet
+  - LiDAR uses the same UDP path and remains a sensor input to EPC, not a car-side policy layer
 - Inference:
   - local endpoint on EPC (or cloud target when configured)
   - detections feed the EPC autonomous policy; Jetson remains an inference endpoint only
 - Dataset capture:
   - EPC records candidate frames and estimates for later curation
   - recorded estimates are not treated as ground-truth labels until manually reviewed
+- Operator view:
+  - the primary web stage can switch between camera and LiDAR reconstruction while preserving the same control surface
 
 ## Design Invariants
 

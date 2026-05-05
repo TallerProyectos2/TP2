@@ -37,6 +37,13 @@ from lane_detector import (  # noqa: E402
     LaneGuidance,
     draw_lane_overlay,
 )
+from lidar_processor import (  # noqa: E402
+    LidarConfig,
+    LidarScan,
+    analyze_lidar_scan,
+    lidar_status_points,
+    normalize_lidar_payload,
+)
 from roboflow_runtime import (  # noqa: E402
     InferenceConfig,
     create_client,
@@ -193,6 +200,22 @@ LANE_RECOVERY_THROTTLE = env_float("TP2_LANE_RECOVERY_THROTTLE", 0.35)
 LANE_ASSIST_ACTIONS = env_csv_set(
     "TP2_LANE_ASSIST_ACTIONS",
     {"continue", "speed-30", "speed-90", "approach-stop", "confirming", "cooldown"},
+)
+LIDAR_CONFIG = LidarConfig(
+    enabled=env_bool("TP2_LIDAR_ASSIST_ENABLED", True),
+    stale_sec=env_float("TP2_LIDAR_STALE_SEC", 0.75),
+    min_range_m=env_float("TP2_LIDAR_MIN_RANGE_M", 0.05),
+    max_range_m=env_float("TP2_LIDAR_MAX_RANGE_M", 8.0),
+    front_angle_deg=env_float("TP2_LIDAR_FRONT_ANGLE_DEG", 34.0),
+    side_angle_deg=env_float("TP2_LIDAR_SIDE_ANGLE_DEG", 82.0),
+    stop_distance_m=env_float("TP2_LIDAR_STOP_DISTANCE_M", 0.42),
+    slow_distance_m=env_float("TP2_LIDAR_SLOW_DISTANCE_M", 0.85),
+    caution_distance_m=env_float("TP2_LIDAR_CAUTION_DISTANCE_M", 1.35),
+    slow_throttle=env_float("TP2_LIDAR_SLOW_THROTTLE", 0.25),
+    avoidance_gain=env_float("TP2_LIDAR_AVOIDANCE_GAIN", 0.55),
+    max_steering_correction=env_float("TP2_LIDAR_MAX_STEERING_CORRECTION", 0.45),
+    center_deadband_m=env_float("TP2_LIDAR_CENTER_DEADBAND_M", 0.08),
+    max_status_points=max(0, env_int("TP2_LIDAR_STATUS_MAX_POINTS", 720)),
 )
 TURN_COMPENSATION_ENABLED = env_bool("TP2_TURN_COMPENSATION_ENABLED", False)
 TURN_COMPENSATION_INTERVAL_SEC = max(0.0, env_float("TP2_TURN_COMPENSATION_INTERVAL_SEC", 2.5))
@@ -1174,6 +1197,15 @@ class RuntimeState:
         self.lane_assist_correction = 0.0
         self.lane_assist_reason = "not-evaluated"
 
+        self.lidar_config = LIDAR_CONFIG
+        self.lidar_scan: LidarScan | None = None
+        self.lidar_safety = analyze_lidar_scan(None, config=self.lidar_config, now=wall_time())
+        self.lidar_frames = 0
+        self.lidar_errors = 0
+        self.lidar_error: str | None = None
+        self.lidar_assist_active = False
+        self.lidar_assist_reason = "not-evaluated"
+
         self.battery: float | None = None
         self.telemetry: Any = None
 
@@ -1464,6 +1496,38 @@ class RuntimeState:
         with self.lock:
             self.telemetry = summarize_payload(value)
 
+    def update_lidar(self, value: Any) -> None:
+        now = wall_time()
+        try:
+            scan = normalize_lidar_payload(value, config=self.lidar_config, received_at=now)
+            safety = analyze_lidar_scan(scan, config=self.lidar_config, now=now)
+        except Exception as exc:
+            with self.lock:
+                self.lidar_errors += 1
+                self.lidar_error = str(exc)[:240]
+                self.last_packet_error = f"lidar: {self.lidar_error}"
+            return
+        with self.lock:
+            self.lidar_scan = scan
+            self.lidar_safety = safety
+            self.lidar_frames += 1
+            self.lidar_error = None
+            if self.drive_mode == "autonomous":
+                self._apply_autonomous_control_locked()
+
+    def update_lidar_from_telemetry(self, value: Any) -> bool:
+        if not isinstance(value, dict):
+            return False
+        lidar_payload = None
+        for key in ("lidar", "lidar_scan", "scan", "ranges", "points"):
+            if key in value:
+                lidar_payload = value if key in {"ranges", "points"} else value[key]
+                break
+        if lidar_payload is None:
+            return False
+        self.update_lidar(lidar_payload)
+        return True
+
     def update_frame(self, frame: np.ndarray) -> int:
         now = wall_time()
         lane_guidance: LaneGuidance | None = None
@@ -1603,6 +1667,7 @@ class RuntimeState:
         )
         decision = self._apply_lane_assist_locked(decision, now)
         decision = self._apply_turn_compensation_locked(decision, now)
+        decision = self._apply_lidar_safety_locked(decision, now)
         self.autonomous_decision = decision
         return decision
 
@@ -1728,6 +1793,78 @@ class RuntimeState:
             raw_steering=raw_steering,
             reason=f"{decision.reason};turn-comp={correction:+.3f}",
         )
+
+    def _apply_lidar_safety_locked(
+        self,
+        decision: AutonomousDecision,
+        now: float,
+    ) -> AutonomousDecision:
+        safety = analyze_lidar_scan(self.lidar_scan, config=self.lidar_config, now=now)
+        self.lidar_safety = safety
+        self.lidar_assist_active = False
+
+        if not self.lidar_config.enabled:
+            self.lidar_assist_reason = "disabled"
+            return decision
+        if self.drive_mode != "autonomous":
+            self.lidar_assist_reason = "manual-mode"
+            return decision
+        if not decision.active:
+            self.lidar_assist_reason = f"autonomy-{decision.reason}"
+            return decision
+        if safety.status in {"searching", "stale", "clear"}:
+            self.lidar_assist_reason = safety.reason
+            return decision
+        if safety.status == "stop":
+            self.lidar_assist_active = True
+            self.lidar_assist_reason = safety.reason
+            return replace(
+                decision,
+                active=True,
+                steering=NEUTRAL_STEERING,
+                throttle=NEUTRAL_THROTTLE,
+                raw_steering=NEUTRAL_STEERING,
+                raw_throttle=NEUTRAL_THROTTLE,
+                action="lidar-stop",
+                state="lidar-stop",
+                reason=f"{decision.reason};lidar={safety.reason}",
+            )
+        if safety.status in {"slow", "caution"}:
+            if decision.action not in {"continue", "speed-30", "speed-90", "cooldown", "confirming"}:
+                self.lidar_assist_reason = f"action-{decision.action}:{safety.reason}"
+                return decision
+            correction = clamp(
+                safety.steering_correction,
+                -self.lidar_config.max_steering_correction,
+                self.lidar_config.max_steering_correction,
+                0.0,
+            )
+            steering = round(clamp(decision.steering + correction, -1.0, 1.0, NEUTRAL_STEERING), 3)
+            raw_base = decision.raw_steering if decision.raw_steering is not None else decision.steering
+            raw_steering = round(clamp(raw_base + correction, -1.0, 1.0, NEUTRAL_STEERING), 3)
+            throttle = decision.throttle
+            raw_throttle = decision.raw_throttle
+            action = "lidar-caution"
+            if safety.throttle_limit is not None:
+                throttle = round(clamp(min(decision.throttle, safety.throttle_limit), 0.0, 1.0, NEUTRAL_THROTTLE), 3)
+                if raw_throttle is not None:
+                    raw_throttle = round(clamp(min(raw_throttle, safety.throttle_limit), 0.0, 1.0, NEUTRAL_THROTTLE), 3)
+                action = "lidar-slow"
+            self.lidar_assist_active = True
+            self.lidar_assist_reason = f"{safety.reason}:{correction:+.3f}"
+            return replace(
+                decision,
+                steering=steering,
+                throttle=throttle,
+                raw_steering=raw_steering,
+                raw_throttle=raw_throttle,
+                action=action,
+                state="lidar-safety",
+                reason=f"{decision.reason};lidar={safety.reason}:{correction:+.3f}",
+            )
+
+        self.lidar_assist_reason = safety.reason
+        return decision
 
     def _apply_autonomous_control_locked(self) -> AutonomousDecision:
         decision = self._evaluate_autonomous_locked()
@@ -2091,6 +2228,39 @@ class RuntimeState:
             },
         }
 
+    def lidar_snapshot_locked(self, *, now: float | None = None) -> dict[str, Any]:
+        now = wall_time() if now is None else now
+        safety = analyze_lidar_scan(self.lidar_scan, config=self.lidar_config, now=now)
+        self.lidar_safety = safety
+        scan = self.lidar_scan
+        return {
+            "enabled": self.lidar_config.enabled,
+            "status": safety.status if self.lidar_error is None else "error",
+            "assist_active": self.lidar_assist_active,
+            "assist_reason": self.lidar_assist_reason,
+            "frames": self.lidar_frames,
+            "errors": self.lidar_errors,
+            "error": self.lidar_error,
+            "source": None if scan is None else scan.source,
+            "frame_id": None if scan is None else scan.frame_id,
+            "received_age_sec": None if scan is None else rounded(scan.age(now)),
+            "point_count": 0 if scan is None else len(scan.points),
+            "points": lidar_status_points(scan, self.lidar_config),
+            "safety": safety.to_status(),
+            "config": {
+                "stale_sec": self.lidar_config.stale_sec,
+                "min_range_m": self.lidar_config.min_range_m,
+                "max_range_m": self.lidar_config.max_range_m,
+                "front_angle_deg": self.lidar_config.front_angle_deg,
+                "stop_distance_m": self.lidar_config.stop_distance_m,
+                "slow_distance_m": self.lidar_config.slow_distance_m,
+                "caution_distance_m": self.lidar_config.caution_distance_m,
+                "slow_throttle": self.lidar_config.slow_throttle,
+                "max_steering_correction": self.lidar_config.max_steering_correction,
+                "max_status_points": self.lidar_config.max_status_points,
+            },
+        }
+
     def _note_operator_event_locked(
         self,
         event_type: str,
@@ -2189,6 +2359,7 @@ class RuntimeState:
                     "backend": self.inference_backend,
                 },
                 "lane": self.lane_snapshot_locked(now=now),
+                "lidar": self.lidar_snapshot_locked(now=now),
                 "control": self.control_snapshot_locked(),
                 "autonomy": self.autonomy_snapshot_locked(now=now),
                 "settings": self.settings_snapshot_locked(),
@@ -2312,7 +2483,7 @@ def parse_car_packet(packet: bytes) -> tuple[str, Any]:
         raise ValueError("empty packet")
     packet_type = chr(packet[0])
     payload = packet[1:]
-    if packet_type == "I":
+    if packet_type in {"I", "L"}:
         try:
             return packet_type, decode_pickle_payload(payload)
         except Exception:
@@ -2372,10 +2543,17 @@ def draw_status_overlay(
     autonomy = state_snapshot.get("autonomy", {}).get("decision", {})
     lane = state_snapshot.get("lane", {})
     lane_guidance = lane.get("guidance") or {}
+    lidar = state_snapshot.get("lidar", {})
+    lidar_safety = lidar.get("safety") or {}
     lane_text = (
         "off"
         if not lane.get("enabled", False)
         else f"{lane.get('status', '-')}/{lane_guidance.get('correction', 0):+.2f}"
+    )
+    lidar_text = (
+        "off"
+        if not lidar.get("enabled", False)
+        else f"{lidar.get('status', '-')}/{lidar_safety.get('min_front_distance_m', '-')}"
     )
     det = inf["detections"]
     latency = inf["latency_ms"]
@@ -2383,7 +2561,7 @@ def draw_status_overlay(
     if compact:
         lines = [
             f"f {context.seq}  det {det}  ia {inf['status']}",
-            f"{control['mode']} {control['steering']:.2f}/{control['throttle']:.2f}  lane {lane_text}",
+            f"{control['mode']} {control['steering']:.2f}/{control['throttle']:.2f}  lidar {lidar_text}",
         ]
         scale = 0.42
         y = y0 + 26
@@ -2391,7 +2569,7 @@ def draw_status_overlay(
         lines = [
             f"frame {context.seq}  det {det}  ia {inf['status']}  {latency_text}",
             f"rx {udp['packets']}  tx {udp['tx_packets']}  cliente {udp['last_client'] or '-'}",
-            f"ctrl {control['mode']} {control['source']}  {control['steering']:.2f}/{control['throttle']:.2f}  auto {autonomy.get('action', '-')}  lane {lane_text}",
+            f"ctrl {control['mode']} {control['source']}  {control['steering']:.2f}/{control['throttle']:.2f}  auto {autonomy.get('action', '-')}  lane {lane_text}  lidar {lidar_text}",
         ]
         scale = 0.56
         y = y0 + 30
@@ -2858,9 +3036,12 @@ def handle_udp_packet(
         else:
             seq = state.update_frame(frame)
             state.record_frame_without_inference(seq, frame)
+    elif packet_type == "L":
+        state.update_lidar(payload)
     elif packet_type == "B":
         state.update_battery(payload)
     elif packet_type == "D":
+        state.update_lidar_from_telemetry(payload)
         state.update_telemetry(payload)
     else:
         state.note_packet(packet_type, address, error="unknown packet type")
@@ -3079,14 +3260,49 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       width: 100%; height: 100%;
       object-fit: contain;
       display: block;
+      z-index: 1;
       transition: opacity 200ms ease;
     }
     .video.no-feed img { opacity: 0; }
+    .lidar-canvas {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      z-index: 1;
+      opacity: 0;
+      background:
+        linear-gradient(180deg, rgba(8,8,12,0.22), rgba(8,8,12,0.72)),
+        #06070a;
+      transition: opacity 160ms ease;
+    }
+    .video.lidar-mode img { opacity: 0; }
+    .video.lidar-mode .lidar-canvas { opacity: 1; }
+    .view-toggle {
+      position: absolute; left: 18px; top: 18px; z-index: 4;
+      display: inline-grid; grid-template-columns: 1fr 1fr; gap: 3px;
+      padding: 3px;
+      border: 1px solid rgba(78,166,255,0.24);
+      border-radius: 8px;
+      background: rgba(8,8,12,0.78);
+      backdrop-filter: blur(8px);
+    }
+    .view-toggle button {
+      height: 28px; min-width: 84px; padding: 0 10px;
+      border: 0; border-radius: 5px;
+      background: transparent;
+      color: var(--ink-2);
+      cursor: pointer;
+      font-family: var(--display); font-weight: 600; font-size: 10px;
+      letter-spacing: 0.11em; text-transform: uppercase;
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    .view-toggle button.active { background: var(--blue); color: #061226; box-shadow: 0 4px 18px rgba(78,166,255,0.24); }
+    .view-toggle button svg { width: 12px; height: 12px; }
     .video::after {
       content: "";
       position: absolute; inset: 14px;
       border-radius: 8px;
       pointer-events: none;
+      z-index: 3;
       background:
         linear-gradient(to right, var(--blue) 0 14px, transparent 14px) top left/14px 1px no-repeat,
         linear-gradient(to bottom, var(--blue) 0 14px, transparent 14px) top left/1px 14px no-repeat,
@@ -3128,14 +3344,14 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       border: 1px solid rgba(78,166,255,0.30);
       border-radius: 4px;
       font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.16em;
-      color: var(--blue); z-index: 3;
+      color: var(--blue); z-index: 4;
     }
     .rec .blink { width: 7px; height: 7px; border-radius: 99px; background: var(--blue); box-shadow: 0 0 12px var(--blue); }
     .rec.active { border-color: rgba(248,113,113,0.5); color: var(--red); }
     .rec.active .blink { background: var(--red); box-shadow: 0 0 14px var(--red); animation: blink 1.4s ease-in-out infinite; }
     @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
-    .hud { position: absolute; left: 18px; bottom: 18px; display: flex; gap: 8px; flex-wrap: wrap; pointer-events: none; z-index: 3; }
+    .hud { position: absolute; left: 18px; bottom: 18px; display: flex; gap: 8px; flex-wrap: wrap; pointer-events: none; z-index: 4; }
     .hud .chip {
       background: rgba(8,8,12,0.78); backdrop-filter: blur(8px);
       border: 1px solid rgba(78,166,255,0.22);
@@ -3609,6 +3825,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         <div class="pill warn" id="pill-video"><span class="dot"></span><span class="label">Video</span><span class="val" id="pill-video-val">--</span></div>
         <div class="pill warn" id="pill-ai"><span class="dot"></span><span class="label">IA</span><span class="val" id="pill-ai-val">--</span></div>
         <div class="pill warn" id="pill-lane"><span class="dot"></span><span class="label">Carril</span><span class="val" id="pill-lane-val">--</span></div>
+        <div class="pill warn" id="pill-lidar"><span class="dot"></span><span class="label">LiDAR</span><span class="val" id="pill-lidar-val">--</span></div>
         <div class="pill bad" id="pill-control"><span class="dot"></span><span class="label">Control</span><span class="val" id="pill-control-val">OFF</span></div>
         <div class="pill warn" id="pill-recording"><span class="dot"></span><span class="label">Dataset</span><span class="val" id="pill-recording-val">OFF</span></div>
       </div>
@@ -3627,8 +3844,19 @@ LIVE_VIEW_HTML = r"""<!doctype html>
 
     <main>
       <section class="stage">
-        <div class="video" id="video-shell">
+        <div class="video camera-mode" id="video-shell">
           <img id="video" src="/video.mjpg" alt="Camara del coche">
+          <canvas class="lidar-canvas" id="lidar-canvas" aria-label="Reconstruccion 3D del LiDAR"></canvas>
+          <div class="view-toggle" role="group" aria-label="Vista principal">
+            <button type="button" id="view-camera" class="active" title="Ver camara">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+              Camara
+            </button>
+            <button type="button" id="view-lidar" title="Ver reconstruccion LiDAR">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M4 7l8-4 8 4"/><path d="M4 17l8 4 8-4"/><path d="M4 7v10l8 4 8-4V7"/></svg>
+              LiDAR
+            </button>
+          </div>
           <div class="no-feed-overlay" aria-hidden="true">
             <div class="no-feed-card">
               <div class="pulse"><span class="core"></span></div>
@@ -3642,6 +3870,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
             <div class="chip"><span>Lat</span><strong id="hud-lat">-- ms</strong></div>
             <div class="chip"><span>Det</span><strong id="hud-det">--</strong></div>
             <div class="chip"><span>Frame</span><strong id="hud-frame">--</strong></div>
+            <div class="chip"><span>Obs</span><strong id="hud-lidar">--</strong></div>
           </div>
         </div>
 
@@ -3785,6 +4014,19 @@ LIVE_VIEW_HTML = r"""<!doctype html>
               <div class="row"><span class="k">Zona / Distancia</span><span class="v muted" id="auto-zone">--</span></div>
               <div class="row"><span class="k">Motivo</span><span class="v muted" id="auto-reason">--</span></div>
             </section>
+
+            <section class="card">
+              <h2>
+                <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M4 7l8-4 8 4"/><path d="M4 17l8 4 8-4"/><path d="M4 7v10l8 4 8-4V7"/></svg></span>
+                LiDAR
+                <span class="tag" id="lidar-tag">--</span>
+              </h2>
+              <div class="row"><span class="k">Estado</span><span class="v" id="lidar-status">--</span></div>
+              <div class="row"><span class="k">Distancia frontal</span><span class="v accent" id="lidar-front">--</span></div>
+              <div class="row"><span class="k">Puntos</span><span class="v" id="lidar-points">--</span></div>
+              <div class="row"><span class="k">Correccion</span><span class="v muted" id="lidar-correction">--</span></div>
+              <div class="row"><span class="k">Motivo</span><span class="v muted" id="lidar-reason">--</span></div>
+            </section>
           </div>
 
           <!-- ============== TUNING ============================================== -->
@@ -3926,14 +4168,16 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       pillVideo: $('pill-video'),  pillVideoVal: $('pill-video-val'),
       pillAi: $('pill-ai'),        pillAiVal: $('pill-ai-val'),
       pillLane: $('pill-lane'),    pillLaneVal: $('pill-lane-val'),
+      pillLidar: $('pill-lidar'),  pillLidarVal: $('pill-lidar-val'),
       pillCtrl: $('pill-control'), pillCtrlVal: $('pill-control-val'),
       pillRec: $('pill-recording'), pillRecVal: $('pill-recording-val'),
       sessionClock: $('session-clock'),
       wallClock: $('wall-clock'),
       recBadge: $('rec-badge'), recBadgeText: $('rec-badge-text'),
 
-      hudFps: $('hud-fps'), hudLat: $('hud-lat'), hudDet: $('hud-det'), hudFrame: $('hud-frame'),
+      hudFps: $('hud-fps'), hudLat: $('hud-lat'), hudDet: $('hud-det'), hudFrame: $('hud-frame'), hudLidar: $('hud-lidar'),
       videoShell: $('video-shell'), noFeedMeta: $('no-feed-meta'),
+      lidarCanvas: $('lidar-canvas'), viewCamera: $('view-camera'), viewLidar: $('view-lidar'),
 
       steerLeft: $('steer-left'), steerRight: $('steer-right'),
       steerVal: $('steer-val'), steerDir: $('steer-dir'),
@@ -3956,6 +4200,8 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       autoMode: $('auto-mode'), autoAction: $('auto-action'),
       autoLane: $('auto-lane'), autoLaneCorrection: $('auto-lane-correction'),
       autoTarget: $('auto-target'), autoZone: $('auto-zone'), autoReason: $('auto-reason'),
+      lidarTag: $('lidar-tag'), lidarStatus: $('lidar-status'), lidarFront: $('lidar-front'),
+      lidarPoints: $('lidar-points'), lidarCorrection: $('lidar-correction'), lidarReason: $('lidar-reason'),
       settingsPath: $('settings-path'), saveDefaults: $('save-defaults'),
 
       cruiseTag: $('cruise-tag'), cruiseValue: $('cruise-value'), cruiseDir: $('cruise-dir'),
@@ -3993,6 +4239,8 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     let cruisePostTimer = null;
     let turnCompPostTimer = null;
     let activeTab = 'telemetria';
+    let activeView = 'camera';
+    let latestLidar = null;
     let controlSettings = {
       manual_forward_throttle: 0.60,
       manual_reverse_throttle: -0.50,
@@ -4037,6 +4285,137 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       activeTab = name;
       document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+    }
+
+    function setView(name) {
+      activeView = name === 'lidar' ? 'lidar' : 'camera';
+      if (els.videoShell) {
+        els.videoShell.classList.toggle('camera-mode', activeView === 'camera');
+        els.videoShell.classList.toggle('lidar-mode', activeView === 'lidar');
+      }
+      if (els.viewCamera) {
+        els.viewCamera.classList.toggle('active', activeView === 'camera');
+        els.viewCamera.setAttribute('aria-pressed', activeView === 'camera' ? 'true' : 'false');
+      }
+      if (els.viewLidar) {
+        els.viewLidar.classList.toggle('active', activeView === 'lidar');
+        els.viewLidar.setAttribute('aria-pressed', activeView === 'lidar' ? 'true' : 'false');
+      }
+      drawLidarScene(latestLidar || {});
+    }
+
+    function resizeLidarCanvas() {
+      const canvas = els.lidarCanvas;
+      if (!canvas) return {ctx: null, w: 0, h: 0, dpr: 1};
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.max(320, Math.round(rect.width || 1280));
+      const h = Math.max(220, Math.round(rect.height || 720));
+      if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+        canvas.width = Math.round(w * dpr);
+        canvas.height = Math.round(h * dpr);
+      }
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return {ctx, w, h, dpr};
+    }
+
+    function projectLidarPoint(point, w, h, maxRange) {
+      const x = Number(point.x || 0);
+      const y = Math.max(0.02, Number(point.y || 0));
+      const z = Number(point.z || 0);
+      const depth = clampNum(y / maxRange, 0, 1);
+      const perspective = 0.34 + (1 - depth) * 0.72;
+      const screenX = w * 0.5 + (x / Math.max(0.8, y + 0.75)) * w * 0.36 * perspective;
+      const screenY = h * 0.86 - depth * h * 0.66 - z * h * 0.12;
+      return {x: screenX, y: screenY, depth};
+    }
+
+    function drawLidarScene(lidar) {
+      const canvas = els.lidarCanvas;
+      if (!canvas) return;
+      const {ctx, w, h} = resizeLidarCanvas();
+      if (!ctx) return;
+      const cfg = (lidar && lidar.config) || {};
+      const maxRange = Math.max(1.0, Number(cfg.max_range_m || 8.0));
+      const stopDistance = Number(cfg.stop_distance_m || 0.42);
+      const slowDistance = Number(cfg.slow_distance_m || 0.85);
+      const points = (lidar && lidar.points) || [];
+      const safety = (lidar && lidar.safety) || {};
+
+      ctx.clearRect(0, 0, w, h);
+      const bg = ctx.createLinearGradient(0, 0, 0, h);
+      bg.addColorStop(0, '#07090d');
+      bg.addColorStop(1, '#030406');
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.save();
+      ctx.translate(w * 0.5, h * 0.86);
+      ctx.strokeStyle = 'rgba(78,166,255,0.16)';
+      ctx.lineWidth = 1;
+      for (let i = 1; i <= 8; i++) {
+        const y = -i * h * 0.075;
+        ctx.beginPath();
+        ctx.moveTo(-w * 0.42 * (1 - i * 0.045), y);
+        ctx.lineTo(w * 0.42 * (1 - i * 0.045), y);
+        ctx.stroke();
+      }
+      for (let i = -4; i <= 4; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * w * 0.055, 0);
+        ctx.lineTo(i * w * 0.010, -h * 0.66);
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      function rangeLine(distance, color) {
+        const depth = clampNum(distance / maxRange, 0, 1);
+        const y = h * 0.86 - depth * h * 0.66;
+        ctx.strokeStyle = color;
+        ctx.setLineDash([7, 7]);
+        ctx.beginPath();
+        ctx.moveTo(w * 0.22, y);
+        ctx.lineTo(w * 0.78, y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      rangeLine(slowDistance, 'rgba(251,191,36,0.30)');
+      rangeLine(stopDistance, 'rgba(248,113,113,0.38)');
+
+      const sorted = points.slice().sort((a, b) => Number(b.y || 0) - Number(a.y || 0));
+      for (const p of sorted) {
+        const projected = projectLidarPoint(p, w, h, maxRange);
+        if (projected.x < -20 || projected.x > w + 20 || projected.y < -20 || projected.y > h + 20) continue;
+        const distance = Number(p.distance || Math.hypot(Number(p.x || 0), Number(p.y || 0), Number(p.z || 0)));
+        const near = clampNum(1 - distance / maxRange, 0, 1);
+        const radius = 1.4 + near * 4.4;
+        const hue = distance <= stopDistance ? '248,113,113' : distance <= slowDistance ? '251,191,36' : '125,211,252';
+        ctx.fillStyle = 'rgba(' + hue + ',' + (0.42 + near * 0.50).toFixed(2) + ')';
+        ctx.beginPath();
+        ctx.arc(projected.x, projected.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.fillStyle = 'rgba(236,236,239,0.92)';
+      ctx.beginPath();
+      ctx.moveTo(w * 0.5, h * 0.80);
+      ctx.lineTo(w * 0.47, h * 0.89);
+      ctx.lineTo(w * 0.53, h * 0.89);
+      ctx.closePath();
+      ctx.fill();
+
+      const status = (lidar && lidar.status) || 'searching';
+      const front = safety.min_front_distance_m == null ? '--' : Number(safety.min_front_distance_m).toFixed(2) + ' m';
+      ctx.fillStyle = 'rgba(8,8,12,0.72)';
+      ctx.fillRect(18, h - 88, 260, 58);
+      ctx.strokeStyle = status === 'stop' ? 'rgba(248,113,113,0.55)' : status === 'slow' ? 'rgba(251,191,36,0.50)' : 'rgba(78,166,255,0.36)';
+      ctx.strokeRect(18.5, h - 87.5, 259, 57);
+      ctx.font = '600 11px "IBM Plex Mono", monospace';
+      ctx.fillStyle = '#7dd3fc';
+      ctx.fillText('LIDAR ' + status.toUpperCase(), 34, h - 62);
+      ctx.fillStyle = '#ececef';
+      ctx.fillText(points.length + ' pts · frontal ' + front, 34, h - 40);
     }
 
     function renderSettings(settings) {
@@ -4379,6 +4758,9 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     els.stop.addEventListener('click', emergencyStop);
     els.record.addEventListener('click', toggleRecording);
     els.review.addEventListener('click', launchReplayer);
+    els.viewCamera.addEventListener('click', () => setView('camera'));
+    els.viewLidar.addEventListener('click', () => setView('lidar'));
+    window.addEventListener('resize', () => drawLidarScene(latestLidar || {}));
 
     els.trimRange.addEventListener('input', () => {
       els.trimInput.value = Number(els.trimRange.value).toFixed(3);
@@ -4457,6 +4839,9 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         const res = await fetch('/status.json', { cache: 'no-store' });
         const data = await res.json();
         const now = performance.now() / 1000;
+        const lidar = data.lidar || {};
+        const lidarSafety = lidar.safety || {};
+        latestLidar = lidar;
         if (data.settings) renderSettings(data.settings);
 
         /* link */
@@ -4473,12 +4858,18 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         setPillState(els.pillVideo, videoOk ? 'ok' : 'warn');
         els.pillVideoVal.textContent = videoOk ? vid.frames : 'SIN';
 
+        const lidarOk = !!lidar.enabled && lidar.status !== 'searching' && lidar.status !== 'stale' && lidar.status !== 'error' && (lidar.received_age_sec == null || lidar.received_age_sec < 1.5);
         if (els.videoShell) {
-          els.videoShell.classList.toggle('no-feed', !videoOk);
+          const activeFeedOk = activeView === 'lidar' ? lidarOk : videoOk;
+          els.videoShell.classList.toggle('no-feed', !activeFeedOk);
           if (els.noFeedMeta) {
-            els.noFeedMeta.textContent = vid.has_video
-              ? 'Cuadro retrasado · ' + (videoAge != null ? videoAge.toFixed(1) + ' s' : 'sin datos')
-              : 'Esperando cuadro de camara · UDP ' + (data.udp.bind || '');
+            els.noFeedMeta.textContent = activeView === 'lidar'
+              ? (lidar.enabled
+                  ? 'Esperando paquete LiDAR · UDP ' + (data.udp.bind || '')
+                  : 'LiDAR deshabilitado')
+              : (vid.has_video
+                  ? 'Cuadro retrasado · ' + (videoAge != null ? videoAge.toFixed(1) + ' s' : 'sin datos')
+                  : 'Esperando cuadro de camara · UDP ' + (data.udp.bind || ''));
           }
         }
 
@@ -4573,6 +4964,33 @@ LIVE_VIEW_HTML = r"""<!doctype html>
           els.pillLaneVal.textContent = 'SIN';
         }
 
+        /* lidar */
+        if (!lidar.enabled) {
+          setPillState(els.pillLidar, 'warn');
+          els.pillLidarVal.textContent = 'OFF';
+        } else if (lidar.status === 'stop') {
+          setPillState(els.pillLidar, 'bad');
+          els.pillLidarVal.textContent = 'STOP';
+        } else if (lidar.status === 'slow' || lidar.status === 'caution') {
+          setPillState(els.pillLidar, 'warn');
+          els.pillLidarVal.textContent = lidar.status === 'slow' ? 'LENTO' : 'CERCA';
+        } else if (lidarOk) {
+          setPillState(els.pillLidar, 'ok');
+          els.pillLidarVal.textContent = 'OK';
+        } else {
+          setPillState(els.pillLidar, 'bad');
+          els.pillLidarVal.textContent = lidar.status === 'stale' ? 'VIEJO' : 'SIN';
+        }
+        const frontDistance = lidarSafety.min_front_distance_m == null ? null : Number(lidarSafety.min_front_distance_m);
+        els.hudLidar.textContent = frontDistance == null ? '--' : frontDistance.toFixed(2) + ' m';
+        els.lidarTag.textContent = lidar.status || '--';
+        els.lidarStatus.textContent = lidar.error || (lidar.status || '--');
+        els.lidarFront.textContent = frontDistance == null ? '--' : frontDistance.toFixed(2) + ' m';
+        els.lidarPoints.textContent = (lidar.point_count || 0) + ' · ' + (lidar.received_age_sec == null ? '--' : Number(lidar.received_age_sec).toFixed(2) + ' s');
+        els.lidarCorrection.textContent = nfmt(lidarSafety.steering_correction, 3) + ' · limite ' + (lidarSafety.throttle_limit == null ? '--' : nfmt(lidarSafety.throttle_limit, 2));
+        els.lidarReason.textContent = (lidar.assist_active ? 'activo · ' : '') + (lidar.assist_reason || lidarSafety.reason || '--');
+        drawLidarScene(lidar);
+
         /* control + autonomy pills + values */
         renderMode(data.control.mode || 'manual');
         const autoDecision = (data.autonomy && data.autonomy.decision) || {};
@@ -4612,13 +5030,14 @@ LIVE_VIEW_HTML = r"""<!doctype html>
           'safe-neutral': 'neutro seguro', 'crawl': 'avance lento',
           'slow': 'lento', 'cruise': 'crucero', 'stop': 'detenido',
           'brake': 'frenar',
+          'lidar-stop': 'LiDAR stop', 'lidar-slow': 'LiDAR lento', 'lidar-caution': 'LiDAR cerca',
         }[autoDecision.action] || (autoDecision.action || '--');
         els.autoAction.textContent = actionEs;
         if (els.ctxAction) els.ctxAction.textContent = actionEs;
         if (els.ctxActionCell) {
           els.ctxActionCell.className = 'ctx';
           const a = autoDecision.action || '';
-          if (/stop|brake/.test(a)) els.ctxActionCell.classList.add('action-stop');
+          if (/stop|brake|lidar-stop/.test(a)) els.ctxActionCell.classList.add('action-stop');
           else if (/turn|left|right|prepare/.test(a)) els.ctxActionCell.classList.add('action-turn');
           else if (/slow|crawl|cool|ambig|confirm|safe/.test(a)) els.ctxActionCell.classList.add('action-yield');
           else if (/continue|cruise|speed/.test(a)) els.ctxActionCell.classList.add('action-continue');
@@ -4697,6 +5116,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
 
     pollStatus();
     setInterval(pollStatus, 250);
+    setView('camera');
     renderControl(NEUTRAL_STEERING, 0.0);
     setSliderPct(els.cruiseRange, Number(els.cruiseRange.value));
     setSliderPct(els.trimRange, Number(els.trimRange.value));

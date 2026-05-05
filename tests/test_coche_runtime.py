@@ -16,6 +16,7 @@ from coche import (
     SessionRecorder,
     STEERING_TRIM,
     corrected_steering,
+    parse_car_packet,
 )
 
 
@@ -269,6 +270,29 @@ class RuntimeStateModeTest(unittest.TestCase):
         self.assertEqual(adjusted.steering, turn.steering)
         self.assertFalse(state.lane_assist_active)
         self.assertEqual(state.lane_assist_reason, "action-turn-right")
+
+    def test_lidar_stop_overrides_autonomous_forward_motion(self):
+        state = RuntimeState()
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        seq = state.update_frame(frame)
+        state.set_predictions(seq, [], 1)
+        state.update_lidar({"ranges": [0.32], "angle_min": 0.0, "angle_increment": 0.0})
+
+        result = state.set_drive_mode("autonomous")
+
+        self.assertEqual(result["control"]["throttle"], NEUTRAL_THROTTLE)
+        self.assertEqual(result["autonomy"]["action"], "lidar-stop")
+        lidar = state.snapshot()["lidar"]
+        self.assertTrue(lidar["assist_active"])
+        self.assertEqual(lidar["safety"]["status"], "stop")
+
+    def test_lidar_packet_accepts_raw_json_payload(self):
+        packet_type, payload = parse_car_packet(
+            b'L{"ranges":[1.2],"angle_min":0.0,"angle_increment":0.0}'
+        )
+
+        self.assertEqual(packet_type, "L")
+        self.assertIsInstance(payload, bytes)
 
 
 class CriticalFrameAnalyzerTest(unittest.TestCase):

@@ -21,6 +21,7 @@ Do not store passwords here.
   - local inference endpoint from `servicios/`
   - autonomous driving policy from `servicios/autonomous_driver.py`
   - lane stabilization from `servicios/lane_detector.py`
+  - LiDAR collision assistance from `servicios/lidar_processor.py`
   - dataset/session recorder from `servicios/coche.py`
 - Known addresses:
   - upstream (`eno1`): `10.0.128.174/24` (DHCP)
@@ -103,6 +104,7 @@ Do not store passwords here.
   - mobile client
 - Services:
   - sends sensor payloads to EPC control scripts
+  - sends LiDAR scans to EPC when the LiDAR sensor is connected
   - executes steering/throttle commands from EPC
 - Connectivity:
   - attaches as LTE UE

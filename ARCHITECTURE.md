@@ -12,8 +12,8 @@ TP2 runs as a four-machine lab, but the current critical path is script-based an
 ## Current Critical Path
 
 1. Car attaches to LTE and gets UE IP from EPC. The previous fixed target was `172.16.0.2`; the live EPC HSS was observed on `2026-04-27` with dynamic allocation and the active session at `172.16.0.4`.
-2. Car sends UDP payloads (image/battery/runtime) to EPC control server.
-3. EPC script computes steering/throttle in either manual web mode or autonomous mode. In autonomous mode, traffic-sign decisions remain Roboflow-driven and `lane_detector.py` adds a bounded OpenCV lane correction from the blue/green tape lines when the car is moving forward.
+2. Car sends UDP payloads (image/battery/runtime/LiDAR when connected) to EPC control server.
+3. EPC script computes steering/throttle in either manual web mode or autonomous mode. In autonomous mode, traffic-sign decisions remain Roboflow-driven, `lane_detector.py` adds a bounded OpenCV lane correction from the blue/green tape lines when the car is moving forward, and `lidar_processor.py` can stop or slow the car from fresh frontal LiDAR obstacles.
 4. EPC sends UDP control packet back to car.
 
 This path works without introducing a new backend API layer.
@@ -28,6 +28,7 @@ This path works without introducing a new backend API layer.
 - Optional UE DNS (`dnsmasq`)
 - Script runtime from `servicios/`:
   - car control UDP servers
+  - LiDAR scan normalizer and collision safety layer
   - local inference endpoint launcher
   - inference CLI and GUI tools
 
@@ -40,6 +41,7 @@ This path works without introducing a new backend API layer.
 ## Car
 
 - Streams data to EPC over UDP
+- Streams LiDAR scans to EPC over UDP when the sensor is connected
 - Executes control commands received from EPC
 - Runs movement logic driven by EPC commands
 
@@ -73,6 +75,7 @@ This path works without introducing a new backend API layer.
 - Car control transport:
   - UDP runtime on EPC (`172.16.0.1:20001`)
   - payload discriminator byte (`I`, `B`, `D`)
+  - optional LiDAR discriminator byte (`L`) with `pickle` or JSON payload; the runtime also accepts LiDAR nested in `D`
   - control packet type (`C`) with steering/throttle doubles
 - Operator visibility:
   - `coche.py` exposes annotated live video, remote manual control, autonomous mode, and inference/control status from EPC on `8088/TCP`
@@ -80,6 +83,8 @@ This path works without introducing a new backend API layer.
   - steering compensation, autonomous cruise throttle, and optional periodic right-turn pulse are mutable from the EPC web UI; steering trim is applied immediately before UDP command serialization and bypassed only for autonomous open turns
   - autonomous driving is an EPC-local decision layer over Roboflow detections; it performs temporal tracking, sign selection, stateful maneuvers, and command smoothing without moving orchestration to Jetson or the car
   - lane assistance is EPC-local OpenCV processing over the same camera frames; it detects the blue/green tape corridor on the black carpet and reports status/correction through `/status.json`
+  - LiDAR collision assistance is EPC-local and sensor-freshness gated; it reports `lidar.status`, `lidar.safety`, and a capped point list through `/status.json`
+  - the web runtime can switch the main stage between annotated camera stream and a LiDAR point-cloud reconstruction without moving control away from EPC
   - session recording is also EPC-local and stores candidate frames, annotated MP4 video, predictions, critical flags, reviewed-label sidecars, and autonomous estimates for dataset improvement under the configured recording directory
   - offline session replay/relabeling stays in `servicios/session_replayer.py`; it does not become a runtime service in the control path
 - Inference transport:
@@ -94,6 +99,7 @@ Inference is consumed by EPC through:
 - `coche.py` (live frame sender and annotation owner)
 - `autonomous_driver.py` (deterministic traffic-sign controller used by `coche.py`: tracker, distance proxy, FSM, safety fallback)
 - `lane_detector.py` (classical OpenCV lane-corridor detector used only as steering stabilization in `coche.py`)
+- `lidar_processor.py` (LiDAR scan normalization and deterministic frontal obstacle safety used by `coche.py`)
 - `inferencia.py` (CLI test and annotated output)
 - `start_local_inference_server.py` (optional EPC local fallback endpoint)
 

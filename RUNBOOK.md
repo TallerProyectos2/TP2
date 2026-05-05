@@ -32,7 +32,8 @@ The manual order below remains the operational source for troubleshooting.
    - If another retained payload is found on the same topic, automation logs a conflict before replacing it unless `TP2_MQTT_FAIL_ON_CONFLICT=1`.
 10. Open the live operator view from Tailscale at `http://100.97.19.112:8088/`.
     - Keep manual mode selected for initial safety checks.
-    - Switch to autonomous mode only after live frames, fresh inference status, and lane status are visible.
+    - Switch to autonomous mode only after live frames, fresh inference status, lane status, and LiDAR status are visible when the LiDAR is connected.
+    - Use the stage toggle to switch between the annotated camera stream and LiDAR reconstruction.
     - Normal systemd sessions autostart dataset recording; stop it from the web UI only when disk space or scene setup makes capture undesirable.
 11. If using Jetson offload, first verify Jetson reachability and `tp2-roboflow-inference.service`; then point EPC to `http://100.115.99.8:9001` (or the current reachable Jetson IP) with `TP2_INFERENCE_TARGET=model` and `ROBOFLOW_MODEL_ID=tp2-g4-2026/2`.
 
@@ -72,8 +73,17 @@ The manual order below remains the operational source for troubleshooting.
 - The live web UI can launch the retraining/replayer server with `POST /replayer/start`; the replayer reads `/srv/tp2/frames/autonomous` directly and provides a session selector.
 - Offline review can also run with `python servicios/session_replayer.py /srv/tp2/frames/autonomous` and writes `labels_reviewed.json` without modifying the original manifest.
 - Script receives car payloads (`I`, `B`, `D`).
+- Script receives LiDAR payloads (`L`) or LiDAR nested in telemetry `D` when the sensor is connected.
 - Script sends control packets (`C`) back to car.
 - Car behavior matches command stream.
+
+## LiDAR Validation
+
+- Confirm `coche.py` receives `L` packets or telemetry `D` with `ranges`/`points`.
+- Confirm `/status.json` reports `lidar.frames`, `lidar.status`, `lidar.safety.min_front_distance_m`, and a bounded `lidar.points` list.
+- Confirm the web stage can switch from camera to LiDAR reconstruction.
+- In autonomous mode, place an obstacle inside `TP2_LIDAR_STOP_DISTANCE_M` and confirm the selected action becomes `lidar-stop` with neutral throttle.
+- Move the obstacle into the slow band between `TP2_LIDAR_STOP_DISTANCE_M` and `TP2_LIDAR_SLOW_DISTANCE_M` and confirm speed limiting without moving control off EPC.
 
 ## EPC Inference Validation
 

@@ -22,6 +22,7 @@ Inference is currently available on EPC using scripts from `servicios/`.
   - can use those detections for EPC-local autonomous driving decisions when the operator enables autonomous mode
   - also runs local OpenCV lane detection in EPC for tape-line steering stabilization; this does not use Roboflow or Jetson
   - can record frames, annotated MP4 video, prediction candidates, critical flags, autonomous estimates, and commands for later dataset curation/retraining
+  - can fuse fresh LiDAR obstacle safety with camera/Roboflow decisions through `lidar_processor.py`; this local safety layer is deterministic and is not a learned inference backend yet
   - live inference passes OpenCV NumPy arrays directly to `inference_sdk`, avoiding a temporary JPEG write per request
   - defaults live inference to Jetson at `http://100.115.99.8:9001`
   - default Jetson target is direct model inference with `ROBOFLOW_MODEL_ID=tp2-g4-2026/2`
@@ -94,6 +95,7 @@ Requirements:
 - fallback to EPC local inference when Jetson path fails
 - car continues talking only to EPC, never directly to Jetson
 - autonomous driving must treat Jetson output as inference only; steering/throttle policy remains in EPC `coche.py`/`autonomous_driver.py`
+- future learned LiDAR or camera-LiDAR fusion models should run as inference endpoints on Jetson/EPC, but final steering/throttle policy must remain in EPC `coche.py`
 - session recording must not copy Roboflow secrets; only runtime predictions, frame metadata, candidate images, annotated video, critical flags, and reviewed labels are saved
 - offline curation uses `servicios/session_replayer.py`; it can be launched from the `coche.py` web UI, reads the recording root directly with a session selector, and writes `labels_reviewed.json` beside the selected session
 

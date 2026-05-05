@@ -322,6 +322,15 @@ def _points_from_iterable(payload: Any, config: LidarConfig) -> Iterable[LidarPo
     if not isinstance(values, Iterable) or isinstance(values, (str, bytes, bytearray, memoryview)):
         return []
 
+    flat_ranges = list(_coerce_numeric_sequence(values))
+    if flat_ranges:
+        angle_increment = (2.0 * math.pi) / max(1, len(flat_ranges))
+        return [
+            point
+            for idx, distance in enumerate(flat_ranges)
+            if (point := _point_from_polar(idx * angle_increment, distance, None, config)) is not None
+        ]
+
     points: list[LidarPoint] = []
     for item in values:
         point = _point_from_item(item, config)

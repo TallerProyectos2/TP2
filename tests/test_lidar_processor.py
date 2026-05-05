@@ -75,6 +75,18 @@ class LidarProcessorTest(unittest.TestCase):
         self.assertEqual(safety.status, "empty")
         self.assertFalse(safety.clear)
 
+    def test_flat_professor_ranges_are_treated_as_360_degree_scan(self):
+        ranges = [2.0] * 360
+        ranges[0] = 0.35
+        scan = normalize_lidar_payload(ranges, received_at=10.0)
+
+        safety = analyze_lidar_scan(scan, config=LidarConfig(), now=10.1)
+
+        self.assertEqual(len(scan.points), 360)
+        self.assertAlmostEqual(scan.points[0].x, 0.0, places=3)
+        self.assertAlmostEqual(scan.points[0].y, 0.35, places=3)
+        self.assertEqual(safety.status, "stop")
+
 
 if __name__ == "__main__":
     unittest.main()

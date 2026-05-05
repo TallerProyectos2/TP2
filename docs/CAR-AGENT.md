@@ -27,7 +27,7 @@ Normal sessions use one EPC runtime from `servicios/`:
   - `D`: reserved/other data path
   - `L`: LiDAR scan payload
 - Payload body is deserialized with `pickle.loads(...)` in current scripts.
-- `L` can be sent as `pickle` or raw JSON. The EPC accepts either LaserScan-like `ranges` with `angle_min`/`angle_increment`, or Cartesian `points` as `[x, y, z, intensity]`/objects. LiDAR can also be nested in `D` under `lidar`, `lidar_scan`, `scan`, `ranges`, or `points`.
+- `L` can be sent as `pickle` or raw JSON. The EPC accepts the professor/Artemis plain pickled range list, LaserScan-like `ranges` with `angle_min`/`angle_increment`, or Cartesian `points` as `[x, y, z, intensity]`/objects. LiDAR can also be nested in `D` under `lidar`, `lidar_scan`, `scan`, `ranges`, or `points`.
 - Outgoing control packet type:
   - `C` + steering (`double`) + throttle (`double`)
 

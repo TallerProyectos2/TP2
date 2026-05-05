@@ -7,6 +7,7 @@ LiDAR is integrated as an EPC-owned safety input for `servicios/coche.py`.
 - The car sends scans over the existing UDP path to EPC.
 - Preferred packet discriminator: `L`.
 - Payload formats accepted by EPC:
+  - professor/Artemis format: plain pickled list of LiDAR ranges, normally 360 samples where index `0` is front and indices `340..359` wrap the front-left/right sector.
   - `pickle` payload with `ranges` plus `angle_min` and `angle_increment`.
   - raw JSON with the same LaserScan-like fields.
   - Cartesian `points` as `[x, y, z, intensity]` lists or objects.

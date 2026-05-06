@@ -206,9 +206,10 @@ LIDAR_CONFIG = LidarConfig(
     stale_sec=env_float("TP2_LIDAR_STALE_SEC", 0.75),
     min_range_m=env_float("TP2_LIDAR_MIN_RANGE_M", 0.05),
     max_range_m=env_float("TP2_LIDAR_MAX_RANGE_M", 8.0),
-    front_angle_deg=env_float("TP2_LIDAR_FRONT_ANGLE_DEG", 34.0),
+    front_angle_deg=env_float("TP2_LIDAR_FRONT_ANGLE_DEG", 22.5),
+    front_point_count=max(1, env_int("TP2_LIDAR_FRONT_POINT_COUNT", 45)),
     side_angle_deg=env_float("TP2_LIDAR_SIDE_ANGLE_DEG", 82.0),
-    stop_distance_m=env_float("TP2_LIDAR_STOP_DISTANCE_M", 0.42),
+    stop_distance_m=env_float("TP2_LIDAR_STOP_DISTANCE_M", 0.15),
     slow_distance_m=env_float("TP2_LIDAR_SLOW_DISTANCE_M", 0.85),
     caution_distance_m=env_float("TP2_LIDAR_CAUTION_DISTANCE_M", 1.35),
     slow_throttle=env_float("TP2_LIDAR_SLOW_THROTTLE", 0.25),
@@ -311,8 +312,22 @@ RUNTIME_SETTING_RANGES: dict[str, tuple[float, float]] = {
     "turn_compensation_interval_sec": (0.0, 60.0),
     "turn_compensation_duration_sec": (0.0, 10.0),
     "turn_compensation_magnitude": (0.0, 2.0),
+    "lidar_stale_sec": (0.1, 5.0),
+    "lidar_front_point_count": (1.0, 180.0),
+    "lidar_front_angle_deg": (1.0, 90.0),
+    "lidar_stop_distance_m": (0.05, 2.0),
+    "lidar_slow_distance_m": (0.05, 3.0),
+    "lidar_caution_distance_m": (0.05, 4.0),
+    "lidar_slow_throttle": (0.0, 1.0),
+    "lidar_avoidance_gain": (0.0, 2.0),
+    "lidar_max_steering_correction": (0.0, 1.0),
 }
-RUNTIME_BOOL_SETTINGS = {"turn_pulse_enabled", "lane_enabled", "turn_compensation_enabled"}
+RUNTIME_BOOL_SETTINGS = {
+    "turn_pulse_enabled",
+    "lane_enabled",
+    "turn_compensation_enabled",
+    "lidar_enabled",
+}
 AUTONOMOUS_RUNTIME_FIELDS = {
     "crawl_throttle",
     "slow_throttle",
@@ -335,6 +350,18 @@ LANE_RUNTIME_FIELDS = {
     "lane_max_correction": "max_correction",
     "lane_target_center_x": "target_center_x",
     "lane_min_confidence": "min_confidence",
+}
+LIDAR_RUNTIME_FIELDS = {
+    "lidar_enabled": "enabled",
+    "lidar_stale_sec": "stale_sec",
+    "lidar_front_point_count": "front_point_count",
+    "lidar_front_angle_deg": "front_angle_deg",
+    "lidar_stop_distance_m": "stop_distance_m",
+    "lidar_slow_distance_m": "slow_distance_m",
+    "lidar_caution_distance_m": "caution_distance_m",
+    "lidar_slow_throttle": "slow_throttle",
+    "lidar_avoidance_gain": "avoidance_gain",
+    "lidar_max_steering_correction": "max_steering_correction",
 }
 
 
@@ -388,6 +415,16 @@ def runtime_setting_defaults() -> dict[str, Any]:
         "turn_compensation_interval_sec": TURN_COMPENSATION_INTERVAL_SEC,
         "turn_compensation_duration_sec": TURN_COMPENSATION_DURATION_SEC,
         "turn_compensation_magnitude": TURN_COMPENSATION_MAGNITUDE,
+        "lidar_enabled": LIDAR_CONFIG.enabled,
+        "lidar_stale_sec": LIDAR_CONFIG.stale_sec,
+        "lidar_front_point_count": LIDAR_CONFIG.front_point_count,
+        "lidar_front_angle_deg": LIDAR_CONFIG.front_angle_deg,
+        "lidar_stop_distance_m": LIDAR_CONFIG.stop_distance_m,
+        "lidar_slow_distance_m": LIDAR_CONFIG.slow_distance_m,
+        "lidar_caution_distance_m": LIDAR_CONFIG.caution_distance_m,
+        "lidar_slow_throttle": LIDAR_CONFIG.slow_throttle,
+        "lidar_avoidance_gain": LIDAR_CONFIG.avoidance_gain,
+        "lidar_max_steering_correction": LIDAR_CONFIG.max_steering_correction,
     }
 
 
@@ -1323,6 +1360,16 @@ class RuntimeState:
             "turn_compensation_interval_sec": round(self.turn_compensation_interval_sec, 4),
             "turn_compensation_duration_sec": round(self.turn_compensation_duration_sec, 4),
             "turn_compensation_magnitude": round(self.turn_compensation_magnitude, 4),
+            "lidar_enabled": bool(self.lidar_config.enabled),
+            "lidar_stale_sec": round(self.lidar_config.stale_sec, 4),
+            "lidar_front_point_count": int(self.lidar_config.front_point_count),
+            "lidar_front_angle_deg": round(self.lidar_config.front_angle_deg, 4),
+            "lidar_stop_distance_m": round(self.lidar_config.stop_distance_m, 4),
+            "lidar_slow_distance_m": round(self.lidar_config.slow_distance_m, 4),
+            "lidar_caution_distance_m": round(self.lidar_config.caution_distance_m, 4),
+            "lidar_slow_throttle": round(self.lidar_config.slow_throttle, 4),
+            "lidar_avoidance_gain": round(self.lidar_config.avoidance_gain, 4),
+            "lidar_max_steering_correction": round(self.lidar_config.max_steering_correction, 4),
         }
 
     def _apply_runtime_settings_locked(self, values: dict[str, Any], *, rebuild: bool) -> dict[str, Any]:
@@ -1370,6 +1417,28 @@ class RuntimeState:
                 self.lane_assist_active = False
                 self.lane_assist_correction = 0.0
                 self.lane_assist_reason = "settings-updated"
+
+        lidar_updates = {
+            target: normalized[source]
+            for source, target in LIDAR_RUNTIME_FIELDS.items()
+            if source in normalized
+        }
+        if lidar_updates:
+            if "front_point_count" in lidar_updates:
+                lidar_updates["front_point_count"] = max(1, int(round(float(lidar_updates["front_point_count"]))))
+            stop_distance = float(lidar_updates.get("stop_distance_m", self.lidar_config.stop_distance_m))
+            slow_distance = float(lidar_updates.get("slow_distance_m", self.lidar_config.slow_distance_m))
+            caution_distance = float(lidar_updates.get("caution_distance_m", self.lidar_config.caution_distance_m))
+            if slow_distance < stop_distance:
+                slow_distance = stop_distance
+            if caution_distance < slow_distance:
+                caution_distance = slow_distance
+            lidar_updates["stop_distance_m"] = round(stop_distance, 4)
+            lidar_updates["slow_distance_m"] = round(slow_distance, 4)
+            lidar_updates["caution_distance_m"] = round(caution_distance, 4)
+            self.lidar_config = replace(self.lidar_config, **lidar_updates)
+            self.lidar_safety = analyze_lidar_scan(self.lidar_scan, config=self.lidar_config, now=wall_time())
+            self.lidar_assist_reason = "settings-updated"
 
         turn_compensation_fields = {
             "turn_compensation_enabled",
@@ -1809,9 +1878,6 @@ class RuntimeState:
         if self.drive_mode != "autonomous":
             self.lidar_assist_reason = "manual-mode"
             return decision
-        if not decision.active:
-            self.lidar_assist_reason = f"autonomy-{decision.reason}"
-            return decision
         if safety.status in {"searching", "stale", "clear"}:
             self.lidar_assist_reason = safety.reason
             return decision
@@ -1829,6 +1895,9 @@ class RuntimeState:
                 state="lidar-stop",
                 reason=f"{decision.reason};lidar={safety.reason}",
             )
+        if not decision.active:
+            self.lidar_assist_reason = f"autonomy-{decision.reason}"
+            return decision
         if safety.status in {"slow", "caution"}:
             if decision.action not in {"continue", "speed-30", "speed-90", "cooldown", "confirming"}:
                 self.lidar_assist_reason = f"action-{decision.action}:{safety.reason}"
@@ -2252,10 +2321,13 @@ class RuntimeState:
                 "min_range_m": self.lidar_config.min_range_m,
                 "max_range_m": self.lidar_config.max_range_m,
                 "front_angle_deg": self.lidar_config.front_angle_deg,
+                "front_point_count": self.lidar_config.front_point_count,
+                "side_angle_deg": self.lidar_config.side_angle_deg,
                 "stop_distance_m": self.lidar_config.stop_distance_m,
                 "slow_distance_m": self.lidar_config.slow_distance_m,
                 "caution_distance_m": self.lidar_config.caution_distance_m,
                 "slow_throttle": self.lidar_config.slow_throttle,
+                "avoidance_gain": self.lidar_config.avoidance_gain,
                 "max_steering_correction": self.lidar_config.max_steering_correction,
                 "max_status_points": self.lidar_config.max_status_points,
             },
@@ -4104,6 +4176,107 @@ LIVE_VIEW_HTML = r"""<!doctype html>
               </div>
             </section>
 
+            <section class="card">
+              <h2>
+                <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 10l7-7 7 7"/><path d="M8 21h8"/></svg></span>
+                Autonoma
+                <span class="tag" id="autonomy-tune-tag">runtime</span>
+              </h2>
+              <div class="control-block">
+                <div class="compact-fields">
+                  <label class="compact-field" for="tune-crawl-throttle">
+                    <span>Crawl</span>
+                    <input type="number" id="tune-crawl-throttle" data-setting="crawl_throttle" min="0" max="1" step="0.01" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-slow-throttle">
+                    <span>Lento</span>
+                    <input type="number" id="tune-slow-throttle" data-setting="slow_throttle" min="0" max="1" step="0.01" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-turn-throttle">
+                    <span>Giro</span>
+                    <input type="number" id="tune-turn-throttle" data-setting="turn_throttle" min="0" max="1" step="0.01" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-fast-throttle">
+                    <span>Rapido</span>
+                    <input type="number" id="tune-fast-throttle" data-setting="fast_throttle" min="0" max="1" step="0.01" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-stop-hold">
+                    <span>Stop s</span>
+                    <input type="number" id="tune-stop-hold" data-setting="stop_hold_sec" min="0" max="5" step="0.05" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-turn-hold">
+                    <span>Giro s</span>
+                    <input type="number" id="tune-turn-hold" data-setting="turn_hold_sec" min="0" max="5" step="0.05" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-cooldown">
+                    <span>Cooldown</span>
+                    <input type="number" id="tune-cooldown" data-setting="cooldown_sec" min="0" max="5" step="0.05" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-min-area">
+                    <span>Area min</span>
+                    <input type="number" id="tune-min-area" data-setting="min_area_ratio" min="0.0001" max="0.1" step="0.0001" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-near-area">
+                    <span>Area cerca</span>
+                    <input type="number" id="tune-near-area" data-setting="near_area_ratio" min="0.0001" max="0.25" step="0.0005" inputmode="decimal">
+                  </label>
+                </div>
+              </div>
+            </section>
+
+            <section class="card">
+              <h2>
+                <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/><circle cx="12" cy="12" r="4"/><path d="M5.6 5.6l2.1 2.1"/><path d="M16.3 16.3l2.1 2.1"/><path d="M18.4 5.6l-2.1 2.1"/><path d="M7.7 16.3l-2.1 2.1"/></svg></span>
+                LiDAR seguridad
+                <span class="tag" id="lidar-tune-tag">45 pts</span>
+              </h2>
+              <div class="control-block">
+                <label class="toggle-line" for="tune-lidar-enabled">
+                  <span class="lbl">Asistencia LiDAR</span>
+                  <input type="checkbox" id="tune-lidar-enabled" data-setting="lidar_enabled">
+                </label>
+                <div class="compact-fields">
+                  <label class="compact-field" for="tune-lidar-front-points">
+                    <span>Frontal pts</span>
+                    <input type="number" id="tune-lidar-front-points" data-setting="lidar_front_point_count" min="1" max="180" step="1" inputmode="numeric">
+                  </label>
+                  <label class="compact-field" for="tune-lidar-stop">
+                    <span>Stop m</span>
+                    <input type="number" id="tune-lidar-stop" data-setting="lidar_stop_distance_m" min="0.05" max="2" step="0.01" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-lidar-slow">
+                    <span>Lento m</span>
+                    <input type="number" id="tune-lidar-slow" data-setting="lidar_slow_distance_m" min="0.05" max="3" step="0.01" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-lidar-caution">
+                    <span>Cerca m</span>
+                    <input type="number" id="tune-lidar-caution" data-setting="lidar_caution_distance_m" min="0.05" max="4" step="0.01" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-lidar-throttle">
+                    <span>Gas lento</span>
+                    <input type="number" id="tune-lidar-throttle" data-setting="lidar_slow_throttle" min="0" max="1" step="0.01" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-lidar-correction">
+                    <span>Giro max</span>
+                    <input type="number" id="tune-lidar-correction" data-setting="lidar_max_steering_correction" min="0" max="1" step="0.01" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-lidar-gain">
+                    <span>Ganancia</span>
+                    <input type="number" id="tune-lidar-gain" data-setting="lidar_avoidance_gain" min="0" max="2" step="0.01" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-lidar-stale">
+                    <span>Fresh s</span>
+                    <input type="number" id="tune-lidar-stale" data-setting="lidar_stale_sec" min="0.1" max="5" step="0.05" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-lidar-angle">
+                    <span>Fallback deg</span>
+                    <input type="number" id="tune-lidar-angle" data-setting="lidar_front_angle_deg" min="1" max="90" step="0.5" inputmode="decimal">
+                  </label>
+                </div>
+                <div class="row"><span class="k">Sector activo</span><span class="v accent" id="lidar-sector">--</span></div>
+              </div>
+            </section>
+
             <div class="save-defaults-row">
               <button type="button" id="save-defaults">Guardar como default</button>
               <span class="path" id="settings-path">--</span>
@@ -4215,6 +4388,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       trimTag: $('trim-tag'), trimValue: $('trim-value'), trimDir: $('trim-dir'),
       trimRange: $('trim-range'), trimInput: $('trim-input'), trimBase: $('trim-base'),
       trimEffective: $('trim-effective'), trimRequested: $('trim-requested'),
+      autonomyTuneTag: $('autonomy-tune-tag'), lidarTuneTag: $('lidar-tune-tag'), lidarSector: $('lidar-sector'),
 
       recTag: $('rec-tag'), recSession: $('rec-session'), recRecords: $('rec-records'),
       recImages: $('rec-images'), recCritical: $('rec-critical'), recVideo: $('rec-video'), recReplayer: $('rec-replayer'), recError: $('rec-error'),
@@ -4238,6 +4412,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     let cruiseDefault = 0.65;
     let cruisePostTimer = null;
     let turnCompPostTimer = null;
+    let settingsPostTimer = null;
     let activeTab = 'telemetria';
     let activeView = 'camera';
     let latestLidar = null;
@@ -4320,17 +4495,6 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       return {ctx, w, h, dpr};
     }
 
-    function projectLidarPoint(point, w, h, maxRange) {
-      const x = Number(point.x || 0);
-      const y = Math.max(0.02, Number(point.y || 0));
-      const z = Number(point.z || 0);
-      const depth = clampNum(y / maxRange, 0, 1);
-      const perspective = 0.34 + (1 - depth) * 0.72;
-      const screenX = w * 0.5 + (x / Math.max(0.8, y + 0.75)) * w * 0.36 * perspective;
-      const screenY = h * 0.86 - depth * h * 0.66 - z * h * 0.12;
-      return {x: screenX, y: screenY, depth};
-    }
-
     function drawLidarScene(lidar) {
       const canvas = els.lidarCanvas;
       if (!canvas) return;
@@ -4338,84 +4502,161 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       if (!ctx) return;
       const cfg = (lidar && lidar.config) || {};
       const maxRange = Math.max(1.0, Number(cfg.max_range_m || 8.0));
-      const stopDistance = Number(cfg.stop_distance_m || 0.42);
+      const stopDistance = Number(cfg.stop_distance_m || 0.15);
       const slowDistance = Number(cfg.slow_distance_m || 0.85);
       const points = (lidar && lidar.points) || [];
       const safety = (lidar && lidar.safety) || {};
+      const frontAngle = Number(safety.front_angle_deg || cfg.front_angle_deg || 22.5);
 
       ctx.clearRect(0, 0, w, h);
-      const bg = ctx.createLinearGradient(0, 0, 0, h);
-      bg.addColorStop(0, '#07090d');
+      const bg = ctx.createRadialGradient(w * 0.5, h * 0.52, 20, w * 0.5, h * 0.52, Math.max(w, h) * 0.7);
+      bg.addColorStop(0, '#0b1117');
       bg.addColorStop(1, '#030406');
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, w, h);
 
-      ctx.save();
-      ctx.translate(w * 0.5, h * 0.86);
-      ctx.strokeStyle = 'rgba(78,166,255,0.16)';
-      ctx.lineWidth = 1;
-      for (let i = 1; i <= 8; i++) {
-        const y = -i * h * 0.075;
-        ctx.beginPath();
-        ctx.moveTo(-w * 0.42 * (1 - i * 0.045), y);
-        ctx.lineTo(w * 0.42 * (1 - i * 0.045), y);
-        ctx.stroke();
-      }
-      for (let i = -4; i <= 4; i++) {
-        ctx.beginPath();
-        ctx.moveTo(i * w * 0.055, 0);
-        ctx.lineTo(i * w * 0.010, -h * 0.66);
-        ctx.stroke();
-      }
-      ctx.restore();
+      const cx = w * 0.5;
+      const cy = h * 0.52;
+      const radius = Math.max(90, Math.min(w, h) * 0.40);
+      const scale = radius / maxRange;
+      const status = (lidar && lidar.status) || 'searching';
 
-      function rangeLine(distance, color) {
-        const depth = clampNum(distance / maxRange, 0, 1);
-        const y = h * 0.86 - depth * h * 0.66;
+      function circleAt(distance, color, label) {
+        const r = clampNum(distance / maxRange, 0, 1) * radius;
         ctx.strokeStyle = color;
-        ctx.setLineDash([7, 7]);
+        ctx.lineWidth = 1;
+        ctx.setLineDash([6, 8]);
         ctx.beginPath();
-        ctx.moveTo(w * 0.22, y);
-        ctx.lineTo(w * 0.78, y);
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
-      }
-      rangeLine(slowDistance, 'rgba(251,191,36,0.30)');
-      rangeLine(stopDistance, 'rgba(248,113,113,0.38)');
-
-      const sorted = points.slice().sort((a, b) => Number(b.y || 0) - Number(a.y || 0));
-      for (const p of sorted) {
-        const projected = projectLidarPoint(p, w, h, maxRange);
-        if (projected.x < -20 || projected.x > w + 20 || projected.y < -20 || projected.y > h + 20) continue;
-        const distance = Number(p.distance || Math.hypot(Number(p.x || 0), Number(p.y || 0), Number(p.z || 0)));
-        const near = clampNum(1 - distance / maxRange, 0, 1);
-        const radius = 1.4 + near * 4.4;
-        const hue = distance <= stopDistance ? '248,113,113' : distance <= slowDistance ? '251,191,36' : '125,211,252';
-        ctx.fillStyle = 'rgba(' + hue + ',' + (0.42 + near * 0.50).toFixed(2) + ')';
-        ctx.beginPath();
-        ctx.arc(projected.x, projected.y, radius, 0, Math.PI * 2);
-        ctx.fill();
+        if (label && r > 16) {
+          ctx.fillStyle = color.replace(/0\.[0-9]+\)/, '0.92)');
+          ctx.font = '600 10px "IBM Plex Mono", monospace';
+          ctx.fillText(label, cx + r + 7, cy - 5);
+        }
       }
 
-      ctx.fillStyle = 'rgba(236,236,239,0.92)';
+      ctx.save();
+      ctx.strokeStyle = 'rgba(78,166,255,0.14)';
+      ctx.lineWidth = 1;
+      for (let i = 1; i <= 4; i++) {
+        const distance = maxRange * i / 4;
+        circleAt(distance, 'rgba(78,166,255,0.14)', distance.toFixed(distance >= 2 ? 0 : 1) + ' m');
+      }
+      ctx.setLineDash([4, 10]);
       ctx.beginPath();
-      ctx.moveTo(w * 0.5, h * 0.80);
-      ctx.lineTo(w * 0.47, h * 0.89);
-      ctx.lineTo(w * 0.53, h * 0.89);
+      ctx.moveTo(cx - radius, cy);
+      ctx.lineTo(cx + radius, cy);
+      ctx.moveTo(cx, cy - radius);
+      ctx.lineTo(cx, cy + radius);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const half = clampNum(frontAngle, 0, 180) * Math.PI / 180;
+      ctx.fillStyle = 'rgba(78,166,255,0.055)';
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, radius, -Math.PI / 2 - half, -Math.PI / 2 + half);
       ctx.closePath();
       ctx.fill();
+      ctx.strokeStyle = 'rgba(78,166,255,0.25)';
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.sin(half) * radius, cy - Math.cos(half) * radius);
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx - Math.sin(half) * radius, cy - Math.cos(half) * radius);
+      ctx.stroke();
+      ctx.restore();
 
-      const status = (lidar && lidar.status) || 'searching';
+      circleAt(slowDistance, 'rgba(251,191,36,0.30)', slowDistance.toFixed(2) + ' m');
+      circleAt(stopDistance, 'rgba(248,113,113,0.44)', stopDistance.toFixed(2) + ' m');
+
+      function toScreen(point) {
+        const x = Number(point.x || 0);
+        const y = Number(point.y || 0);
+        return {x: cx + x * scale, y: cy - y * scale};
+      }
+
+      const closeLabels = [];
+      for (const p of points) {
+        const distance = Number(p.distance || Math.hypot(Number(p.x || 0), Number(p.y || 0), Number(p.z || 0)));
+        if (!Number.isFinite(distance) || distance > maxRange) continue;
+        const pos = toScreen(p);
+        const dx = pos.x - cx;
+        const dy = pos.y - cy;
+        if (Math.hypot(dx, dy) > radius + 6) continue;
+        const near = clampNum(1 - distance / maxRange, 0, 1);
+        const hue = distance <= stopDistance ? '248,113,113' : distance <= slowDistance ? '251,191,36' : '125,211,252';
+        ctx.fillStyle = 'rgba(' + hue + ',' + (0.40 + near * 0.52).toFixed(2) + ')';
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, 1.7 + near * 4.2, 0, Math.PI * 2);
+        ctx.fill();
+        if (distance <= Math.max(slowDistance, stopDistance + 0.12)) {
+          closeLabels.push({x: pos.x, y: pos.y, distance});
+        }
+      }
+
+      const nearest = safety.nearest || null;
+      if (nearest) {
+        const pos = toScreen(nearest);
+        ctx.strokeStyle = status === 'stop' ? 'rgba(248,113,113,0.88)' : 'rgba(251,191,36,0.78)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, 9, 0, Math.PI * 2);
+        ctx.stroke();
+        closeLabels.unshift({x: pos.x, y: pos.y, distance: Number(nearest.distance || safety.min_front_distance_m || 0)});
+      }
+
+      const usedLabelY = [];
+      ctx.font = '600 10px "IBM Plex Mono", monospace';
+      for (const label of closeLabels.slice(0, 10)) {
+        if (!Number.isFinite(label.distance)) continue;
+        if (usedLabelY.some(y => Math.abs(y - label.y) < 14)) continue;
+        usedLabelY.push(label.y);
+        const text = label.distance.toFixed(2) + ' m';
+        const tx = clampNum(label.x + 10, 8, w - 72);
+        const ty = clampNum(label.y - 6, 18, h - 10);
+        ctx.fillStyle = 'rgba(3,4,6,0.72)';
+        ctx.fillRect(tx - 4, ty - 11, 58, 16);
+        ctx.fillStyle = label.distance <= stopDistance ? '#f87171' : '#fbbf24';
+        ctx.fillText(text, tx, ty);
+      }
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.fillStyle = 'rgba(236,236,239,0.95)';
+      ctx.strokeStyle = 'rgba(8,8,12,0.88)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(0, -30);
+      ctx.lineTo(17, 18);
+      ctx.lineTo(5, 11);
+      ctx.lineTo(5, 34);
+      ctx.lineTo(-5, 34);
+      ctx.lineTo(-5, 11);
+      ctx.lineTo(-17, 18);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#4ea6ff';
+      ctx.beginPath();
+      ctx.arc(0, 2, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
       const front = safety.min_front_distance_m == null ? '--' : Number(safety.min_front_distance_m).toFixed(2) + ' m';
       ctx.fillStyle = 'rgba(8,8,12,0.72)';
-      ctx.fillRect(18, h - 88, 260, 58);
+      ctx.fillRect(18, h - 98, 300, 68);
       ctx.strokeStyle = status === 'stop' ? 'rgba(248,113,113,0.55)' : status === 'slow' ? 'rgba(251,191,36,0.50)' : 'rgba(78,166,255,0.36)';
-      ctx.strokeRect(18.5, h - 87.5, 259, 57);
+      ctx.strokeRect(18.5, h - 97.5, 299, 67);
       ctx.font = '600 11px "IBM Plex Mono", monospace';
       ctx.fillStyle = '#7dd3fc';
-      ctx.fillText('LIDAR ' + status.toUpperCase(), 34, h - 62);
+      ctx.fillText('LIDAR TOP · ' + status.toUpperCase(), 34, h - 70);
       ctx.fillStyle = '#ececef';
-      ctx.fillText(points.length + ' pts · frontal ' + front, 34, h - 40);
+      ctx.fillText(points.length + ' pts · frontal ' + front, 34, h - 49);
+      ctx.fillStyle = '#9ca3af';
+      ctx.fillText((cfg.front_point_count || safety.front_point_count || 45) + ' pts frontales · stop ' + stopDistance.toFixed(2) + ' m', 34, h - 31);
     }
 
     function renderSettings(settings) {
@@ -4424,6 +4665,65 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       if (els.settingsPath) {
         els.settingsPath.textContent = (settings.persisted ? 'default · ' : 'runtime · ') + (settings.path || '--');
       }
+      document.querySelectorAll('[data-setting]').forEach(input => {
+        const key = input.dataset.setting;
+        if (!key || !(key in controlSettings)) return;
+        const value = controlSettings[key];
+        if (input.type === 'checkbox') {
+          if (document.activeElement !== input) input.checked = !!value;
+          return;
+        }
+        if (document.activeElement === input) return;
+        const step = Number(input.step || 0.001);
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return;
+        if (step >= 1) input.value = String(Math.round(numeric));
+        else if (step >= 0.01) input.value = numeric.toFixed(2);
+        else input.value = numeric.toFixed(4);
+      });
+      const stop = Number(controlSettings.lidar_stop_distance_m);
+      const frontPoints = Number(controlSettings.lidar_front_point_count);
+      if (els.lidarTuneTag && Number.isFinite(frontPoints)) {
+        els.lidarTuneTag.textContent = Math.round(frontPoints) + ' pts';
+      }
+      if (els.lidarSector && Number.isFinite(frontPoints) && Number.isFinite(stop)) {
+        els.lidarSector.textContent = Math.round(frontPoints) + ' pts · stop ' + stop.toFixed(2) + ' m';
+      }
+      if (els.autonomyTuneTag && Number.isFinite(Number(controlSettings.turn_hold_sec))) {
+        els.autonomyTuneTag.textContent = 'giro ' + Number(controlSettings.turn_hold_sec).toFixed(2) + ' s';
+      }
+    }
+
+    function collectRuntimeSettings() {
+      const values = {};
+      document.querySelectorAll('[data-setting]').forEach(input => {
+        const key = input.dataset.setting;
+        if (!key) return;
+        values[key] = input.type === 'checkbox' ? input.checked : Number(input.value);
+      });
+      return values;
+    }
+
+    async function postRuntimeSettings() {
+      const values = collectRuntimeSettings();
+      try {
+        const res = await fetch('/settings', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({values}),
+          cache: 'no-store',
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'settings');
+        renderSettings(data.settings);
+      } catch (_) {
+        setPillState(els.pillCtrl, 'bad');
+      }
+    }
+
+    function scheduleRuntimeSettings() {
+      if (settingsPostTimer) clearTimeout(settingsPostTimer);
+      settingsPostTimer = setTimeout(() => { settingsPostTimer = null; postRuntimeSettings(); }, 160);
     }
 
     async function saveDefaults() {
@@ -4441,6 +4741,11 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         clearTimeout(turnCompPostTimer);
         turnCompPostTimer = null;
         await postTurnCompensation();
+      }
+      if (settingsPostTimer) {
+        clearTimeout(settingsPostTimer);
+        settingsPostTimer = null;
+        await postRuntimeSettings();
       }
       try {
         const res = await fetch('/settings/defaults', {
@@ -4786,6 +5091,10 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     els.turnCompInterval.addEventListener('input', scheduleTurnCompensation);
     els.turnCompMagnitude.addEventListener('input', scheduleTurnCompensation);
     els.turnCompDuration.addEventListener('input', scheduleTurnCompensation);
+    document.querySelectorAll('[data-setting]').forEach(input => {
+      input.addEventListener(input.type === 'checkbox' ? 'change' : 'input', scheduleRuntimeSettings);
+      if (input.type !== 'checkbox') input.addEventListener('change', postRuntimeSettings);
+    });
     if (els.saveDefaults) els.saveDefaults.addEventListener('click', saveDefaults);
 
     /* manual control loop */
@@ -4986,9 +5295,14 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         els.lidarTag.textContent = lidar.status || '--';
         els.lidarStatus.textContent = lidar.error || (lidar.status || '--');
         els.lidarFront.textContent = frontDistance == null ? '--' : frontDistance.toFixed(2) + ' m';
-        els.lidarPoints.textContent = (lidar.point_count || 0) + ' · ' + (lidar.received_age_sec == null ? '--' : Number(lidar.received_age_sec).toFixed(2) + ' s');
+        els.lidarPoints.textContent = (lidar.point_count || 0) + ' · frontal ' + (lidarSafety.front_obstacle_count ?? '--') + ' · ' + (lidar.received_age_sec == null ? '--' : Number(lidar.received_age_sec).toFixed(2) + ' s');
         els.lidarCorrection.textContent = nfmt(lidarSafety.steering_correction, 3) + ' · limite ' + (lidarSafety.throttle_limit == null ? '--' : nfmt(lidarSafety.throttle_limit, 2));
         els.lidarReason.textContent = (lidar.assist_active ? 'activo · ' : '') + (lidar.assist_reason || lidarSafety.reason || '--');
+        if (els.lidarSector) {
+          const frontPts = (lidar.config && lidar.config.front_point_count) || lidarSafety.front_point_count || controlSettings.lidar_front_point_count || 45;
+          const frontDeg = lidarSafety.front_angle_deg == null ? null : Number(lidarSafety.front_angle_deg);
+          els.lidarSector.textContent = Math.round(Number(frontPts)) + ' pts' + (frontDeg == null ? '' : ' · +/-' + frontDeg.toFixed(1) + ' deg');
+        }
         drawLidarScene(lidar);
 
         /* control + autonomy pills + values */

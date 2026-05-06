@@ -28,9 +28,10 @@ class LidarConfig:
     stale_sec: float = 0.75
     min_range_m: float = 0.05
     max_range_m: float = 8.0
-    front_angle_deg: float = 34.0
+    front_angle_deg: float = 22.5
+    front_point_count: int = 45
     side_angle_deg: float = 82.0
-    stop_distance_m: float = 0.42
+    stop_distance_m: float = 0.15
     slow_distance_m: float = 0.85
     caution_distance_m: float = 1.35
     slow_throttle: float = 0.25
@@ -46,6 +47,7 @@ class LidarPoint:
     y: float
     z: float
     intensity: float | None = None
+    beam_index: int | None = None
 
     @property
     def distance(self) -> float:
@@ -65,6 +67,8 @@ class LidarPoint:
         }
         if self.intensity is not None:
             payload["intensity"] = round(self.intensity, 4)
+        if self.beam_index is not None:
+            payload["beam_index"] = self.beam_index
         return payload
 
 
@@ -75,6 +79,8 @@ class LidarScan:
     source: str = "car"
     frame_id: str = "tp2-lidar"
     sensor_time: float | None = None
+    sample_count: int | None = None
+    angle_increment_rad: float | None = None
 
     def age(self, now: float | None = None) -> float:
         now = time.time() if now is None else now
@@ -93,6 +99,9 @@ class LidarSafety:
     min_front_distance_m: float | None
     steering_correction: float
     throttle_limit: float | None
+    front_angle_deg: float | None = None
+    front_point_count: int | None = None
+    front_obstacle_count: int = 0
 
     def to_status(self) -> dict[str, Any]:
         return {
@@ -108,6 +117,11 @@ class LidarSafety:
             ),
             "steering_correction": round(self.steering_correction, 3),
             "throttle_limit": None if self.throttle_limit is None else round(self.throttle_limit, 3),
+            "front_angle_deg": (
+                None if self.front_angle_deg is None else round(self.front_angle_deg, 2)
+            ),
+            "front_point_count": self.front_point_count,
+            "front_obstacle_count": self.front_obstacle_count,
         }
 
 
@@ -130,15 +144,31 @@ def normalize_lidar_payload(
         frame_id = str(payload.get("frame_id") or payload.get("frame") or frame_id)
         sensor_time = _finite_float(payload.get("timestamp", payload.get("ts", payload.get("time"))))
         if "ranges" in payload:
-            points = _points_from_ranges(payload, config)
-            return LidarScan(tuple(points), received_at=received_at, source=source, frame_id=frame_id, sensor_time=sensor_time)
+            points, sample_count, angle_increment_rad = _points_from_ranges(payload, config)
+            return LidarScan(
+                tuple(points),
+                received_at=received_at,
+                source=source,
+                frame_id=frame_id,
+                sensor_time=sensor_time,
+                sample_count=sample_count,
+                angle_increment_rad=angle_increment_rad,
+            )
         for key in ("points", "point_cloud", "pointcloud", "scan"):
             if key in payload:
                 points_payload = payload[key]
                 break
 
-    points = list(_points_from_iterable(points_payload, config))
-    return LidarScan(tuple(points), received_at=received_at, source=source, frame_id=frame_id, sensor_time=sensor_time)
+    points, sample_count, angle_increment_rad = _points_from_iterable(points_payload, config)
+    return LidarScan(
+        tuple(points),
+        received_at=received_at,
+        source=source,
+        frame_id=frame_id,
+        sensor_time=sensor_time,
+        sample_count=sample_count,
+        angle_increment_rad=angle_increment_rad,
+    )
 
 
 def analyze_lidar_scan(
@@ -160,17 +190,32 @@ def analyze_lidar_scan(
     if point_count == 0:
         return LidarSafety("empty", "empty-scan", False, False, 0, age, None, None, 0.0, None)
 
+    front_angle_deg = _effective_front_angle_deg(scan, config)
     front_points = [
         point
         for point in scan.points
-        if point.y > 0.0 and abs(point.angle_deg) <= config.front_angle_deg
+        if point.y > 0.0 and abs(point.angle_deg) <= front_angle_deg
     ]
     if not front_points:
-        return LidarSafety("clear", "no-front-points", False, True, point_count, age, None, None, 0.0, None)
+        return LidarSafety(
+            "clear",
+            "no-front-points",
+            False,
+            True,
+            point_count,
+            age,
+            None,
+            None,
+            0.0,
+            None,
+            front_angle_deg,
+            config.front_point_count,
+            0,
+        )
 
     nearest = min(front_points, key=lambda point: point.distance)
     distance = nearest.distance
-    if distance <= config.stop_distance_m:
+    if distance <= config.stop_distance_m + 1e-6:
         return LidarSafety(
             "stop",
             "front-obstacle-stop",
@@ -182,9 +227,12 @@ def analyze_lidar_scan(
             distance,
             0.0,
             0.0,
+            front_angle_deg,
+            config.front_point_count,
+            len(front_points),
         )
 
-    if distance <= config.slow_distance_m:
+    if distance <= config.slow_distance_m + 1e-6:
         correction = avoidance_correction(scan.points, nearest, config)
         return LidarSafety(
             "slow",
@@ -197,9 +245,12 @@ def analyze_lidar_scan(
             distance,
             correction,
             config.slow_throttle,
+            front_angle_deg,
+            config.front_point_count,
+            len(front_points),
         )
 
-    if distance <= config.caution_distance_m:
+    if distance <= config.caution_distance_m + 1e-6:
         correction = avoidance_correction(scan.points, nearest, config) * 0.5
         return LidarSafety(
             "caution",
@@ -212,9 +263,26 @@ def analyze_lidar_scan(
             distance,
             correction,
             None,
+            front_angle_deg,
+            config.front_point_count,
+            len(front_points),
         )
 
-    return LidarSafety("clear", "front-clear", False, True, point_count, age, nearest, distance, 0.0, None)
+    return LidarSafety(
+        "clear",
+        "front-clear",
+        False,
+        True,
+        point_count,
+        age,
+        nearest,
+        distance,
+        0.0,
+        None,
+        front_angle_deg,
+        config.front_point_count,
+        len(front_points),
+    )
 
 
 def lidar_status_points(scan: LidarScan | None, config: LidarConfig) -> list[dict[str, Any]]:
@@ -272,15 +340,19 @@ def _decode_payload_container(payload: Any) -> Any:
     return payload
 
 
-def _points_from_ranges(payload: dict[str, Any], config: LidarConfig) -> list[LidarPoint]:
-    ranges = payload.get("ranges") or []
+def _points_from_ranges(
+    payload: dict[str, Any],
+    config: LidarConfig,
+) -> tuple[list[LidarPoint], int, float | None]:
+    ranges = payload.get("ranges", [])
     angles = payload.get("angles")
     unit = str(payload.get("angle_unit") or payload.get("unit") or "rad").strip().lower()
     angle_min = _finite_float(payload.get("angle_min", payload.get("start_angle")))
     angle_increment = _finite_float(payload.get("angle_increment", payload.get("angle_step")))
     angle_max = _finite_float(payload.get("angle_max", payload.get("end_angle")))
 
-    range_values = list(_coerce_numeric_sequence(ranges))
+    range_values = list(_coerce_range_sequence(ranges))
+    sample_count = len(range_values)
     if angles is not None:
         angle_values = list(_coerce_numeric_sequence(angles))
     else:
@@ -295,24 +367,32 @@ def _points_from_ranges(payload: dict[str, Any], config: LidarConfig) -> list[Li
 
     if unit in {"deg", "degree", "degrees"}:
         angle_values = [math.radians(value) for value in angle_values]
+        if angle_increment is not None:
+            angle_increment = math.radians(angle_increment)
 
     points: list[LidarPoint] = []
     intensities = list(_coerce_numeric_sequence(payload.get("intensities", [])))
     for idx, distance in enumerate(range_values):
         if idx >= len(angle_values):
             break
+        if distance is None:
+            continue
         point = _point_from_polar(
             angle_values[idx],
             distance,
             intensities[idx] if idx < len(intensities) else None,
             config,
+            beam_index=idx,
         )
         if point is not None:
             points.append(point)
-    return points
+    return points, sample_count, angle_increment
 
 
-def _points_from_iterable(payload: Any, config: LidarConfig) -> Iterable[LidarPoint]:
+def _points_from_iterable(
+    payload: Any,
+    config: LidarConfig,
+) -> tuple[list[LidarPoint], int | None, float | None]:
     if isinstance(payload, np.ndarray):
         values = payload.tolist()
     else:
@@ -320,24 +400,26 @@ def _points_from_iterable(payload: Any, config: LidarConfig) -> Iterable[LidarPo
     if isinstance(values, dict):
         values = values.values()
     if not isinstance(values, Iterable) or isinstance(values, (str, bytes, bytearray, memoryview)):
-        return []
+        return [], None, None
 
-    flat_ranges = list(_coerce_range_sequence(values))
-    if any(distance is not None for distance in flat_ranges):
+    items = list(values)
+    flat_ranges = list(_coerce_range_sequence(items))
+    if items and all(_is_scalar_range_token(item) for item in items):
         angle_increment = (2.0 * math.pi) / max(1, len(flat_ranges))
-        return [
+        points = [
             point
             for idx, distance in enumerate(flat_ranges)
             if distance is not None
-            and (point := _point_from_polar(idx * angle_increment, distance, None, config)) is not None
+            and (point := _point_from_polar(idx * angle_increment, distance, None, config, beam_index=idx)) is not None
         ]
+        return points, len(flat_ranges), angle_increment
 
     points: list[LidarPoint] = []
-    for item in values:
+    for item in items:
         point = _point_from_item(item, config)
         if point is not None:
             points.append(point)
-    return points
+    return points, None, None
 
 
 def _point_from_item(item: Any, config: LidarConfig) -> LidarPoint | None:
@@ -374,6 +456,8 @@ def _point_from_polar(
     distance: float,
     intensity: float | None,
     config: LidarConfig,
+    *,
+    beam_index: int | None = None,
 ) -> LidarPoint | None:
     if not math.isfinite(angle_rad):
         return None
@@ -381,7 +465,7 @@ def _point_from_polar(
         return None
     x = math.sin(angle_rad) * distance
     y = math.cos(angle_rad) * distance
-    return LidarPoint(round(x, 4), round(y, 4), 0.0, intensity)
+    return LidarPoint(x, y, 0.0, intensity, beam_index)
 
 
 def _point_from_cartesian(
@@ -399,6 +483,15 @@ def _point_from_cartesian(
 
 def _range_ok(distance: float, config: LidarConfig) -> bool:
     return math.isfinite(distance) and config.min_range_m <= distance <= config.max_range_m
+
+
+def _effective_front_angle_deg(scan: LidarScan, config: LidarConfig) -> float:
+    sample_count = scan.sample_count or 0
+    front_point_count = max(0, int(config.front_point_count or 0))
+    if sample_count > 0 and front_point_count > 0:
+        half_window = (min(front_point_count, sample_count) * 360.0 / sample_count) / 2.0
+        return _clamp(half_window, 0.0, 180.0)
+    return _clamp(float(config.front_angle_deg), 0.0, 180.0)
 
 
 def _coerce_numeric_sequence(values: Any) -> Iterable[float]:
@@ -432,3 +525,17 @@ def _coerce_range_sequence(values: Any) -> Iterable[float | None]:
             continue
         clean.append(number if math.isfinite(number) else None)
     return clean
+
+
+def _is_scalar_range_token(value: Any) -> bool:
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, (str, bytes, bytearray, memoryview, dict)):
+        return False
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray, memoryview)):
+        return False
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    return True

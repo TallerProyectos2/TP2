@@ -19,10 +19,13 @@ LiDAR is integrated as an EPC-owned safety input for `servicios/coche.py`.
 
 The current safety layer is deterministic and runs before the final UDP control packet is sent.
 
-- `TP2_LIDAR_STOP_DISTANCE_M` default `0.42`: frontal obstacle forces `lidar-stop` and neutral throttle.
+- `TP2_LIDAR_FRONT_POINT_COUNT` default `45`: the frontal collision sector uses the 45 LiDAR beams centered on the forward direction when the scan sample count is known.
+- `TP2_LIDAR_STOP_DISTANCE_M` default `0.15`: an obstacle at or below 15 cm inside that frontal sector forces `lidar-stop` and neutral throttle.
 - `TP2_LIDAR_SLOW_DISTANCE_M` default `0.85`: frontal obstacle caps throttle to `TP2_LIDAR_SLOW_THROTTLE`.
 - `TP2_LIDAR_CAUTION_DISTANCE_M` default `1.35`: frontal obstacle can add a bounded steering correction.
 - `TP2_LIDAR_STALE_SEC` default `0.75`: stale LiDAR does not override camera/autonomous decisions.
+- The web tuning panel can adjust LiDAR enablement, frontal beam count, stop/slow/caution distances, slow throttle, avoidance gain, max steering correction, and stale timeout at runtime through `/settings`.
+- The web LiDAR stage is a top-down reconstruction: the car is drawn as a forward arrow, scan points surround it in BEV coordinates, distance rings show range, and close/front points are labeled with meters.
 
 This keeps EPC as the control hub. Jetson remains inference-only if a learned LiDAR model is added later.
 

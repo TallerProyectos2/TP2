@@ -76,11 +76,12 @@ class LidarProcessorTest(unittest.TestCase):
         self.assertFalse(safety.clear)
 
     def test_flat_professor_ranges_are_treated_as_360_degree_scan(self):
+        config = LidarConfig(stop_distance_m=0.4)
         ranges = [2.0] * 360
         ranges[0] = 0.35
-        scan = normalize_lidar_payload(ranges, received_at=10.0)
+        scan = normalize_lidar_payload(ranges, config=config, received_at=10.0)
 
-        safety = analyze_lidar_scan(scan, config=LidarConfig(), now=10.1)
+        safety = analyze_lidar_scan(scan, config=config, now=10.1)
 
         self.assertEqual(len(scan.points), 360)
         self.assertAlmostEqual(scan.points[0].x, 0.0, places=3)
@@ -93,7 +94,31 @@ class LidarProcessorTest(unittest.TestCase):
         scan = normalize_lidar_payload(ranges, received_at=10.0)
 
         self.assertEqual(len(scan.points), 1)
+        self.assertEqual(scan.sample_count, 360)
         self.assertAlmostEqual(scan.points[0].angle_deg, 10.0, places=1)
+
+    def test_front_45_points_stop_at_15_cm(self):
+        config = LidarConfig(front_point_count=45, stop_distance_m=0.15, slow_distance_m=0.6)
+        ranges = [float("inf")] * 360
+        ranges[22] = 0.15
+
+        scan = normalize_lidar_payload(ranges, config=config, received_at=10.0)
+        safety = analyze_lidar_scan(scan, config=config, now=10.1)
+
+        self.assertEqual(safety.status, "stop")
+        self.assertEqual(safety.front_point_count, 45)
+        self.assertAlmostEqual(safety.front_angle_deg, 22.5)
+        self.assertEqual(safety.throttle_limit, 0.0)
+
+    def test_point_just_outside_front_45_does_not_stop(self):
+        config = LidarConfig(front_point_count=45, stop_distance_m=0.15, slow_distance_m=0.6)
+        ranges = [float("inf")] * 360
+        ranges[23] = 0.12
+
+        scan = normalize_lidar_payload(ranges, config=config, received_at=10.0)
+        safety = analyze_lidar_scan(scan, config=config, now=10.1)
+
+        self.assertEqual(safety.status, "clear")
 
 
 if __name__ == "__main__":

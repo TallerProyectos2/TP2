@@ -39,14 +39,14 @@ Normal sessions use one EPC runtime from `servicios/`:
   - optional Roboflow inference overlay on live camera frames
 - Web autonomous mode:
   - operator toggles manual/autonomous from the same web UI
-  - runtime tuning in the same web UI can adjust manual throttle, autonomous cruise/turn pulse values, steering trim, and lane-assist correction without moving control off EPC
+  - runtime tuning in the same web UI can adjust manual throttle, autonomous cruise/turn pulse values, steering trim, lane-assist correction, LiDAR safety thresholds/sector, and autonomous timing/detection parameters without moving control off EPC
   - `POST /settings/defaults` saves the currently tuned values to a host-local defaults file; this file is machine configuration and must not be committed
   - EPC uses fresh Roboflow detections to choose continue, turn, stop, crawl, slow, or faster cruise
   - autonomous forward movement uses positive throttle `+0.65`; stop, ambiguity, stale frame or stale inference still force neutral `0.0`; the EPC web UI can change cruise throttle live
   - outgoing UDP steering is trimmed before packet send; current default `TP2_STEERING_TRIM=-0.24` compensates the physical left drift with a stronger rightward correction, the EPC web UI can change that trim live, and open turn maneuvers bypass trim to keep full lock
   - an optional periodic right-turn pulse can compensate left drift during autonomous forward actions without applying during open turn maneuvers
   - `coche.py` also runs OpenCV lane assist on the camera frame: it detects the continuous blue/green tape lines on the carpet, estimates the current corridor, prefers the right corridor when several lanes are visible, slows during strong recovery, and applies a bounded steering correction only during autonomous forward actions
-  - `coche.py` also consumes fresh LiDAR scans when connected: close frontal obstacles force `lidar-stop`, nearer slow-zone obstacles cap throttle and add a bounded avoidance steering correction, and stale/missing LiDAR does not move orchestration away from EPC
+  - `coche.py` also consumes fresh LiDAR scans when connected: the default collision sector is the 45 frontal beams centered on the car direction, obstacles at or below `0.15 m` force `lidar-stop`, nearer slow-zone obstacles cap throttle and add a bounded avoidance steering correction, and stale/missing LiDAR does not move orchestration away from EPC
   - nearest/relevant signs are selected by bounding-box area, confidence, persistence, image zone (`left`, `center`, `right`), and maneuver state
   - default sign thresholds are tuned to act on slightly smaller/farther signs; STOP detections stop immediately and turn decisions begin before the car reaches the sign
   - detections are tracked across frames; default turn decisions trigger full-lock 90-degree maneuvers on the first valid confirmed frame, including far turn detections
@@ -85,7 +85,7 @@ Normal sessions use one EPC runtime from `servicios/`:
 - The web UI exposes `POST /mode` for `manual` and `autonomous`. Manual is the safe default; autonomous should only be enabled after live camera frames, inference, and lane status are visible.
 - The web UI exposes `POST /steering-trim`, `POST /cruise-speed`, and `POST /turn-compensation` for live steering trim, cruise throttle, and periodic right-pulse tuning.
 - The web UI exposes `POST /recording` for dataset capture. Default recording state is controlled by `TP2_SESSION_RECORD_AUTOSTART`; normal systemd operation records sessions by default for retraining evidence.
-- The web UI main stage can switch between the annotated camera stream and a LiDAR reconstruction fed by `/status.json`.
+- The web UI main stage can switch between the annotated camera stream and a top-down LiDAR reconstruction fed by `/status.json`; the LiDAR view shows the car as a direction arrow, surrounding scan points, distance rings, and close-point distance labels.
 - `scripts_profesor/car1_grupo4.py` is a professor-style manual-control server adapted for Grupo 4. It intentionally keeps the professor script behavior and binds the LTE runtime address `172.16.0.1:20001`, so do not run it at the same time as `tp2-car-control.service`.
 - `coche.py` defaults its live inference endpoint to Jetson at `http://100.115.99.8:9001` using direct model inference (`TP2_INFERENCE_TARGET=model`, `ROBOFLOW_MODEL_ID=tp2-g4-2026/2`); override these variables only when intentionally using another backend.
 - `coche.py` loads `/home/tp2/.config/tp2/inference.env` or `/home/tp2/.config/tp2/coche-jetson.env` automatically, so operators do not need to `source` the token manually.

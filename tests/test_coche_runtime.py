@@ -217,6 +217,11 @@ class RuntimeStateModeTest(unittest.TestCase):
                         "turn_compensation_interval_sec": 0.5,
                         "turn_compensation_duration_sec": 0.2,
                         "turn_compensation_magnitude": 0.33,
+                        "lidar_front_point_count": 45,
+                        "lidar_stop_distance_m": 0.15,
+                        "lidar_slow_distance_m": 0.35,
+                        "lidar_caution_distance_m": 0.7,
+                        "lidar_slow_throttle": 0.21,
                     }
                 }
             )
@@ -229,6 +234,9 @@ class RuntimeStateModeTest(unittest.TestCase):
             self.assertEqual(settings["values"]["turn_compensation_interval_sec"], 0.5)
             self.assertEqual(settings["values"]["turn_compensation_duration_sec"], 0.2)
             self.assertEqual(settings["values"]["turn_compensation_magnitude"], 0.33)
+            self.assertEqual(settings["values"]["lidar_front_point_count"], 45)
+            self.assertEqual(settings["values"]["lidar_stop_distance_m"], 0.15)
+            self.assertEqual(settings["values"]["lidar_slow_throttle"], 0.21)
             self.assertTrue(saved["persisted"])
             self.assertTrue(state.settings_path.exists())
 
@@ -276,7 +284,7 @@ class RuntimeStateModeTest(unittest.TestCase):
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         seq = state.update_frame(frame)
         state.set_predictions(seq, [], 1)
-        state.update_lidar({"ranges": [0.32], "angle_min": 0.0, "angle_increment": 0.0})
+        state.update_lidar({"ranges": [0.12], "angle_min": 0.0, "angle_increment": 0.0})
 
         result = state.set_drive_mode("autonomous")
 
@@ -285,6 +293,16 @@ class RuntimeStateModeTest(unittest.TestCase):
         lidar = state.snapshot()["lidar"]
         self.assertTrue(lidar["assist_active"])
         self.assertEqual(lidar["safety"]["status"], "stop")
+
+    def test_lidar_stop_overrides_autonomous_safe_fallback(self):
+        state = RuntimeState()
+        state.update_lidar([0.12] + [float("inf")] * 359)
+
+        result = state.set_drive_mode("autonomous")
+
+        self.assertEqual(result["control"]["throttle"], NEUTRAL_THROTTLE)
+        self.assertEqual(result["autonomy"]["action"], "lidar-stop")
+        self.assertTrue(result["control"]["armed"])
 
     def test_lidar_packet_accepts_raw_json_payload(self):
         packet_type, payload = parse_car_packet(

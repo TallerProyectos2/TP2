@@ -90,6 +90,25 @@ def env_csv_set(name: str, default: set[str]) -> set[str]:
     return {item for item in values if item}
 
 
+@dataclass(frozen=True)
+class ImuSpeedConfig:
+    enabled: bool = True
+    speed_control_enabled: bool = True
+    stale_sec: float = 0.75
+    forward_axis: str = "y"
+    forward_sign: float = 1.0
+    accel_deadband_mps2: float = 0.08
+    velocity_decay_per_sec: float = 0.45
+    target_speed_scale_mps: float = 1.20
+    kp: float = 0.20
+    ki: float = 0.04
+    kd: float = 0.015
+    integral_limit: float = 0.75
+    max_throttle_correction: float = 0.18
+    min_active_throttle: float = 0.08
+    max_speed_mps: float = 3.0
+
+
 BIND_IP = os.getenv("TP2_BIND_IP", "172.16.0.1")
 BIND_PORT = env_int("TP2_BIND_PORT", 20001)
 UDP_RECV_BYTES = env_int("TP2_UDP_RECV_BYTES", 131072)
@@ -218,6 +237,23 @@ LIDAR_CONFIG = LidarConfig(
     center_deadband_m=env_float("TP2_LIDAR_CENTER_DEADBAND_M", 0.08),
     max_status_points=max(0, env_int("TP2_LIDAR_STATUS_MAX_POINTS", 720)),
 )
+IMU_CONFIG = ImuSpeedConfig(
+    enabled=env_bool("TP2_IMU_ENABLED", True),
+    speed_control_enabled=env_bool("TP2_IMU_SPEED_CONTROL_ENABLED", True),
+    stale_sec=env_float("TP2_IMU_STALE_SEC", 0.75),
+    forward_axis=os.getenv("TP2_IMU_FORWARD_AXIS", "y").strip().lower() or "y",
+    forward_sign=env_float("TP2_IMU_FORWARD_SIGN", 1.0),
+    accel_deadband_mps2=env_float("TP2_IMU_ACCEL_DEADBAND_MPS2", 0.08),
+    velocity_decay_per_sec=env_float("TP2_IMU_VELOCITY_DECAY_PER_SEC", 0.45),
+    target_speed_scale_mps=env_float("TP2_IMU_TARGET_SPEED_SCALE_MPS", 1.20),
+    kp=env_float("TP2_IMU_SPEED_KP", 0.20),
+    ki=env_float("TP2_IMU_SPEED_KI", 0.04),
+    kd=env_float("TP2_IMU_SPEED_KD", 0.015),
+    integral_limit=env_float("TP2_IMU_SPEED_INTEGRAL_LIMIT", 0.75),
+    max_throttle_correction=env_float("TP2_IMU_MAX_THROTTLE_CORRECTION", 0.18),
+    min_active_throttle=env_float("TP2_IMU_MIN_ACTIVE_THROTTLE", 0.08),
+    max_speed_mps=env_float("TP2_IMU_MAX_SPEED_MPS", 3.0),
+)
 TURN_COMPENSATION_ENABLED = env_bool("TP2_TURN_COMPENSATION_ENABLED", False)
 TURN_COMPENSATION_INTERVAL_SEC = max(0.0, env_float("TP2_TURN_COMPENSATION_INTERVAL_SEC", 2.5))
 TURN_COMPENSATION_DURATION_SEC = max(0.0, env_float("TP2_TURN_COMPENSATION_DURATION_SEC", 0.18))
@@ -225,6 +261,10 @@ TURN_COMPENSATION_MAGNITUDE = max(0.0, abs(env_float("TP2_TURN_COMPENSATION_MAGN
 TURN_COMPENSATION_ACTIONS = env_csv_set(
     "TP2_TURN_COMPENSATION_ACTIONS",
     {"continue", "speed-30", "speed-90", "confirming", "cooldown"},
+)
+IMU_SPEED_ACTIONS = env_csv_set(
+    "TP2_IMU_SPEED_ACTIONS",
+    {"continue", "speed-30", "speed-90", "confirming", "cooldown", "approach-stop"},
 )
 
 SESSION_RECORD_DIR = Path(os.getenv("TP2_SESSION_RECORD_DIR", "/srv/tp2/frames/autonomous")).expanduser()
@@ -281,6 +321,42 @@ def finite_bool(value: Any, *, name: str = "value") -> bool:
     raise ValueError(f"invalid {name}")
 
 
+def optional_finite_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def finite_vector3(value: Any) -> dict[str, float] | None:
+    if isinstance(value, dict):
+        result: dict[str, float] = {}
+        for axis in ("x", "y", "z"):
+            number = optional_finite_float(value.get(axis))
+            if number is not None:
+                result[axis] = number
+        return result if result else None
+    if isinstance(value, (list, tuple)) and len(value) >= 3:
+        result = {}
+        for axis, item in zip(("x", "y", "z"), value[:3]):
+            number = optional_finite_float(item)
+            if number is None:
+                return None
+            result[axis] = number
+        return result
+    return None
+
+
+def first_vector3(payload: dict[str, Any], keys: tuple[str, ...]) -> dict[str, float] | None:
+    for key in keys:
+        if key in payload:
+            vector = finite_vector3(payload[key])
+            if vector is not None:
+                return vector
+    return None
+
+
 def corrected_steering(steering: float, steering_trim: float | None = None) -> float:
     trim = STEERING_TRIM if steering_trim is None else finite_float(steering_trim, name="steering_trim")
     return round(clamp(float(steering) + trim, -1.0, 1.0, NEUTRAL_STEERING), 3)
@@ -321,12 +397,26 @@ RUNTIME_SETTING_RANGES: dict[str, tuple[float, float]] = {
     "lidar_slow_throttle": (0.0, 1.0),
     "lidar_avoidance_gain": (0.0, 2.0),
     "lidar_max_steering_correction": (0.0, 1.0),
+    "imu_stale_sec": (0.1, 5.0),
+    "imu_forward_sign": (-1.0, 1.0),
+    "imu_accel_deadband_mps2": (0.0, 1.0),
+    "imu_velocity_decay_per_sec": (0.0, 5.0),
+    "imu_target_speed_scale_mps": (0.05, 5.0),
+    "imu_speed_kp": (0.0, 5.0),
+    "imu_speed_ki": (0.0, 2.0),
+    "imu_speed_kd": (0.0, 2.0),
+    "imu_speed_integral_limit": (0.0, 5.0),
+    "imu_max_throttle_correction": (0.0, 0.5),
+    "imu_min_active_throttle": (0.0, 1.0),
+    "imu_max_speed_mps": (0.1, 10.0),
 }
 RUNTIME_BOOL_SETTINGS = {
     "turn_pulse_enabled",
     "lane_enabled",
     "turn_compensation_enabled",
     "lidar_enabled",
+    "imu_enabled",
+    "imu_speed_control_enabled",
 }
 AUTONOMOUS_RUNTIME_FIELDS = {
     "crawl_throttle",
@@ -362,6 +452,22 @@ LIDAR_RUNTIME_FIELDS = {
     "lidar_slow_throttle": "slow_throttle",
     "lidar_avoidance_gain": "avoidance_gain",
     "lidar_max_steering_correction": "max_steering_correction",
+}
+IMU_RUNTIME_FIELDS = {
+    "imu_enabled": "enabled",
+    "imu_speed_control_enabled": "speed_control_enabled",
+    "imu_stale_sec": "stale_sec",
+    "imu_forward_sign": "forward_sign",
+    "imu_accel_deadband_mps2": "accel_deadband_mps2",
+    "imu_velocity_decay_per_sec": "velocity_decay_per_sec",
+    "imu_target_speed_scale_mps": "target_speed_scale_mps",
+    "imu_speed_kp": "kp",
+    "imu_speed_ki": "ki",
+    "imu_speed_kd": "kd",
+    "imu_speed_integral_limit": "integral_limit",
+    "imu_max_throttle_correction": "max_throttle_correction",
+    "imu_min_active_throttle": "min_active_throttle",
+    "imu_max_speed_mps": "max_speed_mps",
 }
 
 
@@ -425,6 +531,20 @@ def runtime_setting_defaults() -> dict[str, Any]:
         "lidar_slow_throttle": LIDAR_CONFIG.slow_throttle,
         "lidar_avoidance_gain": LIDAR_CONFIG.avoidance_gain,
         "lidar_max_steering_correction": LIDAR_CONFIG.max_steering_correction,
+        "imu_enabled": IMU_CONFIG.enabled,
+        "imu_speed_control_enabled": IMU_CONFIG.speed_control_enabled,
+        "imu_stale_sec": IMU_CONFIG.stale_sec,
+        "imu_forward_sign": IMU_CONFIG.forward_sign,
+        "imu_accel_deadband_mps2": IMU_CONFIG.accel_deadband_mps2,
+        "imu_velocity_decay_per_sec": IMU_CONFIG.velocity_decay_per_sec,
+        "imu_target_speed_scale_mps": IMU_CONFIG.target_speed_scale_mps,
+        "imu_speed_kp": IMU_CONFIG.kp,
+        "imu_speed_ki": IMU_CONFIG.ki,
+        "imu_speed_kd": IMU_CONFIG.kd,
+        "imu_speed_integral_limit": IMU_CONFIG.integral_limit,
+        "imu_max_throttle_correction": IMU_CONFIG.max_throttle_correction,
+        "imu_min_active_throttle": IMU_CONFIG.min_active_throttle,
+        "imu_max_speed_mps": IMU_CONFIG.max_speed_mps,
     }
 
 
@@ -1243,6 +1363,29 @@ class RuntimeState:
         self.lidar_assist_active = False
         self.lidar_assist_reason = "not-evaluated"
 
+        self.imu_config = IMU_CONFIG
+        self.imu_frames = 0
+        self.imu_errors = 0
+        self.imu_error: str | None = None
+        self.imu_last_at: float | None = None
+        self.imu_sensor_time: float | None = None
+        self.imu_seq: int | None = None
+        self.imu_accel_mps2: dict[str, float] = {}
+        self.imu_gyro_dps: dict[str, float] = {}
+        self.imu_forward_accel_raw_mps2: float | None = None
+        self.imu_forward_accel_mps2: float | None = None
+        self.imu_forward_bias_mps2 = 0.0
+        self.imu_velocity_mps = 0.0
+        self.imu_speed_integral = 0.0
+        self.imu_speed_prev_error: float | None = None
+        self.imu_speed_prev_control_at: float | None = None
+        self.imu_speed_target_mps = 0.0
+        self.imu_speed_error = 0.0
+        self.imu_speed_derivative = 0.0
+        self.imu_speed_correction = 0.0
+        self.imu_speed_assist_active = False
+        self.imu_speed_reason = "waiting"
+
         self.battery: float | None = None
         self.telemetry: Any = None
 
@@ -1370,6 +1513,20 @@ class RuntimeState:
             "lidar_slow_throttle": round(self.lidar_config.slow_throttle, 4),
             "lidar_avoidance_gain": round(self.lidar_config.avoidance_gain, 4),
             "lidar_max_steering_correction": round(self.lidar_config.max_steering_correction, 4),
+            "imu_enabled": bool(self.imu_config.enabled),
+            "imu_speed_control_enabled": bool(self.imu_config.speed_control_enabled),
+            "imu_stale_sec": round(self.imu_config.stale_sec, 4),
+            "imu_forward_sign": round(self.imu_config.forward_sign, 4),
+            "imu_accel_deadband_mps2": round(self.imu_config.accel_deadband_mps2, 4),
+            "imu_velocity_decay_per_sec": round(self.imu_config.velocity_decay_per_sec, 4),
+            "imu_target_speed_scale_mps": round(self.imu_config.target_speed_scale_mps, 4),
+            "imu_speed_kp": round(self.imu_config.kp, 4),
+            "imu_speed_ki": round(self.imu_config.ki, 4),
+            "imu_speed_kd": round(self.imu_config.kd, 4),
+            "imu_speed_integral_limit": round(self.imu_config.integral_limit, 4),
+            "imu_max_throttle_correction": round(self.imu_config.max_throttle_correction, 4),
+            "imu_min_active_throttle": round(self.imu_config.min_active_throttle, 4),
+            "imu_max_speed_mps": round(self.imu_config.max_speed_mps, 4),
         }
 
     def _apply_runtime_settings_locked(self, values: dict[str, Any], *, rebuild: bool) -> dict[str, Any]:
@@ -1439,6 +1596,23 @@ class RuntimeState:
             self.lidar_config = replace(self.lidar_config, **lidar_updates)
             self.lidar_safety = analyze_lidar_scan(self.lidar_scan, config=self.lidar_config, now=wall_time())
             self.lidar_assist_reason = "settings-updated"
+
+        imu_updates = {
+            target: normalized[source]
+            for source, target in IMU_RUNTIME_FIELDS.items()
+            if source in normalized
+        }
+        if imu_updates:
+            if "forward_sign" in imu_updates:
+                sign = float(imu_updates["forward_sign"])
+                imu_updates["forward_sign"] = -1.0 if sign < 0.0 else 1.0
+            self.imu_config = replace(self.imu_config, **imu_updates)
+            self.imu_speed_integral = 0.0
+            self.imu_speed_prev_error = None
+            self.imu_speed_prev_control_at = None
+            self.imu_speed_correction = 0.0
+            self.imu_speed_assist_active = False
+            self.imu_speed_reason = "settings-updated"
 
         turn_compensation_fields = {
             "turn_compensation_enabled",
@@ -1562,8 +1736,116 @@ class RuntimeState:
                 self.telemetry = summarize_payload(value)
 
     def update_telemetry(self, value: Any) -> None:
+        self.update_imu_from_telemetry(value)
         with self.lock:
             self.telemetry = summarize_payload(value)
+
+    def update_imu_from_telemetry(self, value: Any) -> bool:
+        if not isinstance(value, dict):
+            return False
+        candidate = value.get("imu", value)
+        if not isinstance(candidate, dict):
+            return False
+
+        accel = first_vector3(
+            candidate,
+            (
+                "accel_mps2",
+                "acceleration_mps2",
+                "acceleration",
+                "accelerometer",
+                "accel",
+                "acc",
+            ),
+        )
+        gyro = first_vector3(
+            candidate,
+            (
+                "gyro_dps",
+                "gyroscope_dps",
+                "gyro",
+                "gyroscope",
+            ),
+        )
+        status = str(candidate.get("status", "ok")).strip().lower()
+        if accel is None and gyro is None and "imu" not in value and status == "ok":
+            return False
+
+        now = wall_time()
+        try:
+            seq_value = candidate.get("seq", value.get("seq"))
+            seq = None if seq_value is None else int(seq_value)
+        except (TypeError, ValueError):
+            seq = None
+        sensor_time = optional_finite_float(
+            candidate.get(
+                "timestamp",
+                candidate.get("ts", candidate.get("time", value.get("ts"))),
+            )
+        )
+
+        with self.lock:
+            previous_at = self.imu_last_at
+            self.imu_frames += 1
+            self.imu_last_at = now
+            self.imu_sensor_time = sensor_time
+            self.imu_seq = seq
+            if status not in {"ok", "ready", "valid"}:
+                self.imu_errors += 1
+                self.imu_error = str(candidate.get("error") or status)[:240]
+                self.imu_speed_reason = f"imu-{status}"
+                return True
+            if accel is None:
+                self.imu_errors += 1
+                self.imu_error = "missing accel_mps2"
+                self.imu_speed_reason = "missing-accel"
+                return True
+
+            self.imu_accel_mps2 = accel
+            if gyro is not None:
+                self.imu_gyro_dps = gyro
+            axis = self.imu_config.forward_axis if self.imu_config.forward_axis in accel else "y"
+            raw_accel = float(accel.get(axis, 0.0)) * (1.0 if self.imu_config.forward_sign >= 0.0 else -1.0)
+            self._update_imu_velocity_locked(raw_accel, now, previous_at=previous_at)
+            self.imu_error = None
+            if self.drive_mode == "autonomous":
+                self._apply_autonomous_control_locked()
+        return True
+
+    def _update_imu_velocity_locked(
+        self,
+        raw_accel: float,
+        now: float,
+        *,
+        previous_at: float | None,
+    ) -> None:
+        config = self.imu_config
+        dt = 0.0 if previous_at is None else clamp(now - previous_at, 0.0, 0.35, 0.0)
+        stationary = (
+            self.drive_mode != "autonomous"
+            or not self.control_armed
+            or self.throttle <= config.min_active_throttle
+        )
+        if stationary:
+            self.imu_forward_bias_mps2 = (0.96 * self.imu_forward_bias_mps2) + (0.04 * raw_accel)
+        accel = raw_accel - self.imu_forward_bias_mps2
+        if abs(accel) < config.accel_deadband_mps2:
+            accel = 0.0
+        if dt > 0.0:
+            if stationary:
+                decay = max(0.0, 1.0 - config.velocity_decay_per_sec * dt)
+                self.imu_velocity_mps *= decay
+                if abs(self.imu_velocity_mps) < 0.015:
+                    self.imu_velocity_mps = 0.0
+            else:
+                self.imu_velocity_mps = clamp(
+                    self.imu_velocity_mps + accel * dt,
+                    -0.5,
+                    config.max_speed_mps,
+                    0.0,
+                )
+        self.imu_forward_accel_raw_mps2 = raw_accel
+        self.imu_forward_accel_mps2 = accel
 
     def update_lidar(self, value: Any) -> None:
         now = wall_time()
@@ -1736,6 +2018,7 @@ class RuntimeState:
         )
         decision = self._apply_lane_assist_locked(decision, now)
         decision = self._apply_turn_compensation_locked(decision, now)
+        decision = self._apply_imu_speed_control_locked(decision, now)
         decision = self._apply_lidar_safety_locked(decision, now)
         self.autonomous_decision = decision
         return decision
@@ -1862,6 +2145,111 @@ class RuntimeState:
             raw_steering=raw_steering,
             reason=f"{decision.reason};turn-comp={correction:+.3f}",
         )
+
+    def _apply_imu_speed_control_locked(
+        self,
+        decision: AutonomousDecision,
+        now: float,
+    ) -> AutonomousDecision:
+        self.imu_speed_assist_active = False
+        self.imu_speed_correction = 0.0
+
+        config = self.imu_config
+        if not config.enabled:
+            self.imu_speed_reason = "disabled"
+            self._reset_imu_pid_locked()
+            return decision
+        if not config.speed_control_enabled:
+            self.imu_speed_reason = "speed-control-disabled"
+            self._reset_imu_pid_locked()
+            return decision
+        if self.drive_mode != "autonomous":
+            self.imu_speed_reason = "manual-mode"
+            self._reset_imu_pid_locked()
+            return decision
+        if not decision.active:
+            self.imu_speed_reason = f"autonomy-{decision.reason}"
+            self._reset_imu_pid_locked()
+            return decision
+        if decision.throttle <= max(config.min_active_throttle, NEUTRAL_THROTTLE + 0.02):
+            self.imu_speed_reason = "not-moving-forward"
+            self._reset_imu_pid_locked()
+            return decision
+        if decision.action not in IMU_SPEED_ACTIONS:
+            self.imu_speed_reason = f"action-{decision.action}"
+            self._reset_imu_pid_locked()
+            return decision
+        if self.imu_last_at is None:
+            self.imu_speed_reason = "no-imu"
+            self._reset_imu_pid_locked()
+            return decision
+        age = max(0.0, now - self.imu_last_at)
+        if age > config.stale_sec:
+            self.imu_speed_reason = "stale-imu"
+            self._reset_imu_pid_locked()
+            return decision
+        if self.imu_error is not None:
+            self.imu_speed_reason = f"imu-error:{self.imu_error}"
+            self._reset_imu_pid_locked()
+            return decision
+
+        base_throttle = clamp(decision.throttle, 0.0, 1.0, NEUTRAL_THROTTLE)
+        target_basis = decision.raw_throttle if decision.raw_throttle is not None else base_throttle
+        target_basis = clamp(target_basis, 0.0, 1.0, base_throttle)
+        target_speed = round(clamp(target_basis * config.target_speed_scale_mps, 0.0, config.max_speed_mps, 0.0), 4)
+        speed = max(0.0, self.imu_velocity_mps)
+        error = target_speed - speed
+        previous_at = self.imu_speed_prev_control_at
+        dt = 0.05 if previous_at is None else clamp(now - previous_at, 0.01, 0.25, 0.05)
+
+        self.imu_speed_integral = clamp(
+            self.imu_speed_integral + error * dt,
+            -config.integral_limit,
+            config.integral_limit,
+            0.0,
+        )
+        previous_error = self.imu_speed_prev_error
+        derivative = 0.0 if previous_error is None else (error - previous_error) / dt
+        correction = (
+            config.kp * error
+            + config.ki * self.imu_speed_integral
+            + config.kd * derivative
+        )
+        correction = clamp(correction, -config.max_throttle_correction, config.max_throttle_correction, 0.0)
+        if ":recovery" in decision.reason:
+            correction = min(0.0, correction)
+        upper = min(1.0, max(base_throttle, target_basis) + config.max_throttle_correction)
+        throttle = round(clamp(base_throttle + correction, 0.0, upper, base_throttle), 3)
+        raw_throttle = decision.raw_throttle
+        if raw_throttle is not None:
+            raw_throttle = round(clamp(raw_throttle + correction, 0.0, upper, raw_throttle), 3)
+
+        self.imu_speed_prev_error = error
+        self.imu_speed_prev_control_at = now
+        self.imu_speed_target_mps = target_speed
+        self.imu_speed_error = round(error, 4)
+        self.imu_speed_derivative = round(derivative, 4)
+        self.imu_speed_correction = round(correction, 4)
+        self.imu_speed_assist_active = abs(correction) > 0.005
+        self.imu_speed_reason = (
+            f"pid:{speed:.2f}->{target_speed:.2f}"
+            if self.imu_speed_assist_active
+            else f"hold:{speed:.2f}->{target_speed:.2f}"
+        )
+        return replace(
+            decision,
+            throttle=throttle,
+            raw_throttle=raw_throttle,
+            reason=f"{decision.reason};imu-speed={correction:+.3f}",
+        )
+
+    def _reset_imu_pid_locked(self) -> None:
+        self.imu_speed_integral = 0.0
+        self.imu_speed_prev_error = None
+        self.imu_speed_prev_control_at = None
+        self.imu_speed_target_mps = 0.0
+        self.imu_speed_error = 0.0
+        self.imu_speed_derivative = 0.0
 
     def _apply_lidar_safety_locked(
         self,
@@ -2333,6 +2721,62 @@ class RuntimeState:
             },
         }
 
+    def imu_snapshot_locked(self, *, now: float | None = None) -> dict[str, Any]:
+        now = wall_time() if now is None else now
+        age = None if self.imu_last_at is None else max(0.0, now - self.imu_last_at)
+        if not self.imu_config.enabled:
+            status = "disabled"
+        elif self.imu_error is not None:
+            status = "error"
+        elif self.imu_last_at is None:
+            status = "searching"
+        elif age is not None and age > self.imu_config.stale_sec:
+            status = "stale"
+        else:
+            status = "ready"
+        return {
+            "enabled": self.imu_config.enabled,
+            "speed_control_enabled": self.imu_config.speed_control_enabled,
+            "status": status,
+            "frames": self.imu_frames,
+            "errors": self.imu_errors,
+            "error": self.imu_error,
+            "received_age_sec": rounded(age),
+            "seq": self.imu_seq,
+            "sensor_time": self.imu_sensor_time,
+            "accel_mps2": {axis: round(value, 4) for axis, value in self.imu_accel_mps2.items()},
+            "gyro_dps": {axis: round(value, 4) for axis, value in self.imu_gyro_dps.items()},
+            "forward_accel_raw_mps2": rounded(self.imu_forward_accel_raw_mps2),
+            "forward_accel_mps2": rounded(self.imu_forward_accel_mps2),
+            "forward_bias_mps2": round(self.imu_forward_bias_mps2, 4),
+            "estimated_speed_mps": round(max(0.0, self.imu_velocity_mps), 4),
+            "speed_control": {
+                "active": self.imu_speed_assist_active,
+                "reason": self.imu_speed_reason,
+                "target_speed_mps": round(self.imu_speed_target_mps, 4),
+                "error_mps": round(self.imu_speed_error, 4),
+                "integral": round(self.imu_speed_integral, 4),
+                "derivative": round(self.imu_speed_derivative, 4),
+                "throttle_correction": round(self.imu_speed_correction, 4),
+            },
+            "config": {
+                "stale_sec": self.imu_config.stale_sec,
+                "forward_axis": self.imu_config.forward_axis,
+                "forward_sign": self.imu_config.forward_sign,
+                "accel_deadband_mps2": self.imu_config.accel_deadband_mps2,
+                "velocity_decay_per_sec": self.imu_config.velocity_decay_per_sec,
+                "target_speed_scale_mps": self.imu_config.target_speed_scale_mps,
+                "kp": self.imu_config.kp,
+                "ki": self.imu_config.ki,
+                "kd": self.imu_config.kd,
+                "integral_limit": self.imu_config.integral_limit,
+                "max_throttle_correction": self.imu_config.max_throttle_correction,
+                "min_active_throttle": self.imu_config.min_active_throttle,
+                "max_speed_mps": self.imu_config.max_speed_mps,
+                "actions": sorted(IMU_SPEED_ACTIONS),
+            },
+        }
+
     def _note_operator_event_locked(
         self,
         event_type: str,
@@ -2432,6 +2876,7 @@ class RuntimeState:
                 },
                 "lane": self.lane_snapshot_locked(now=now),
                 "lidar": self.lidar_snapshot_locked(now=now),
+                "imu": self.imu_snapshot_locked(now=now),
                 "control": self.control_snapshot_locked(),
                 "autonomy": self.autonomy_snapshot_locked(now=now),
                 "settings": self.settings_snapshot_locked(),
@@ -2503,6 +2948,10 @@ def decode_pickle_payload(payload: bytes) -> Any:
     return pickle.loads(payload, encoding="latin1")
 
 
+def decode_json_payload(payload: bytes) -> Any:
+    return json.loads(payload.decode("utf-8"))
+
+
 def normalize_decoded_frame(frame: np.ndarray | None) -> np.ndarray | None:
     if frame is None:
         return None
@@ -2562,6 +3011,11 @@ def parse_car_packet(packet: bytes) -> tuple[str, Any]:
             return packet_type, payload
     if not payload:
         return packet_type, None
+    if packet_type == "D":
+        try:
+            return packet_type, decode_json_payload(payload)
+        except Exception:
+            pass
     return packet_type, decode_pickle_payload(payload)
 
 
@@ -3898,6 +4352,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         <div class="pill warn" id="pill-ai"><span class="dot"></span><span class="label">IA</span><span class="val" id="pill-ai-val">--</span></div>
         <div class="pill warn" id="pill-lane"><span class="dot"></span><span class="label">Carril</span><span class="val" id="pill-lane-val">--</span></div>
         <div class="pill warn" id="pill-lidar"><span class="dot"></span><span class="label">LiDAR</span><span class="val" id="pill-lidar-val">--</span></div>
+        <div class="pill warn" id="pill-imu"><span class="dot"></span><span class="label">IMU</span><span class="val" id="pill-imu-val">--</span></div>
         <div class="pill bad" id="pill-control"><span class="dot"></span><span class="label">Control</span><span class="val" id="pill-control-val">OFF</span></div>
         <div class="pill warn" id="pill-recording"><span class="dot"></span><span class="label">Dataset</span><span class="val" id="pill-recording-val">OFF</span></div>
       </div>
@@ -4099,6 +4554,19 @@ LIVE_VIEW_HTML = r"""<!doctype html>
               <div class="row"><span class="k">Correccion</span><span class="v muted" id="lidar-correction">--</span></div>
               <div class="row"><span class="k">Motivo</span><span class="v muted" id="lidar-reason">--</span></div>
             </section>
+
+            <section class="card">
+              <h2>
+                <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h3l2-7 4 14 2-7h5"/><path d="M3 4v16h18"/></svg></span>
+                IMU velocidad
+                <span class="tag" id="imu-tag">--</span>
+              </h2>
+              <div class="row"><span class="k">Estado</span><span class="v" id="imu-status">--</span></div>
+              <div class="row"><span class="k">Velocidad</span><span class="v accent" id="imu-speed">--</span></div>
+              <div class="row"><span class="k">Objetivo</span><span class="v" id="imu-target">--</span></div>
+              <div class="row"><span class="k">Aceleracion</span><span class="v muted" id="imu-accel">--</span></div>
+              <div class="row"><span class="k">PID</span><span class="v muted" id="imu-pid">--</span></div>
+            </section>
           </div>
 
           <!-- ============== TUNING ============================================== -->
@@ -4226,6 +4694,55 @@ LIVE_VIEW_HTML = r"""<!doctype html>
 
             <section class="card">
               <h2>
+                <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h3l2-7 4 14 2-7h5"/><path d="M3 4v16h18"/></svg></span>
+                IMU PID
+                <span class="tag" id="imu-tune-tag">off</span>
+              </h2>
+              <div class="control-block">
+                <label class="toggle-line" for="tune-imu-enabled">
+                  <span class="lbl">Control velocidad IMU</span>
+                  <input type="checkbox" id="tune-imu-enabled" data-setting="imu_speed_control_enabled">
+                </label>
+                <div class="compact-fields">
+                  <label class="compact-field" for="tune-imu-scale">
+                    <span>m/s max</span>
+                    <input type="number" id="tune-imu-scale" data-setting="imu_target_speed_scale_mps" min="0.05" max="5" step="0.01" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-imu-kp">
+                    <span>Kp</span>
+                    <input type="number" id="tune-imu-kp" data-setting="imu_speed_kp" min="0" max="5" step="0.01" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-imu-ki">
+                    <span>Ki</span>
+                    <input type="number" id="tune-imu-ki" data-setting="imu_speed_ki" min="0" max="2" step="0.01" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-imu-kd">
+                    <span>Kd</span>
+                    <input type="number" id="tune-imu-kd" data-setting="imu_speed_kd" min="0" max="2" step="0.01" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-imu-correction">
+                    <span>Corr max</span>
+                    <input type="number" id="tune-imu-correction" data-setting="imu_max_throttle_correction" min="0" max="0.5" step="0.01" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-imu-sign">
+                    <span>Signo</span>
+                    <input type="number" id="tune-imu-sign" data-setting="imu_forward_sign" min="-1" max="1" step="2" inputmode="numeric">
+                  </label>
+                  <label class="compact-field" for="tune-imu-deadband">
+                    <span>Deadband</span>
+                    <input type="number" id="tune-imu-deadband" data-setting="imu_accel_deadband_mps2" min="0" max="1" step="0.01" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-imu-stale">
+                    <span>Fresh s</span>
+                    <input type="number" id="tune-imu-stale" data-setting="imu_stale_sec" min="0.1" max="5" step="0.05" inputmode="decimal">
+                  </label>
+                </div>
+                <div class="row"><span class="k">Control</span><span class="v accent" id="imu-control-summary">--</span></div>
+              </div>
+            </section>
+
+            <section class="card">
+              <h2>
                 <span class="glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/><circle cx="12" cy="12" r="4"/><path d="M5.6 5.6l2.1 2.1"/><path d="M16.3 16.3l2.1 2.1"/><path d="M18.4 5.6l-2.1 2.1"/><path d="M7.7 16.3l-2.1 2.1"/></svg></span>
                 LiDAR seguridad
                 <span class="tag" id="lidar-tune-tag">45 pts</span>
@@ -4342,6 +4859,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       pillAi: $('pill-ai'),        pillAiVal: $('pill-ai-val'),
       pillLane: $('pill-lane'),    pillLaneVal: $('pill-lane-val'),
       pillLidar: $('pill-lidar'),  pillLidarVal: $('pill-lidar-val'),
+      pillImu: $('pill-imu'),      pillImuVal: $('pill-imu-val'),
       pillCtrl: $('pill-control'), pillCtrlVal: $('pill-control-val'),
       pillRec: $('pill-recording'), pillRecVal: $('pill-recording-val'),
       sessionClock: $('session-clock'),
@@ -4375,6 +4893,8 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       autoTarget: $('auto-target'), autoZone: $('auto-zone'), autoReason: $('auto-reason'),
       lidarTag: $('lidar-tag'), lidarStatus: $('lidar-status'), lidarFront: $('lidar-front'),
       lidarPoints: $('lidar-points'), lidarCorrection: $('lidar-correction'), lidarReason: $('lidar-reason'),
+      imuTag: $('imu-tag'), imuStatus: $('imu-status'), imuSpeed: $('imu-speed'),
+      imuTarget: $('imu-target'), imuAccel: $('imu-accel'), imuPid: $('imu-pid'),
       settingsPath: $('settings-path'), saveDefaults: $('save-defaults'),
 
       cruiseTag: $('cruise-tag'), cruiseValue: $('cruise-value'), cruiseDir: $('cruise-dir'),
@@ -4389,6 +4909,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       trimRange: $('trim-range'), trimInput: $('trim-input'), trimBase: $('trim-base'),
       trimEffective: $('trim-effective'), trimRequested: $('trim-requested'),
       autonomyTuneTag: $('autonomy-tune-tag'), lidarTuneTag: $('lidar-tune-tag'), lidarSector: $('lidar-sector'),
+      imuTuneTag: $('imu-tune-tag'), imuControlSummary: $('imu-control-summary'),
 
       recTag: $('rec-tag'), recSession: $('rec-session'), recRecords: $('rec-records'),
       recImages: $('rec-images'), recCritical: $('rec-critical'), recVideo: $('rec-video'), recReplayer: $('rec-replayer'), recError: $('rec-error'),
@@ -4691,6 +5212,11 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       }
       if (els.autonomyTuneTag && Number.isFinite(Number(controlSettings.turn_hold_sec))) {
         els.autonomyTuneTag.textContent = 'giro ' + Number(controlSettings.turn_hold_sec).toFixed(2) + ' s';
+      }
+      if (els.imuTuneTag) {
+        els.imuTuneTag.textContent = controlSettings.imu_speed_control_enabled
+          ? ('PID ' + nfmt(Number(controlSettings.imu_target_speed_scale_mps), 2) + ' m/s')
+          : 'off';
       }
     }
 
@@ -5150,6 +5676,8 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         const now = performance.now() / 1000;
         const lidar = data.lidar || {};
         const lidarSafety = lidar.safety || {};
+        const imu = data.imu || {};
+        const imuSpeedControl = imu.speed_control || {};
         latestLidar = lidar;
         if (data.settings) renderSettings(data.settings);
 
@@ -5304,6 +5832,30 @@ LIVE_VIEW_HTML = r"""<!doctype html>
           els.lidarSector.textContent = Math.round(Number(frontPts)) + ' pts' + (frontDeg == null ? '' : ' · +/-' + frontDeg.toFixed(1) + ' deg');
         }
         drawLidarScene(lidar);
+
+        /* imu speed control */
+        if (!imu.enabled) {
+          setPillState(els.pillImu, 'warn');
+          els.pillImuVal.textContent = 'OFF';
+        } else if (imu.status === 'ready') {
+          setPillState(els.pillImu, imuSpeedControl.active ? 'ok' : 'warn');
+          els.pillImuVal.textContent = imuSpeedControl.active ? 'PID' : 'OK';
+        } else {
+          setPillState(els.pillImu, imu.status === 'stale' ? 'warn' : 'bad');
+          els.pillImuVal.textContent = imu.status === 'stale' ? 'VIEJO' : 'SIN';
+        }
+        const imuSpeed = imu.estimated_speed_mps == null ? null : Number(imu.estimated_speed_mps);
+        const imuTarget = imuSpeedControl.target_speed_mps == null ? null : Number(imuSpeedControl.target_speed_mps);
+        const imuAccel = imu.forward_accel_mps2 == null ? null : Number(imu.forward_accel_mps2);
+        els.imuTag.textContent = imu.status || '--';
+        els.imuStatus.textContent = imu.error || ((imu.status || '--') + ' · ' + (imu.received_age_sec == null ? '--' : Number(imu.received_age_sec).toFixed(2) + ' s'));
+        els.imuSpeed.textContent = imuSpeed == null ? '--' : imuSpeed.toFixed(2) + ' m/s';
+        els.imuTarget.textContent = imuTarget == null ? '--' : imuTarget.toFixed(2) + ' m/s';
+        els.imuAccel.textContent = imuAccel == null ? '--' : imuAccel.toFixed(2) + ' m/s2';
+        els.imuPid.textContent = nfmt(imuSpeedControl.throttle_correction, 3) + ' · ' + (imuSpeedControl.reason || '--');
+        if (els.imuControlSummary) {
+          els.imuControlSummary.textContent = (imuSpeedControl.active ? 'activo · ' : '') + nfmt(imuSpeedControl.throttle_correction, 3) + ' gas';
+        }
 
         /* control + autonomy pills + values */
         renderMode(data.control.mode || 'manual');

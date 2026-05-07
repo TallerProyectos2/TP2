@@ -24,9 +24,10 @@ Normal sessions use one EPC runtime from `servicios/`:
 - Incoming payload discriminator (first byte):
   - `I`: camera image payload
   - `B`: battery level
-  - `D`: reserved/other data path
+  - `D`: telemetry data path; current supported JSON schema `tp2.car.telemetry.v1` carries BMI160 IMU samples
   - `L`: LiDAR scan payload
 - Payload body is deserialized with `pickle.loads(...)` in current scripts.
+- `D` JSON is parsed before falling back to legacy `pickle`. BMI160 telemetry is expected under `imu.accel_mps2` and optionally `imu.gyro_dps`; stale or invalid IMU data must not bypass camera/LiDAR safety decisions.
 - `L` can be sent as `pickle` or raw JSON. The EPC accepts the professor/Artemis plain pickled range list, LaserScan-like `ranges` with `angle_min`/`angle_increment`, or Cartesian `points` as `[x, y, z, intensity]`/objects. LiDAR can also be nested in `D` under `lidar`, `lidar_scan`, `scan`, `ranges`, or `points`.
 - Outgoing control packet type:
   - `C` + steering (`double`) + throttle (`double`)
@@ -42,11 +43,12 @@ Normal sessions use one EPC runtime from `servicios/`:
   - runtime tuning in the same web UI can adjust manual throttle, autonomous cruise/turn pulse values, steering trim, lane-assist correction, LiDAR safety thresholds/sector, and autonomous timing/detection parameters without moving control off EPC
   - `POST /settings/defaults` saves the currently tuned values to a host-local defaults file; this file is machine configuration and must not be committed
   - EPC uses fresh Roboflow detections to choose continue, turn, stop, crawl, slow, or faster cruise
-  - autonomous forward movement uses positive throttle `+0.65`; stop, ambiguity, stale frame or stale inference still force neutral `0.0`; the EPC web UI can change cruise throttle live
+  - autonomous forward movement uses positive throttle `+0.65`; when fresh BMI160 telemetry is available, EPC maps the web cruise throttle to a target speed and applies a bounded PID correction to maintain speed; stop, ambiguity, stale frame or stale inference still force neutral `0.0`; the EPC web UI can change cruise throttle and IMU PID values live
   - outgoing UDP steering is trimmed before packet send; current default `TP2_STEERING_TRIM=-0.24` compensates the physical left drift with a stronger rightward correction, the EPC web UI can change that trim live, and open turn maneuvers bypass trim to keep full lock
   - an optional periodic right-turn pulse can compensate left drift during autonomous forward actions without applying during open turn maneuvers
   - `coche.py` also runs OpenCV lane assist on the camera frame: it detects the continuous blue/green tape lines on the carpet, estimates the current corridor, prefers the right corridor when several lanes are visible, slows during strong recovery, and applies a bounded steering correction only during autonomous forward actions
   - `coche.py` also consumes fresh LiDAR scans when connected: the default collision sector is the 45 frontal beams centered on the car direction, obstacles at or below `0.15 m` force `lidar-stop`, nearer slow-zone obstacles cap throttle and add a bounded avoidance steering correction, and stale/missing LiDAR does not move orchestration away from EPC
+  - `coche.py` consumes fresh BMI160 samples from `D` telemetry when available: acceleration is integrated into a bounded velocity estimate, a PID loop adjusts throttle only for configured autonomous forward actions, and LiDAR/camera fallbacks retain priority
   - nearest/relevant signs are selected by bounding-box area, confidence, persistence, image zone (`left`, `center`, `right`), and maneuver state
   - default sign thresholds are tuned to act on slightly smaller/farther signs; STOP detections stop immediately and turn decisions begin before the car reaches the sign
   - detections are tracked across frames; default turn decisions trigger full-lock 90-degree maneuvers on the first valid confirmed frame, including far turn detections
@@ -73,8 +75,9 @@ Normal sessions use one EPC runtime from `servicios/`:
 1. Start LTE (`srsepc` + `srsenb`) and verify UE attach.
 2. Start `tp2-car-control.service` on EPC.
 3. Confirm script receives UDP payloads from car.
-4. If LiDAR is connected, confirm `L` packets or LiDAR telemetry update `/status.json`.
-5. Confirm control packets are returned and car responds.
+4. Confirm BMI160 `D` telemetry updates `imu` in `/status.json` when the IMU is enabled.
+5. If LiDAR is connected, confirm `L` packets or LiDAR telemetry update `/status.json`.
+6. Confirm control packets are returned and car responds.
 
 ## EPC Operator Notes
 

@@ -3,6 +3,8 @@ import io
 import signal
 import sys
 import socket
+import json
+import os
 import rospy
 import paho.mqtt.client as mqtt_client
 import pickle
@@ -18,6 +20,12 @@ from servo_pkg.srv import SetLedCtrlSrv
 from std_srvs.srv import SetBool
 from ctrl_pkg.msg import ServoCtrlMsg
 from i2c_pkg.srv import BatteryLevelSrv
+try:
+	import bmi160
+	BMI160_IMPORT_ERROR = None
+except BaseException as exc:
+	bmi160 = None
+	BMI160_IMPORT_ERROR = str(exc)
 
 
 # Read config file
@@ -38,7 +46,10 @@ sock=socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 i = 0
 time2=0
 timer_battery_level=0
+timer_imu_level=0
+imu_seq=0
 lock=threading.Lock()
+IMU_SEND_INTERVAL_SEC = float(os.environ.get('TP2_IMU_SEND_INTERVAL_SEC','0.1'))
 
 def signal_handler(_signo,_stack_frame):
 	
@@ -56,11 +67,67 @@ def send_battery_level():
 	timer_battery_level=Timer(2,send_battery_level)
 	timer_battery_level.start()
 
+def init_imu():
+	if bmi160 is None:
+		return False
+	try:
+		bmi160.enable_accel()
+		bmi160.enable_gyro()
+		return True
+	except Exception:
+		return False
+
+def read_imu_payload():
+	global imu_seq
+	imu_seq += 1
+	payload = {
+		'schema': 'tp2.car.telemetry.v1',
+		'seq': imu_seq,
+		'ts': time.time(),
+		'source': 'SoftARTEMIS',
+		'imu': {
+			'sensor': 'BMI160',
+			'status': 'ok',
+		},
+	}
+	if bmi160 is None:
+		payload['imu']['status'] = 'unavailable'
+		payload['imu']['error'] = BMI160_IMPORT_ERROR or 'bmi160 import failed'
+		return payload
+	try:
+		acc = bmi160.read_accel()
+		bmi160.read_gyro()
+		payload['imu']['accel_mps2'] = {
+			'x': float(acc[0]),
+			'y': float(acc[1]),
+			'z': float(acc[2]),
+		}
+		payload['imu']['gyro_dps'] = {
+			'x': float(bmi160.gyro_x),
+			'y': float(bmi160.gyro_y),
+			'z': float(bmi160.gyro_z),
+		}
+	except Exception as exc:
+		payload['imu']['status'] = 'error'
+		payload['imu']['error'] = str(exc)
+	return payload
+
+def send_imu_level():
+	global timer_imu_level
+	if encendido == False:
+		return
+	payload = read_imu_payload()
+	serialized_data = json.dumps(payload,separators=(',',':')).encode('utf-8')
+	send_data('D',serialized_data)
+	timer_imu_level=Timer(IMU_SEND_INTERVAL_SEC,send_imu_level)
+	timer_imu_level.start()
+
 def handle_enable_cloud_control(order):
 	global encendido
 	global video_subscription
 	global lidar_subscription
 	global timer_battery_level
+	global timer_imu_level
 	global sock
 	
 	if order.data == False and encendido == True:
@@ -69,15 +136,20 @@ def handle_enable_cloud_control(order):
 		video_subscription.unregister()
 		lidar_subscription.unregister()
 		timer_battery_level.cancel()
+		if timer_imu_level != 0:
+			timer_imu_level.cancel()
 		return [True,'OK']
 	
 	if order.data == True and encendido == False:
 		print("Cloud control on")
 		encendido = True
+		init_imu()
 		video_subscription = rospy.Subscriber('video_mjpeg',cameraMSG,camera_data_stream,queue_size=1,buff_size=2**25)
 		lidar_subscription = rospy.Subscriber('scan',LaserScan,laser_data_stream,queue_size=1)
 		timer_battery_level=Timer(2,send_battery_level)
 		timer_battery_level.start()
+		timer_imu_level=Timer(IMU_SEND_INTERVAL_SEC,send_imu_level)
+		timer_imu_level.start()
 		return [True,'OK']
 	
 	else:

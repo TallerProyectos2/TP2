@@ -32,7 +32,7 @@ The manual order below remains the operational source for troubleshooting.
    - If another retained payload is found on the same topic, automation logs a conflict before replacing it unless `TP2_MQTT_FAIL_ON_CONFLICT=1`.
 10. Open the live operator view from Tailscale at `http://100.97.19.112:8088/`.
     - Keep manual mode selected for initial safety checks.
-    - Switch to autonomous mode only after live frames, fresh inference status, lane status, and LiDAR status are visible when the LiDAR is connected.
+    - Switch to autonomous mode only after live frames, fresh inference status, lane status, IMU status when BMI160 is enabled, and LiDAR status are visible when the LiDAR is connected.
 - Use the stage toggle to switch between the annotated camera stream and LiDAR reconstruction.
     - Normal systemd sessions autostart dataset recording; stop it from the web UI only when disk space or scene setup makes capture undesirable.
 11. If using Jetson offload, first verify Jetson reachability and `tp2-roboflow-inference.service`; then point EPC to `http://100.115.99.8:9001` (or the current reachable Jetson IP) with `TP2_INFERENCE_TARGET=model` and `ROBOFLOW_MODEL_ID=tp2-g4-2026/2`.
@@ -65,6 +65,7 @@ The manual order below remains the operational source for troubleshooting.
 - UDP control output applies `TP2_STEERING_TRIM` before sending commands to the car, except during autonomous open turns where trim is bypassed to keep full lock. The default is `-0.24`; `/status.json` reports requested `steering`, `applied_steering_trim`, and sent `effective_steering`.
 - The live web UI can change steering compensation (`POST /steering-trim`), autonomous cruise speed (`POST /cruise-speed`), and the optional periodic right-turn pulse (`POST /turn-compensation`) without restarting the service.
 - Lane assist is enabled by default with `TP2_LANE_ASSIST_ENABLED=1`; it detects the blue/green tape on the black carpet and applies a bounded correction up to `TP2_LANE_MAX_CORRECTION=0.75` only to autonomous forward actions. It prefers the right corridor when several lanes are visible, slows during strong lane recovery, and exposes `lane.status`, `lane.guidance` and `lane.applied_correction`.
+- BMI160 IMU speed control is enabled by default with `TP2_IMU_SPEED_CONTROL_ENABLED=1`; it consumes JSON `D` telemetry with `imu.accel_mps2`/`imu.gyro_dps`, estimates forward velocity, maps the web cruise throttle to a target speed, and applies a bounded PID correction only to autonomous forward actions. Missing, stale, or invalid IMU data leaves the camera/LiDAR autonomous decision intact without increasing throttle.
 - Autonomous inference cadence defaults to `0.07 s` minimum spacing between submitted frames.
 - Autonomous sign selection accepts smaller/farther signs by default (`TP2_AUTONOMOUS_MIN_AREA_RATIO=0.003`, `TP2_AUTONOMOUS_NEAR_AREA_RATIO=0.030`); STOP detections stop immediately and turn actions can begin earlier.
 - Turn signs trigger a full-lock open-loop 90-degree maneuver on the first valid confirmed detection, including far detections (`TP2_AUTONOMOUS_TURN_HOLD_SEC`, default `1.20 s`; `TP2_AUTONOMOUS_TURN_DEGREES`, default `90`).
@@ -85,6 +86,13 @@ The manual order below remains the operational source for troubleshooting.
 - In autonomous mode, place an obstacle inside the 45 frontal LiDAR beams at or below `TP2_LIDAR_STOP_DISTANCE_M` (`0.15 m` by default) and confirm the selected action becomes `lidar-stop` with neutral throttle.
 - Move the obstacle into the slow band between `TP2_LIDAR_STOP_DISTANCE_M` and `TP2_LIDAR_SLOW_DISTANCE_M` and confirm speed limiting without moving control off EPC.
 - Use the web tuning panel when needed to adjust LiDAR frontal beam count, stop/slow/caution distances, slow throttle, steering correction, and autonomous driving parameters through `/settings`.
+
+## IMU Validation
+
+- Confirm `coche.py` receives `D` packets with `schema=tp2.car.telemetry.v1` and `imu.accel_mps2`.
+- Confirm `/status.json` reports `imu.status=ready`, `imu.frames > 0`, `imu.estimated_speed_mps`, and `imu.speed_control.throttle_correction`.
+- In autonomous mode with fresh frames/inference, adjust Marcha in the web UI and confirm `imu.speed_control.target_speed_mps` changes.
+- Tune `imu_target_speed_scale_mps`, `imu_speed_kp`, `imu_speed_ki`, `imu_speed_kd`, and `imu_max_throttle_correction` from `/settings`; keep LiDAR stop validation active so obstacle safety still overrides the IMU speed loop.
 
 ## EPC Inference Validation
 

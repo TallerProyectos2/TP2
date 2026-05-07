@@ -22,6 +22,7 @@ Do not store passwords here.
   - autonomous driving policy from `servicios/autonomous_driver.py`
   - lane stabilization from `servicios/lane_detector.py`
   - LiDAR collision assistance from `servicios/lidar_processor.py`
+  - BMI160 IMU speed assistance inside `servicios/coche.py`
   - dataset/session recorder from `servicios/coche.py`
 - Known addresses:
   - upstream (`eno1`): `10.0.128.174/24` (DHCP)
@@ -105,6 +106,7 @@ Do not store passwords here.
 - Services:
   - sends sensor payloads to EPC control scripts
   - sends LiDAR scans to EPC when the LiDAR sensor is connected
+  - sends BMI160 IMU telemetry to EPC as UDP `D` JSON when the sensor is available
   - executes steering/throttle commands from EPC
 - Connectivity:
   - attaches as LTE UE

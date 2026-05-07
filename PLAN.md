@@ -39,10 +39,10 @@ Este plan toma como base un runtime unico en `servicios/coche.py` y elimina comp
 ## 3.1 Ruta critica actual
 
 1. Coche se conecta por LTE al EPC.
-2. Coche envia `I`, `B`, `D` y, cuando este conectado, `L` por UDP a `servicios/coche.py` en el EPC.
+2. Coche envia `I`, `B`, `D` y, cuando este conectado, `L` por UDP a `servicios/coche.py` en el EPC. `D` transporta telemetria JSON del BMI160 cuando esta disponible.
 3. EPC decodifica el ultimo frame y lo publica como MJPEG en `8088/TCP`.
 4. EPC envia los frames mas recientes a Jetson para inferencia asincrona y pinta bounding boxes/labels sobre el stream.
-5. EPC fusiona detecciones Roboflow, asistencia de carril OpenCV y seguridad LiDAR para evitar colisiones frontales cuando hay scan fresco.
+5. EPC fusiona detecciones Roboflow, asistencia de carril OpenCV, control de velocidad por IMU BMI160 y seguridad LiDAR para evitar colisiones frontales cuando hay scan fresco.
 6. El navegador permite alternar modo manual/autonomo por HTTP; EPC aplica watchdog en manual o calcula control autonomo desde detecciones frescas y sensores disponibles.
 7. EPC envia `C + steering + throttle` por UDP al coche.
 
@@ -70,6 +70,7 @@ Este plan toma como base un runtime unico en `servicios/coche.py` y elimina comp
 - `autonomous_driver.py` (control autonomo determinista con normalizacion de detecciones, tracking temporal, estimacion de distancia por area, FSM de maniobras, cooldowns y filtrado de comandos)
 - `lane_detector.py` (deteccion OpenCV de cinta azul/verde sobre alfombra y correccion suave de carril dentro del modo autonomo)
 - `lidar_processor.py` (normalizacion de scan LiDAR, estimacion frontal de obstaculos, freno/limitacion de velocidad y puntos reducidos para reconstruccion web)
+- control de velocidad por BMI160 en `coche.py`: estima velocidad longitudinal desde aceleracion IMU y aplica una correccion PID limitada al gas autonomo, sin sustituir camara ni LiDAR como fuentes de conduccion/seguridad
 - grabador de sesion/dataset desde `coche.py` para guardar frames, video MP4 anotado, predicciones, flags criticos, estimaciones autonomas y comandos como candidatos de reentrenamiento Roboflow
 - replayer offline `session_replayer.py` para visualizar sesiones, filtrar situaciones criticas y relabelar detecciones sin modificar el manifiesto original
 - Inferencia y validacion:
@@ -105,17 +106,18 @@ Eso puede existir en el futuro como capa adicional, pero no es requisito para se
 
 - Script elegido para sesiones normales: `servicios/coche.py`.
 - IP/puerto de escucha UDP: `172.16.0.1:20001`.
-- Formato de datos esperados: `I`, `B`, `D` con payload `pickle`.
+- Formato de datos esperados: `I`, `B`, `D`; `I`/`B` mantienen payload `pickle` legacy y `D` acepta JSON de telemetria BMI160 o payload legacy `pickle`.
 - Formato LiDAR nuevo: `L` con payload `pickle` o JSON; tambien se acepta LiDAR embebido en `D` bajo claves `lidar`, `lidar_scan`, `scan`, `ranges` o `points`.
 - Formato de control de salida: `C` con `double` giro y `double` acelerador.
 - Control manual remoto directo desde navegador con watchdog a neutro.
 - Selector web manual/autonomo:
   - manual: navegador publica giro/gas y watchdog vuelve a neutro si deja de publicar.
   - autonomo: EPC decide desde detecciones Roboflow recientes, priorizando señales persistentes y cercanas por area de bounding box, zona izquierda/centro/derecha y estado de maniobra.
-  - throttle autonomo: las acciones de avance usan `+0.65` por defecto y la web puede ajustar la velocidad de crucero en vivo; las paradas, ambiguedad o fallbacks por datos obsoletos usan neutro.
+  - throttle autonomo: las acciones de avance usan `+0.65` por defecto y la web puede ajustar la velocidad de crucero en vivo; si hay BMI160 fresco, EPC convierte ese ajuste en objetivo de velocidad y aplica una correccion PID limitada al acelerador; las paradas, ambiguedad o fallbacks por datos obsoletos usan neutro.
   - compensacion de direccion: el envio UDP aplica trim de giro (`TP2_STEERING_TRIM` default `-0.24`) para corregir con mas autoridad el sesgo fisico hacia la izquierda de las ruedas; la web puede ajustar este valor y un pulso periodico a la derecha en vivo sin reiniciar el servicio; los giros autonomos abiertos omiten el trim para mantener bloqueo maximo.
   - asistencia de carril: `coche.py` segmenta las cintas azul/verde en OpenCV, estima el corredor actual entre lineas y suma una correccion limitada al giro solo en acciones autonomas de avance; prefiere el corredor derecho cuando hay varios carriles visibles para recuperar invasiones del carril contrario, reduce gas en recuperacion fuerte y no compite con STOP ni giros abiertos.
   - asistencia LiDAR: `coche.py` acepta scans tipo `ranges` o nube de puntos `points`, usa por defecto los 45 haces frontales centrados en la direccion del coche, fuerza `lidar-stop` a `0.15 m` o menos dentro de ese sector, limita velocidad en `lidar-slow` y publica una reconstruccion cenital reducida en `/status.json` para la UI.
+  - asistencia IMU: `coche.py` acepta telemetria JSON `D` con `imu.accel_mps2` y `imu.gyro_dps`; solo ajusta gas en acciones autonomas de avance permitidas, con limites de frescura, deadband, integral y correccion maxima configurables desde la web.
   - distancia de decision: el runtime acepta señales algo mas pequeñas/lejanas por defecto para iniciar antes STOP y giros.
   - tracking/FSM: confirma señales desde el primer frame valido por defecto, ejecuta `STOP` inmediato, ejecuta giros a bloqueo maximo como maniobra abierta de 90 grados durante una ventana controlada y aplica cooldown para no repetir la misma señal.
   - fallback: sin frame o inferencia fresca, EPC manda neutro.

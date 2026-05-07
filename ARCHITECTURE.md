@@ -12,8 +12,8 @@ TP2 runs as a four-machine lab, but the current critical path is script-based an
 ## Current Critical Path
 
 1. Car attaches to LTE and gets UE IP from EPC. The previous fixed target was `172.16.0.2`; the live EPC HSS was observed on `2026-04-27` with dynamic allocation and the active session at `172.16.0.4`.
-2. Car sends UDP payloads (image/battery/runtime/LiDAR when connected) to EPC control server.
-3. EPC script computes steering/throttle in either manual web mode or autonomous mode. In autonomous mode, traffic-sign decisions remain Roboflow-driven, `lane_detector.py` adds a bounded OpenCV lane correction from the blue/green tape lines when the car is moving forward, and `lidar_processor.py` can stop or slow the car from fresh frontal LiDAR obstacles.
+2. Car sends UDP payloads (image/battery/runtime/LiDAR when connected, and BMI160 IMU telemetry when available) to EPC control server.
+3. EPC script computes steering/throttle in either manual web mode or autonomous mode. In autonomous mode, traffic-sign decisions remain Roboflow-driven, `lane_detector.py` adds a bounded OpenCV lane correction from the blue/green tape lines when the car is moving forward, BMI160 telemetry can close a bounded PID speed-control loop over throttle, and `lidar_processor.py` can stop or slow the car from fresh frontal LiDAR obstacles.
 4. EPC sends UDP control packet back to car.
 
 This path works without introducing a new backend API layer.
@@ -29,6 +29,7 @@ This path works without introducing a new backend API layer.
 - Script runtime from `servicios/`:
   - car control UDP servers
   - LiDAR scan normalizer and collision safety layer
+  - BMI160 IMU telemetry parser and bounded autonomous speed PID
   - local inference endpoint launcher
   - inference CLI and GUI tools
 
@@ -42,6 +43,7 @@ This path works without introducing a new backend API layer.
 
 - Streams data to EPC over UDP
 - Streams LiDAR scans to EPC over UDP when the sensor is connected
+- Streams BMI160 accelerometer/gyroscope telemetry to EPC over UDP `D` packets when the sensor is available
 - Executes control commands received from EPC
 - Runs movement logic driven by EPC commands
 
@@ -75,6 +77,7 @@ This path works without introducing a new backend API layer.
 - Car control transport:
   - UDP runtime on EPC (`172.16.0.1:20001`)
   - payload discriminator byte (`I`, `B`, `D`)
+  - `D` accepts JSON telemetry for BMI160 IMU data and remains compatible with legacy pickled telemetry
   - optional LiDAR discriminator byte (`L`) with `pickle` or JSON payload; the runtime also accepts LiDAR nested in `D`
   - control packet type (`C`) with steering/throttle doubles
 - Operator visibility:
@@ -83,6 +86,7 @@ This path works without introducing a new backend API layer.
   - steering compensation, autonomous cruise throttle, and optional periodic right-turn pulse are mutable from the EPC web UI; steering trim is applied immediately before UDP command serialization and bypassed only for autonomous open turns
   - autonomous driving is an EPC-local decision layer over Roboflow detections; it performs temporal tracking, sign selection, stateful maneuvers, and command smoothing without moving orchestration to Jetson or the car
   - lane assistance is EPC-local OpenCV processing over the same camera frames; it detects the blue/green tape corridor on the black carpet and reports status/correction through `/status.json`
+  - BMI160 speed assistance is EPC-local and sensor-freshness gated; it estimates forward velocity from IMU acceleration and applies a bounded PID correction to autonomous forward throttle only
   - LiDAR collision assistance is EPC-local and sensor-freshness gated; it reports `lidar.status`, `lidar.safety`, and a capped point list through `/status.json`
   - the web runtime can switch the main stage between annotated camera stream and a LiDAR point-cloud reconstruction without moving control away from EPC
   - session recording is also EPC-local and stores candidate frames, annotated MP4 video, predictions, critical flags, reviewed-label sidecars, and autonomous estimates for dataset improvement under the configured recording directory

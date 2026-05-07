@@ -7,6 +7,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+import coche as coche_module
 from autonomous_driver import AutonomousDecision
 from coche import (
     CriticalFrameAnalyzer,
@@ -57,6 +58,15 @@ def analyzer():
 
 
 class RuntimeStateModeTest(unittest.TestCase):
+    def setUp(self):
+        self._defaults_tmp = tempfile.TemporaryDirectory()
+        self._old_defaults_path = coche_module.CONTROL_DEFAULTS_PATH
+        coche_module.CONTROL_DEFAULTS_PATH = Path(self._defaults_tmp.name) / "defaults.json"
+
+    def tearDown(self):
+        coche_module.CONTROL_DEFAULTS_PATH = self._old_defaults_path
+        self._defaults_tmp.cleanup()
+
     def test_web_control_does_not_exit_autonomous_mode(self):
         state = RuntimeState()
         state.set_drive_mode("autonomous")
@@ -311,6 +321,73 @@ class RuntimeStateModeTest(unittest.TestCase):
 
         self.assertEqual(packet_type, "L")
         self.assertIsInstance(payload, bytes)
+
+    def test_telemetry_packet_accepts_json_imu_payload(self):
+        packet_type, payload = parse_car_packet(
+            b'D{"schema":"tp2.car.telemetry.v1","imu":{"accel_mps2":{"x":0.0,"y":0.2,"z":9.8}}}'
+        )
+
+        self.assertEqual(packet_type, "D")
+        self.assertEqual(payload["schema"], "tp2.car.telemetry.v1")
+        self.assertEqual(payload["imu"]["accel_mps2"]["y"], 0.2)
+
+    def test_imu_telemetry_updates_speed_status(self):
+        state = RuntimeState()
+        state.update_telemetry(
+            {
+                "schema": "tp2.car.telemetry.v1",
+                "seq": 4,
+                "imu": {
+                    "status": "ok",
+                    "accel_mps2": {"x": 0.0, "y": 0.15, "z": 9.8},
+                    "gyro_dps": {"x": 1.0, "y": 2.0, "z": 3.0},
+                },
+            }
+        )
+
+        imu = state.snapshot()["imu"]
+        self.assertEqual(imu["status"], "ready")
+        self.assertEqual(imu["seq"], 4)
+        self.assertEqual(imu["accel_mps2"]["y"], 0.15)
+
+    def test_imu_pid_adjusts_autonomous_forward_throttle(self):
+        state = RuntimeState()
+        state.drive_mode = "autonomous"
+        state.control_armed = True
+        state.throttle = 0.5
+        state.imu_config = state.imu_config.__class__(
+            enabled=True,
+            speed_control_enabled=True,
+            stale_sec=1.0,
+            forward_axis="y",
+            forward_sign=1.0,
+            accel_deadband_mps2=0.0,
+            velocity_decay_per_sec=0.0,
+            target_speed_scale_mps=1.0,
+            kp=0.2,
+            ki=0.0,
+            kd=0.0,
+            integral_limit=1.0,
+            max_throttle_correction=0.2,
+            min_active_throttle=0.05,
+            max_speed_mps=3.0,
+        )
+        state.update_telemetry(
+            {
+                "imu": {
+                    "status": "ok",
+                    "accel_mps2": {"x": 0.0, "y": 0.0, "z": 9.8},
+                }
+            }
+        )
+
+        adjusted = state._apply_imu_speed_control_locked(
+            decision(action="continue", state="cruise"),
+            state.imu_last_at,
+        )
+
+        self.assertGreater(adjusted.throttle, 0.5)
+        self.assertTrue(state.imu_speed_assist_active)
 
 
 class CriticalFrameAnalyzerTest(unittest.TestCase):

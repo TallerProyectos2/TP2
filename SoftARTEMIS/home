@@ -1,0 +1,32 @@
+[mqtt]
+vehicle_id = 1
+# Direccion IP de grupo 1:
+#mqtt_server_ip = 10.0.128.177
+#mqtt_server_ip = 192.168.72.199
+mqtt_server_ip = 10.0.128.177
+
+# Direccion IP de grupo 4:
+#mqtt_server_ip = 10.0.128.177
+#mqtt_server_ip = 192.168.72.111
+
+mqtt_server_port = 1883
+
+[cloud_autonomous_driving]
+# Direccion IP de grupo 1:
+#cloud_server_ip = 10.0.128.176
+#cloud_server_ip = 192.168.72.121 
+#cloud_server_ip = 192.168.55.100
+cloud_server_ip = 10.0.128.177
+
+# Direccion IP de grupo 4:
+#cloud_server_ip = 192.168.72.129
+#cloud_server_ip = 10.0.128.177
+
+#cloud_server_port = 20004
+cloud_server_port = 20001
+
+[steering_calibration]
+max = 1790000
+mid = 1500000
+min = 1250000
+

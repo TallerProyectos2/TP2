@@ -1,49 +1,49 @@
-# 2026-04-22 - Live web control server
+# 2026-04-22 - Live Web Control Server
 
-## Objetivo
+## Objective
 
-Implementar y validar localmente el servidor web del runtime del coche para:
+Implement and locally validate the car runtime web server to:
 
-- ver video MJPEG en tiempo real;
-- exponer snapshot y estado JSON;
-- mostrar inferencia y overlays sobre el frame recibido;
-- mandar control remoto manual desde navegador;
-- aplicar watchdog de control para volver a neutro si el navegador deja de publicar.
+- show real-time MJPEG video;
+- expose snapshots and JSON status;
+- show inference and overlays on the received frame;
+- send manual remote control from a browser;
+- apply a control watchdog that returns to neutral if the browser stops publishing.
 
-## Cambios validados localmente
+## Locally Validated Changes
 
-- `servicios/coche.py` arranca el servidor HTTP integrado en el proceso del runtime.
-- Endpoints disponibles:
+- `servicios/coche.py` starts the HTTP server inside the runtime process.
+- Available endpoints:
   - `GET /`
   - `GET /status.json`
   - `GET /video.mjpg`
   - `GET /snapshot.jpg`
   - `POST /control`
   - `POST /control/neutral`
-- El control web queda limitado por:
+- Web control is bounded by:
   - `TP2_ENABLE_WEB_CONTROL`
   - `TP2_WEB_CONTROL_TIMEOUT_SEC`
   - `TP2_WEB_CONTROL_MAX_FORWARD`
   - `TP2_WEB_CONTROL_MAX_REVERSE`
-- El estado web incluye contadores de paquetes, ultimo cliente, ultimo tipo de paquete, frames de video, estado de inferencia y fuente de control activa.
+- Web status includes packet counters, last client, last packet type, video frames, inference status, and active control source.
 
-## Validacion local
+## Local Validation
 
-Comando de compilacion:
+Compile command:
 
 ```console
 /Users/mario/miniconda3/envs/test/bin/python -m py_compile servicios/coche.py servicios/roboflow_runtime.py
 ```
 
-Resultado: correcto, sin salida de error.
+Result: OK, no error output.
 
-Servidor local de prueba:
+Local test server:
 
 ```console
 TP2_BIND_IP=127.0.0.1 TP2_BIND_PORT=29001 TP2_WEB_HOST=127.0.0.1 TP2_WEB_PORT=18088 TP2_ENABLE_INFERENCE=0 TP2_ENABLE_OPENCV_WINDOWS=0 /Users/mario/miniconda3/envs/test/bin/python -u servicios/coche.py
 ```
 
-Salida relevante:
+Relevant output:
 
 ```console
 Live web view listening on http://127.0.0.1:18088/
@@ -51,7 +51,7 @@ Manual control server listening on 127.0.0.1:29001
 Inference: disabled (local/model) endpoint=http://100.115.99.8:9001
 ```
 
-Prueba HTTP/UDP con frame JPEG sintetico enviado como `I` por UDP:
+HTTP/UDP test with a synthetic JPEG frame sent as UDP `I`:
 
 ```json
 {
@@ -77,9 +77,9 @@ Prueba HTTP/UDP con frame JPEG sintetico enviado como `I` por UDP:
 }
 ```
 
-Prueba con frame corrupto: el servidor registro `bad_image_frames=1`, mantuvo `last_error` en el diagnostico y respondio igualmente al coche con paquete `C` de 17 bytes.
+Corrupt-frame test: the server recorded `bad_image_frames=1`, kept `last_error` in diagnostics, and still responded to the car with a 17-byte `C` packet.
 
-Prueba de snapshot:
+Snapshot test:
 
 ```json
 {
@@ -90,65 +90,65 @@ Prueba de snapshot:
 }
 ```
 
-Resultado: el servidor local acepta control web, responde al coche por UDP con `C`, publica video/snapshot y vuelve a fuente `web-timeout` despues del timeout.
+Result: the local server accepts web control, responds to the car over UDP with `C`, publishes video/snapshots, and returns to `web-timeout` after the timeout.
 
-## Estado remoto observado
+## Observed Remote State
 
-Comando:
+Command:
 
 ```console
 ops/bin/tp2-status
 ```
 
-Resumen:
+Summary:
 
-- EPC: `srsepc` activo, `mosquitto` activo, `tp2-car-control.service` activo.
-- EPC: UDP `172.16.0.1:20001` escuchando.
-- EPC: web `0.0.0.0:8088` escuchando y endpoint web responde.
-- UE coche: no confirmado por `tp2-status`.
-- eNodeB: link, FPGA y `srsenb` activos.
-- Jetson: servicio de inferencia activo y OpenAPI accesible.
+- EPC: `srsepc` active, `mosquitto` active, `tp2-car-control.service` active.
+- EPC: UDP `172.16.0.1:20001` listening.
+- EPC: web `0.0.0.0:8088` listening and web endpoint responding.
+- Car UE: not confirmed by `tp2-status`.
+- eNodeB: link, FPGA, and `srsenb` active.
+- Jetson: inference service active and OpenAPI reachable.
 
-Consulta remota:
+Remote query:
 
 ```console
 curl -fsS --max-time 4 http://100.97.19.112:8088/status.json
 ```
 
-Resultado observado: despliegue remoto anterior responde, pero sin frames de video (`has_video=false`, `video_frames=0`) y con inferencia en espera.
+Observed result: the previous remote deployment responds, but without video frames (`has_video=false`, `video_frames=0`) and with inference waiting.
 
-## Notas operativas
+## Operational Notes
 
-No se reinicio `tp2-car-control.service` en EPC durante esta validacion para no interrumpir el runtime activo.
+`tp2-car-control.service` was not restarted on EPC during this validation to avoid interrupting the active runtime.
 
-El checkout remoto `/home/tp2/TP2_red4G` estaba limpio, pero divergido respecto a `origin/main` (`ahead 1, behind 4`) mientras el repo local tambien tenia cambios pendientes. Para activar esta version en el laboratorio real hay que resolver/sincronizar esa divergencia y reiniciar solo `tp2-car-control.service` en una ventana controlada.
+The remote checkout at `/home/tp2/TP2_red4G` was clean, but diverged from `origin/main` (`ahead 1, behind 4`) while the local repo also had pending changes. Activating this version in the real lab requires resolving/synchronizing that divergence and restarting only `tp2-car-control.service` in a controlled window.
 
-## Intervencion remota posterior
+## Later Remote Intervention
 
-Despues de observar desde la interfaz del operador que el EPC seguia sirviendo la version antigua, se copio la version nueva de:
+After observing from the operator interface that EPC was still serving the old version, the new versions of these files were copied:
 
 - `servicios/coche.py`
 - `ops/systemd/epc/tp2-car-control.service`
 
-al checkout remoto `/home/tp2/TP2_red4G`.
+to the remote checkout at `/home/tp2/TP2_red4G`.
 
-La instalacion/reinicio por systemd no pudo completarse porque `sudo` solicito password interactiva. Se termino el proceso antiguo de `tp2-car-control.service`; systemd dejo la unidad `inactive` en vez de relanzarla. Para recuperar el runtime, se arranco manualmente el nuevo `coche.py` como usuario `tp2`:
+The systemd install/restart could not complete because `sudo` requested an interactive password. The old `tp2-car-control.service` process was terminated; systemd left the unit `inactive` instead of relaunching it. To recover the runtime, the new `coche.py` was started manually as user `tp2`:
 
 ```console
 cd /home/tp2/TP2_red4G/servicios
 nohup /home/tp2/miniforge3/bin/conda run --no-capture-output -n tp2 python -u coche.py > /tmp/tp2-car-control-web.log 2>&1 &
 ```
 
-Validacion remota tras el arranque manual:
+Remote validation after manual startup:
 
-- `8088/TCP`: activo.
-- `20001/UDP`: activo.
-- `GET /` sirve la interfaz nueva `TP2 Live Control`.
-- `POST /control` acepta control web y `status.json` refleja `control_source=web` durante publicaciones repetidas.
-- `POST /control/neutral` devuelve el control a neutro por watchdog.
-- Jetson inference endpoint: `GET http://100.115.99.8:9001/info` responde `Roboflow Inference Server 1.1.2`.
+- `8088/TCP`: active.
+- `20001/UDP`: active.
+- `GET /` serves the new `TP2 Live Control` interface.
+- `POST /control` accepts web control and `status.json` reflects `control_source=web` during repeated publications.
+- `POST /control/neutral` returns control to neutral by watchdog.
+- Jetson inference endpoint: `GET http://100.115.99.8:9001/info` responds `Roboflow Inference Server 1.1.2`.
 
-Estado actual de frames reales:
+Current real-frame state:
 
 ```json
 {
@@ -163,10 +163,10 @@ Estado actual de frames reales:
 }
 ```
 
-Se republico `AM-Cloud` en `1/command`; durante 30 segundos posteriores el EPC recibio solo paquetes `B`, no paquetes `I`. Por tanto, la interfaz y el runtime EPC estan activos, pero el coche no esta enviando frames de camara al endpoint UDP.
+`AM-Cloud` was republished on `1/command`; for the following 30 seconds EPC received only `B` packets, not `I` packets. Therefore, the EPC interface and runtime are active, but the car is not sending camera frames to the UDP endpoint.
 
-Acceso al coche:
+Car access:
 
-- `172.16.0.2:22` esta abierto.
-- SSH no interactivo fallo para usuarios conocidos `tp2`, `grupo4`, `pi`, `ubuntu`, `artemis`.
-- Sin credenciales del coche no se pudo entrar a revisar o arrancar el proceso de camara.
+- `172.16.0.2:22` is open.
+- Non-interactive SSH failed for known users `tp2`, `grupo4`, `pi`, `ubuntu`, `artemis`.
+- Without car credentials it was not possible to log in and inspect or start the camera process.

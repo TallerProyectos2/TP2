@@ -3738,7 +3738,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     .pill.warn { color: var(--amber); } .pill.warn .dot { background: var(--amber); } .pill.warn .val { color: var(--amber); }
     .pill.bad  { color: var(--red); }   .pill.bad  .dot { background: var(--red);   } .pill.bad  .val { color: var(--red); }
 
-    .session { display: flex; align-items: center; gap: 18px; padding-right: 6px; }
+    .session { display: flex; align-items: center; gap: 18px; padding-right: 14px; }
     .session .group { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
     .session .label {
       color: var(--ink-3); font-size: 9px;
@@ -4057,7 +4057,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       border-radius: 12px;
       overflow: hidden;
       background: var(--line);
-      margin-right: 4px;
+      margin-right: 12px;
     }
     .ctx-strip .ctx {
       display: flex; flex-direction: column; gap: 2px;
@@ -4081,7 +4081,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       gap: 3px; padding: 3px;
       border-radius: 10px; border: 1px solid var(--line);
       background: var(--bg-2);
-      margin-right: 4px;
+      margin-right: 12px;
     }
     .tab {
       height: 30px; padding: 0 8px;
@@ -4110,6 +4110,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       min-height: 0; overflow-y: auto;
       display: grid; gap: 12px; align-content: start;
       padding-right: 4px;
+      scrollbar-gutter: stable;
       scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent;
     }
     .tab-host::-webkit-scrollbar { width: 8px; }
@@ -4462,11 +4463,13 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       .app { height: auto; min-height: 100%; }
       header { grid-template-columns: 1fr; gap: 14px; }
       .pills { justify-content: flex-start; }
-      .session { justify-content: flex-start; gap: 18px; }
+      .session { justify-content: flex-start; gap: 18px; padding-right: 0; }
       .session .group { align-items: flex-start; }
       main { grid-template-columns: 1fr; }
       .video { aspect-ratio: 16 / 9; }
       .side { grid-template-rows: auto auto auto; max-height: none; overflow: visible; }
+      .ctx-strip, .tabs { margin-right: 0; }
+      .tab-host { scrollbar-gutter: auto; }
     }
     @media (max-width: 720px) {
       .deck { grid-template-columns: 1fr; row-gap: 14px; }

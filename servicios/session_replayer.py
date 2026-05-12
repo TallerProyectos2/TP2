@@ -1434,6 +1434,130 @@ INDEX_HTML = r"""<!doctype html>
     .toast.show { opacity: 1; transform: translate(-50%, 0); }
     .toast.error { border-color: rgba(248,113,113,0.55); color: var(--red); }
     .toast.ok { border-color: rgba(94,234,212,0.5); color: var(--teal); }
+
+    /* THEME TOGGLE ----------------------------------------------------------- */
+    .header-right { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
+    .theme-toggle {
+      width: 34px; height: 34px;
+      display: inline-grid; place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--bg-1);
+      color: var(--ink-2);
+      cursor: pointer;
+      padding: 0;
+      transition: color .14s ease, background .14s ease, border-color .14s ease, box-shadow .14s ease;
+      flex: 0 0 auto;
+    }
+    .theme-toggle:hover { color: var(--ink); border-color: var(--line-strong); background: var(--bg-2); }
+    .theme-toggle:focus-visible { outline: none; box-shadow: var(--ring); }
+    .theme-toggle svg { width: 15px; height: 15px; }
+    .theme-toggle .sun { display: none; }
+    .theme-toggle .moon { display: block; }
+    html[data-theme="light"] .theme-toggle .sun { display: block; }
+    html[data-theme="light"] .theme-toggle .moon { display: none; }
+
+    /* LIGHT THEME ----------------------------------------------------------- */
+    html[data-theme="light"] {
+      color-scheme: light;
+      --bg-0: #f6f8fc;
+      --bg-1: #ffffff;
+      --bg-2: #f1f4f9;
+      --bg-3: #e6ebf3;
+      --line: #d4dae5;
+      --line-soft: #e7ebf2;
+      --line-strong: #aab3c1;
+      --ink: #0e1422;
+      --ink-2: #3e4a5e;
+      --ink-3: #6a7488;
+      --muted: #9ba4b3;
+      --blue: #1f5dd8;
+      --blue-soft: rgba(31,93,216,0.10);
+      --blue-deep: #143a92;
+      --cyan: #0e7490;
+      --teal: #0f766e;
+      --amber: #b45309;
+      --red: #c0392b;
+      --green: #15803d;
+      --magenta: #be185d;
+      --shadow: 0 1px 2px rgba(15,23,42,0.05), 0 12px 30px rgba(15,23,42,0.07);
+      --ring: 0 0 0 1px rgba(31,93,216,0.55), 0 0 0 4px rgba(31,93,216,0.12);
+    }
+    html[data-theme="light"] body {
+      background:
+        radial-gradient(1200px 700px at 88% -10%, rgba(31,93,216,0.06), transparent 60%),
+        radial-gradient(900px 600px at 5% 110%, rgba(15,118,110,0.04), transparent 55%),
+        var(--bg-0);
+    }
+    html[data-theme="light"] body::before {
+      background-image:
+        linear-gradient(rgba(15,23,42,0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(15,23,42,0.035) 1px, transparent 1px);
+    }
+    html[data-theme="light"] .brand .mark {
+      box-shadow: 0 6px 18px rgba(31,93,216,0.22), inset 0 1px 0 rgba(255,255,255,0.30);
+    }
+    html[data-theme="light"] .brand .mark::after { border-color: rgba(31,93,216,0.18); }
+    html[data-theme="light"] .pill { background: rgba(255,255,255,0.92); }
+    html[data-theme="light"] button {
+      background: rgba(31,93,216,0.07);
+      border-color: rgba(31,93,216,0.32);
+    }
+    html[data-theme="light"] button:hover { background: rgba(31,93,216,0.13); }
+    html[data-theme="light"] button.solid { color: #ffffff; background: linear-gradient(135deg, var(--blue), #143a92); }
+    html[data-theme="light"] button.subtle { background: var(--bg-2); border-color: var(--line); color: var(--ink-2); }
+    html[data-theme="light"] button.subtle:hover { background: var(--bg-3); border-color: var(--line-strong); color: var(--ink); }
+    html[data-theme="light"] button.danger { background: rgba(192,57,43,0.08); border-color: rgba(192,57,43,0.45); color: var(--red); }
+    html[data-theme="light"] button.danger:hover { background: rgba(192,57,43,0.15); }
+    html[data-theme="light"] button.toggle.on { background: rgba(14,116,144,0.10); border-color: rgba(14,116,144,0.50); color: var(--cyan); }
+    html[data-theme="light"] .frame-wrap {
+      background:
+        radial-gradient(120% 80% at 50% 0%, rgba(31,93,216,0.06) 0%, transparent 60%),
+        radial-gradient(120% 80% at 50% 100%, rgba(15,23,42,0.05) 0%, transparent 60%),
+        #eef2f8;
+    }
+    html[data-theme="light"] .frame { background: #e3e8f0; }
+    html[data-theme="light"] .frame-hud {
+      background: rgba(255,255,255,0.92);
+      border-color: var(--line);
+      box-shadow: 0 1px 2px rgba(15,23,42,0.05);
+    }
+    html[data-theme="light"] .frame-hint {
+      background: rgba(255,255,255,0.92);
+      border-color: rgba(14,116,144,0.42);
+      color: var(--cyan);
+    }
+    html[data-theme="light"] .deck {
+      background: linear-gradient(180deg, #ffffff, #f6f8fc);
+      box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+    }
+    html[data-theme="light"] .ctx-strip .ctx {
+      background: linear-gradient(180deg, #ffffff, #f6f8fc);
+    }
+    html[data-theme="light"] .tab.active {
+      background: linear-gradient(180deg, #ffffff, #eef2f9);
+      box-shadow: 0 0 0 1px var(--line-strong), inset 0 1px 0 rgba(255,255,255,0.8);
+      color: var(--ink);
+    }
+    html[data-theme="light"] .card {
+      background: linear-gradient(180deg, #ffffff, #f7f9fd);
+      box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+    }
+    html[data-theme="light"] .flag { background: #fbfcfe; }
+    html[data-theme="light"] .label-row { background: #ffffff; }
+    html[data-theme="light"] .label-row:hover { background: #f4f6fb; border-color: var(--line-strong); }
+    html[data-theme="light"] .label-row.active { background: rgba(31,93,216,0.08); border-color: rgba(31,93,216,0.55); }
+    html[data-theme="light"] .label-row.invalid { background: rgba(192,57,43,0.08); border-color: rgba(192,57,43,0.40); }
+    html[data-theme="light"] .label-row.manual { background: rgba(14,116,144,0.07); border-color: rgba(14,116,144,0.42); }
+    html[data-theme="light"] .label-row.manual.active { background: rgba(14,116,144,0.14); border-color: rgba(14,116,144,0.70); }
+    html[data-theme="light"] .label-row .src.manual { background: rgba(14,116,144,0.08); border-color: rgba(14,116,144,0.45); color: var(--cyan); }
+    html[data-theme="light"] .label-row .src.invalid { background: rgba(192,57,43,0.08); border-color: rgba(192,57,43,0.45); color: var(--red); }
+    html[data-theme="light"] .relabel {
+      background: linear-gradient(180deg, #ffffff, #f5f7fb);
+    }
+    html[data-theme="light"] .chip.active { background: rgba(31,93,216,0.08); border-color: rgba(31,93,216,0.55); color: var(--blue); }
+    html[data-theme="light"] .toast { background: #ffffff; box-shadow: 0 1px 2px rgba(15,23,42,0.05), 0 12px 30px rgba(15,23,42,0.08); }
+
     /* RESPONSIVE -------------------------------------------------------------- */
     @media (max-width: 1080px) {
       .app { height: auto; }
@@ -1445,6 +1569,17 @@ INDEX_HTML = r"""<!doctype html>
       .side { grid-template-rows: auto auto auto; max-height: none; overflow: visible; }
     }
   </style>
+  <script>
+    (function () {
+      try {
+        var stored = localStorage.getItem('tp2-theme');
+        var theme = stored === 'light' || stored === 'dark' ? stored : 'dark';
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
 </head>
 <body>
   <div class="app">
@@ -1468,11 +1603,17 @@ INDEX_HTML = r"""<!doctype html>
           Actualizar
         </button>
       </div>
-      <div class="pills">
-        <div class="pill ok" title="Frames totales"><span class="dot"></span><span class="num" id="pill-frames">0</span> fr</div>
-        <div class="pill warn" title="Frames criticos"><span class="dot"></span><span class="num" id="pill-critical">0</span> crit</div>
-        <div class="pill ok" title="Etiquetas revisadas"><span class="dot"></span><span class="num" id="pill-reviewed">0</span> rev</div>
-        <div class="pill ghost" title="Cuadros manuales"><span class="dot"></span><span class="num" id="pill-manual">0</span> man</div>
+      <div class="header-right">
+        <div class="pills">
+          <div class="pill ok" title="Frames totales"><span class="dot"></span><span class="num" id="pill-frames">0</span> fr</div>
+          <div class="pill warn" title="Frames criticos"><span class="dot"></span><span class="num" id="pill-critical">0</span> crit</div>
+          <div class="pill ok" title="Etiquetas revisadas"><span class="dot"></span><span class="num" id="pill-reviewed">0</span> rev</div>
+          <div class="pill ghost" title="Cuadros manuales"><span class="dot"></span><span class="num" id="pill-manual">0</span> man</div>
+        </div>
+        <button type="button" class="theme-toggle" id="theme-toggle" title="Cambiar tema (claro / oscuro)" aria-label="Cambiar tema">
+          <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+          <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
       </div>
     </header>
     <main>
@@ -2362,6 +2503,17 @@ INDEX_HTML = r"""<!doctype html>
       const max = Number(e.target.max) || 1;
       e.target.style.setProperty("--seek-pct", ((Number(e.target.value) / max) * 100).toFixed(2) + "%");
     });
+
+    (function () {
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+        const next = current === 'light' ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', next);
+        try { localStorage.setItem('tp2-theme', next); } catch (e) {}
+      });
+    })();
 
     const params = new URLSearchParams(location.search);
     loadCatalog(params.get("session")).catch(err => showToast(err.message, "error"));

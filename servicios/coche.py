@@ -4308,6 +4308,152 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       font-family: var(--mono);
     }
 
+    /* THEME TOGGLE ----------------------------------------------------------- */
+    .theme-toggle {
+      width: 34px; height: 34px;
+      display: inline-grid; place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--bg-1);
+      color: var(--ink-2);
+      cursor: pointer;
+      padding: 0;
+      transition: color .14s ease, background .14s ease, border-color .14s ease, box-shadow .14s ease;
+    }
+    .theme-toggle:hover { color: var(--ink); border-color: var(--line-strong); background: var(--bg-2); }
+    .theme-toggle:focus-visible { outline: none; box-shadow: var(--ring); }
+    .theme-toggle svg { width: 15px; height: 15px; }
+    .theme-toggle .sun { display: none; }
+    .theme-toggle .moon { display: block; }
+    html[data-theme="light"] .theme-toggle .sun { display: block; }
+    html[data-theme="light"] .theme-toggle .moon { display: none; }
+    .session .theme-toggle { margin-right: 6px; }
+
+    /* LIGHT THEME ----------------------------------------------------------- */
+    html[data-theme="light"] {
+      color-scheme: light;
+      --bg-0: #f6f8fc;
+      --bg-1: #ffffff;
+      --bg-2: #f1f4f9;
+      --bg-3: #e6ebf3;
+      --line: #d4dae5;
+      --line-soft: #e7ebf2;
+      --line-strong: #aab3c1;
+      --ink: #0e1422;
+      --ink-2: #3e4a5e;
+      --ink-3: #6a7488;
+      --muted: #9ba4b3;
+      --blue: #1f5dd8;
+      --blue-soft: rgba(31,93,216,0.10);
+      --blue-deep: #143a92;
+      --cyan: #0e7490;
+      --teal: #0f766e;
+      --amber: #b45309;
+      --red: #c0392b;
+      --green: #15803d;
+      --shadow: 0 1px 2px rgba(15,23,42,0.05), 0 12px 30px rgba(15,23,42,0.07);
+      --ring: 0 0 0 1px rgba(31,93,216,0.55), 0 0 0 4px rgba(31,93,216,0.12);
+    }
+    html[data-theme="light"] body {
+      background:
+        radial-gradient(1200px 700px at 92% -10%, rgba(31,93,216,0.06), transparent 60%),
+        radial-gradient(900px 600px at 5% 110%, rgba(15,118,110,0.04), transparent 55%),
+        var(--bg-0);
+    }
+    html[data-theme="light"] body::before {
+      background-image:
+        linear-gradient(rgba(15,23,42,0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(15,23,42,0.035) 1px, transparent 1px);
+    }
+    html[data-theme="light"] .brand .mark {
+      box-shadow: 0 6px 18px rgba(31,93,216,0.22), inset 0 1px 0 rgba(255,255,255,0.30);
+    }
+    html[data-theme="light"] .brand .mark::after { border-color: rgba(31,93,216,0.18); }
+    html[data-theme="light"] .pill { background: rgba(255,255,255,0.92); }
+    html[data-theme="light"] .video {
+      background:
+        radial-gradient(120% 80% at 50% 0%, rgba(31,93,216,0.06) 0%, transparent 60%),
+        radial-gradient(120% 80% at 50% 100%, rgba(15,23,42,0.05) 0%, transparent 60%),
+        #eef2f8;
+    }
+    html[data-theme="light"] .view-toggle {
+      background: rgba(255,255,255,0.92);
+      border-color: rgba(31,93,216,0.30);
+      box-shadow: 0 1px 2px rgba(15,23,42,0.05);
+    }
+    html[data-theme="light"] .view-toggle button.active { color: #ffffff; box-shadow: 0 3px 14px rgba(31,93,216,0.20); }
+    html[data-theme="light"] .rec {
+      background: rgba(255,255,255,0.92);
+      border-color: rgba(31,93,216,0.32);
+      box-shadow: 0 1px 2px rgba(15,23,42,0.05);
+    }
+    html[data-theme="light"] .hud .chip {
+      background: rgba(255,255,255,0.92);
+      border-color: rgba(31,93,216,0.22);
+      box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+    }
+    html[data-theme="light"] .deck {
+      background: linear-gradient(180deg, #ffffff, #f6f8fc);
+      box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+    }
+    html[data-theme="light"] .key.active { color: #ffffff; box-shadow: 0 0 0 3px rgba(31,93,216,0.18); }
+    html[data-theme="light"] .key.brake {
+      background: linear-gradient(180deg, #fdecee, #f9d6da);
+      color: var(--red);
+      border-color: rgba(192,57,43,0.40);
+      box-shadow: 0 0 0 3px rgba(192,57,43,0.10);
+    }
+    html[data-theme="light"] .mode-toggle button.active {
+      color: #ffffff;
+      box-shadow: 0 4px 14px rgba(31,93,216,0.22), inset 0 1px 0 rgba(255,255,255,0.16);
+    }
+    html[data-theme="light"] button.stop {
+      background: linear-gradient(180deg, #fdecee, #f9d6da);
+      color: var(--red);
+      border-color: rgba(192,57,43,0.45);
+    }
+    html[data-theme="light"] button.stop:hover {
+      background: linear-gradient(180deg, #fcdadd, #f6bcc1);
+      box-shadow: 0 0 20px rgba(192,57,43,0.16);
+    }
+    html[data-theme="light"] .ctx-strip .ctx {
+      background: linear-gradient(180deg, #ffffff, #f6f8fc);
+    }
+    html[data-theme="light"] .tab.active {
+      background: linear-gradient(180deg, #ffffff, #eef2f9);
+      box-shadow: 0 0 0 1px var(--line-strong), inset 0 1px 0 rgba(255,255,255,0.8);
+    }
+    html[data-theme="light"] .card {
+      background: linear-gradient(180deg, #ffffff, #f7f9fd);
+      box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+    }
+    html[data-theme="light"] .det { background: #ffffff; }
+    html[data-theme="light"] .det.empty { background: #f6f8fc; }
+    html[data-theme="light"] .spark .area { fill: rgba(31,93,216,0.12); }
+    html[data-theme="light"] .spark.cyan .area { fill: rgba(14,116,144,0.12); }
+    html[data-theme="light"] .save-defaults-row {
+      border-color: rgba(180,83,9,0.32);
+      background: rgba(180,83,9,0.04);
+    }
+    html[data-theme="light"] .save-defaults-row button {
+      border-color: rgba(180,83,9,0.45);
+      background: rgba(180,83,9,0.08);
+    }
+    html[data-theme="light"] .save-defaults-row button:hover { background: rgba(180,83,9,0.14); }
+    html[data-theme="light"] button.action.btn-record { background: rgba(31,93,216,0.07); border-color: rgba(31,93,216,0.32); }
+    html[data-theme="light"] button.action.btn-record:hover { background: rgba(31,93,216,0.13); }
+    html[data-theme="light"] button.action.btn-record.active {
+      background: rgba(192,57,43,0.10); color: var(--red); border-color: rgba(192,57,43,0.45);
+      box-shadow: 0 0 0 3px rgba(192,57,43,0.10);
+    }
+    html[data-theme="light"] button.action.btn-review { background: rgba(14,116,144,0.07); border-color: rgba(14,116,144,0.32); }
+    html[data-theme="light"] button.action.btn-review:hover { background: rgba(14,116,144,0.13); }
+    html[data-theme="light"] button.action.btn-review.active { background: rgba(14,116,144,0.14); box-shadow: 0 0 0 3px rgba(14,116,144,0.10); }
+    html[data-theme="light"] .steer-meter .fill-left,
+    html[data-theme="light"] .steer-meter .fill-right { background: var(--blue); }
+    html[data-theme="light"] .throttle-meter .fill-fwd { background: var(--blue); }
+    html[data-theme="light"] .throttle-meter .fill-rev { background: var(--red); }
+
     /* RESPONSIVE ------------------------------------------------------------- */
     @media (max-width: 1080px) {
       html, body { overflow: auto; }
@@ -4329,6 +4475,17 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       .tabs { grid-template-columns: repeat(2, 1fr); }
     }
   </style>
+  <script>
+    (function () {
+      try {
+        var stored = localStorage.getItem('tp2-theme');
+        var theme = stored === 'light' || stored === 'dark' ? stored : 'dark';
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
 </head>
 <body>
   <div class="app">
@@ -4358,6 +4515,10 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       </div>
 
       <div class="session">
+        <button type="button" class="theme-toggle" id="theme-toggle" title="Cambiar tema (claro / oscuro)" aria-label="Cambiar tema">
+          <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+          <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
         <div class="group">
           <span class="label">Sesion</span>
           <span class="clock accent" id="session-clock">00:00:00</span>
@@ -5979,6 +6140,17 @@ LIVE_VIEW_HTML = r"""<!doctype html>
         setPillState(els.pillVideo, 'bad'); els.pillVideoVal.textContent = '--';
       }
     }
+
+    (function () {
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+        const next = current === 'light' ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', next);
+        try { localStorage.setItem('tp2-theme', next); } catch (e) {}
+      });
+    })();
 
     pollStatus();
     setInterval(pollStatus, 250);

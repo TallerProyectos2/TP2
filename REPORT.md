@@ -71,7 +71,7 @@ These apply to every piece of memoria text you produce. They are strict.
 - Math and formulas: when the user asks for a formula, return a single-line LaTeX expression ready to paste directly into Microsoft Word using its equation field. One line per formula, no display math wrappers, no `$$` fences, no surrounding code block unless requested. Example shape: `P_{RX} = P_{TX} + G_{TX} + G_{RX} - L_{path} - L_{misc}`.
 - Tables: only if the user asks for a table, deliver it as a clean Markdown table or as Word-pasteable rows, never as ASCII art.
 - Length: match the granularity the user asked for. A request for "un párrafo" gets one paragraph, not a section. A request for "la sección 5" gets the full section.
-- Tone: technical, precise, third person or impersonal ("se optó por", "se desarrolló", "se ha implementado", "el sistema utiliza"), never first person plural unless the user asks for it.
+- Tone: technical, precise, third person or impersonal ("se optó por", "se desarrolló", "se ha implementado", "el sistema utiliza", "implementamos", "realizamos"), never first person plural unless the user asks for it.
 - Acronyms: define on first use in each section (EPC, eNodeB, SDR, UE, APN, IMSI, etc.), then use the acronym.
 - Numbers and units: SI units, decimal dot ("2.4 GHz"), space before unit. Frequencies, bitrates, ranges, dates and money must come from the repo or from official sources cited in references, never invented.
 - Citations: when a claim depends on a regulation, a datasheet or a third-party source, mark it with a placeholder like `[ref: BOE Ley 11/2022]` so the user can fold it into the references section. Do not fabricate citation numbers.

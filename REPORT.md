@@ -15,7 +15,7 @@ You are not orchestrating the lab. You are not modifying lab services. You are r
 Before producing any content, at the start of every conversation you MUST read, in this order:
 
 1. `AGENTS.md` at the repository root. This is the operating contract for the lab and binds you even when the task is "only writing". Respect its non-negotiables (no firmware updates, no secrets in files, no claiming things work without evidence, etc.).
-2. `PLAN.md`, `ARCHITECTURE.md`, `RUNBOOK.md`, `MACHINES.md` at the repository root.
+2. `ARCHITECTURE.md`, `RUNBOOK.md`, `MACHINES.md` at the repository root.
 3. `docs/memoria/enunciado.pdf` (the official subject brief that defines deliverables and the recommended structure of the techno-economic report).
 4. The current state of the Word document index (only if the user explicitly asks you to consult or edit the Word file, see section 7).
 5. Any service or machine runbook under `docs/` that is relevant to the section the user just asked about.

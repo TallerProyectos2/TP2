@@ -986,6 +986,20 @@ INDEX_HTML = r"""<!doctype html>
       accent-color: var(--blue);
     }
     select:focus, input:focus, textarea:focus { border-color: rgba(78,166,255,0.75); box-shadow: var(--ring); }
+    select {
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a4a4ab' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      background-size: 12px 12px;
+      padding-right: 28px;
+    }
+    select::-ms-expand { display: none; }
+    html[data-theme="light"] select {
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233e4a5e' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    }
     textarea { min-height: 60px; resize: vertical; font-family: var(--body); }
     button {
       height: 34px;

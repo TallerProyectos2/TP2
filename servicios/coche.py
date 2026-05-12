@@ -3738,7 +3738,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     .pill.warn { color: var(--amber); } .pill.warn .dot { background: var(--amber); } .pill.warn .val { color: var(--amber); }
     .pill.bad  { color: var(--red); }   .pill.bad  .dot { background: var(--red);   } .pill.bad  .val { color: var(--red); }
 
-    .session { display: flex; align-items: center; gap: 18px; }
+    .session { display: flex; align-items: center; gap: 18px; padding-right: 6px; }
     .session .group { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
     .session .label {
       color: var(--ink-3); font-size: 9px;
@@ -4057,6 +4057,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       border-radius: 12px;
       overflow: hidden;
       background: var(--line);
+      margin-right: 4px;
     }
     .ctx-strip .ctx {
       display: flex; flex-direction: column; gap: 2px;
@@ -4080,6 +4081,7 @@ LIVE_VIEW_HTML = r"""<!doctype html>
       gap: 3px; padding: 3px;
       border-radius: 10px; border: 1px solid var(--line);
       background: var(--bg-2);
+      margin-right: 4px;
     }
     .tab {
       height: 30px; padding: 0 8px;
@@ -4492,9 +4494,11 @@ LIVE_VIEW_HTML = r"""<!doctype html>
     <header>
       <div class="brand">
         <div class="mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="9"/>
-            <path d="M12 3v9l5.5 3.2"/>
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/>
+            <circle cx="7" cy="17" r="2"/>
+            <path d="M9 17h6"/>
+            <circle cx="17" cy="17" r="2"/>
           </svg>
         </div>
         <div class="brand-text">

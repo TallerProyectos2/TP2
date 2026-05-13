@@ -439,11 +439,11 @@
             <div class="phase done"><h4><span class="num">Fase 2</span> Routing del UE, NAT y DNS <span class="pill">finalizada</span></h4><p>IP forwarding, NAT con iptables, dnsmasq. UE de 172.16.0.0/24 con conectividad útil al EPC.</p></div>
             <div class="phase done"><h4><span class="num">Fase 3</span> Plataforma base de la aplicación <span class="pill">finalizada</span></h4><p>Docker Compose con mosquitto, postgres y backend mínimo: /health, /v1/telemetry, /v1/frames.</p></div>
             <div class="phase done"><h4><span class="num">Fase 4</span> Integración con la Jetson <span class="pill">finalizada</span></h4><p>El backend orquesta la inferencia. Persiste ruta, etiqueta, confianza y latencia.</p></div>
-            <div class="phase doing"><h4><span class="num">Fase 5</span> Lógica de decisión y emisión de comandos <span class="pill">en curso</span></h4><p>Alfabeto STOP, SLOW, LEFT, RIGHT, STRAIGHT. Publicación por MQTT y persistencia del evento.</p></div>
-            <div class="phase todo"><h4><span class="num">Fase 6</span> Orquestación extremo a extremo con coche real <span class="pill">por hacer</span></h4><p>Cierre del bucle con el vehículo en pista, registro completo del evento.</p></div>
-            <div class="phase todo"><h4><span class="num">Fase 7</span> Endurecimiento, seguridad y operación <span class="pill">por hacer</span></h4><p>Cadencia de frames, fallbacks ante fallo, logs de auditoría y retención de datos.</p></div>
-            <div class="phase todo"><h4><span class="num">Fase 8</span> Provisión del UE y política de attach reproducible <span class="pill">por hacer</span></h4><p>Alta del UE cerrada de forma operativa y reproducible.</p></div>
-            <div class="phase todo"><h4><span class="num">Fase 9</span> Supervisión y arranque automático <span class="pill">por hacer</span></h4><p>Arranque ordenado vía systemd con políticas de reinicio y checks de salud.</p></div>
+            <div class="phase done"><h4><span class="num">Fase 5</span> Lógica de decisión y emisión de comandos <span class="pill">finalizada</span></h4><p>Alfabeto STOP, SLOW, LEFT, RIGHT, STRAIGHT. Publicación por MQTT y persistencia del evento.</p></div>
+            <div class="phase done"><h4><span class="num">Fase 6</span> Orquestación extremo a extremo con coche real <span class="pill">finalizada</span></h4><p>Cierre del bucle con el vehículo en pista, registro completo del evento.</p></div>
+            <div class="phase done"><h4><span class="num">Fase 7</span> Endurecimiento, seguridad y operación <span class="pill">finalizada</span></h4><p>Cadencia de frames, fallbacks ante fallo, logs de auditoría y retención de datos.</p></div>
+            <div class="phase done"><h4><span class="num">Fase 8</span> Provisión del UE y política de attach reproducible <span class="pill">finalizada</span></h4><p>Alta del UE cerrada de forma operativa y reproducible.</p></div>
+            <div class="phase done"><h4><span class="num">Fase 9</span> Supervisión y arranque automático <span class="pill">finalizada</span></h4><p>Arranque ordenado vía systemd con políticas de reinicio y checks de salud.</p></div>
           </div>
         </div>
 
@@ -456,7 +456,7 @@
             <div class="phase done"><h4><span class="num">Fase 1</span> S1 y celda LTE estables <span class="pill">finalizada</span></h4><p>enb.conf revisado, srsenb arrancando, S1 Setup Request y Response intercambiados con el EPC.</p></div>
             <div class="phase done"><h4><span class="num">Fase 2</span> Soporte al attach del UE y tráfico IP <span class="pill">finalizada</span></h4><p>Registro del coche estable, IP del EPC entregada, tráfico cursado sin caídas.</p></div>
             <div class="phase done"><h4><span class="num">Fase 3</span> Soporte de tráfico de aplicación <span class="pill">finalizada</span></h4><p>Radio estable con HTTP, MQTT, telemetría, frames y ack reales circulando entre coche y EPC.</p></div>
-            <div class="phase doing"><h4><span class="num">Fase 4</span> Congelación operativa para demo <span class="pill">en curso</span></h4><p>enb.conf congelado, sin software adicional. Integrado en el checklist de arranque y cierre.</p></div>
+            <div class="phase done"><h4><span class="num">Fase 4</span> Congelación operativa para demo <span class="pill">finalizada</span></h4><p>enb.conf congelado, sin software adicional. Integrado en el checklist de arranque y cierre.</p></div>
           </div>
         </div>
 
@@ -469,9 +469,9 @@
             <div class="phase done"><h4><span class="num">Fase 1</span> Alta como UE y conectividad básica <span class="pill">finalizada</span></h4><p>Registro en LTE, IP del rango 172.16.0.x, ping, DNS y HTTP simple contra el EPC.</p></div>
             <div class="phase done"><h4><span class="num">Fase 2</span> Implementación del agente <span class="pill">finalizada</span></h4><p>Las cinco piezas construidas con stack ligero: Python, OpenCV, HTTP, paho-mqtt.</p></div>
             <div class="phase done"><h4><span class="num">Fase 3</span> Validación aislada del agente <span class="pill">finalizada</span></h4><p>Cada pieza validada por separado antes de integrarla en el flujo real.</p></div>
-            <div class="phase doing"><h4><span class="num">Fase 4</span> Integración extremo a extremo <span class="pill">en curso</span></h4><p>Captura, envío, orden por MQTT, ejecución, ack y telemetría.</p></div>
-            <div class="phase todo"><h4><span class="num">Fase 5</span> Seguridad funcional y operación <span class="pill">por hacer</span></h4><p>Watchdog afinado: si no llegan órdenes a tiempo, reduce o se detiene.</p></div>
-            <div class="phase todo"><h4><span class="num">Fase 6</span> Arranque del agente y modo degradado <span class="pill">por hacer</span></h4><p>Arranque controlado, timeouts y parada segura ante pérdida de control.</p></div>
+            <div class="phase done"><h4><span class="num">Fase 4</span> Integración extremo a extremo <span class="pill">finalizada</span></h4><p>Captura, envío, orden por MQTT, ejecución, ack y telemetría.</p></div>
+            <div class="phase done"><h4><span class="num">Fase 5</span> Seguridad funcional y operación <span class="pill">finalizada</span></h4><p>Watchdog afinado: si no llegan órdenes a tiempo, reduce o se detiene.</p></div>
+            <div class="phase done"><h4><span class="num">Fase 6</span> Arranque del agente y modo degradado <span class="pill">finalizada</span></h4><p>Arranque controlado, timeouts y parada segura ante pérdida de control.</p></div>
           </div>
         </div>
 
@@ -483,9 +483,9 @@
             <div class="phase done"><h4><span class="num">Fase 0</span> Preparación y fijación del entorno <span class="pill">finalizada</span></h4><p>IP fija alcanzable desde el EPC, versiones de JetPack y dependencias documentadas.</p></div>
             <div class="phase done"><h4><span class="num">Fase 1</span> Servicio de inferencia local <span class="pill">finalizada</span></h4><p>Servicio con /health y /infer. Carga el modelo una sola vez. Devuelve etiqueta, confianza y latencia.</p></div>
             <div class="phase done"><h4><span class="num">Fase 2</span> Exposición del servicio al EPC <span class="pill">finalizada</span></h4><p>Puerto abierto, contrato de I/O fijado, accesibilidad desde el EPC confirmada.</p></div>
-            <div class="phase doing"><h4><span class="num">Fase 3</span> Operación bajo flujo real <span class="pill">en curso</span></h4><p>Inferencias procedentes del backend bajo carga real, dentro del presupuesto de latencia.</p></div>
-            <div class="phase todo"><h4><span class="num">Fase 4</span> Robustez y preparación de demo <span class="pill">por hacer</span></h4><p>Control de fallos, timeouts y evaluación de optimización con TensorRT si fuera necesario.</p></div>
-            <div class="phase todo"><h4><span class="num">Fase 5</span> Arranque automático y supervisión <span class="pill">por hacer</span></h4><p>Servicio estable tras reinicios, supervisión y comprobación de salud.</p></div>
+            <div class="phase done"><h4><span class="num">Fase 3</span> Operación bajo flujo real <span class="pill">finalizada</span></h4><p>Inferencias procedentes del backend bajo carga real, dentro del presupuesto de latencia.</p></div>
+            <div class="phase done"><h4><span class="num">Fase 4</span> Robustez y preparación de demo <span class="pill">finalizada</span></h4><p>Control de fallos, timeouts y evaluación de optimización con TensorRT si fuera necesario.</p></div>
+            <div class="phase done"><h4><span class="num">Fase 5</span> Arranque automático y supervisión <span class="pill">finalizada</span></h4><p>Servicio estable tras reinicios, supervisión y comprobación de salud.</p></div>
           </div>
         </div>
 
@@ -500,13 +500,13 @@
             <div class="phase done"><h4><span class="num">Fase 3</span> Validación de plataforma base de aplicación <span class="pill">finalizada</span></h4></div>
             <div class="phase done"><h4><span class="num">Fase 4</span> Validación de la Jetson como servicio consumible <span class="pill">finalizada</span></h4></div>
             <div class="phase done"><h4><span class="num">Fase 5</span> Validación EPC ↔ Jetson <span class="pill">finalizada</span></h4></div>
-            <div class="phase doing"><h4><span class="num">Fase 6</span> Validación de decisión y emisión de comando <span class="pill">en curso</span></h4></div>
-            <div class="phase todo"><h4><span class="num">Fase 7</span> Validación del coche como actuador <span class="pill">por hacer</span></h4></div>
-            <div class="phase todo"><h4><span class="num">Fase 8</span> Validación extremo a extremo completa <span class="pill">por hacer</span></h4></div>
-            <div class="phase todo"><h4><span class="num">Fase 9</span> Validación de seguridad funcional <span class="pill">por hacer</span></h4></div>
-            <div class="phase todo"><h4><span class="num">Fase 10</span> Validación final de operación y demo <span class="pill">por hacer</span></h4></div>
-            <div class="phase todo"><h4><span class="num">Fase 11</span> Sincronización temporal y correlación de logs <span class="pill">por hacer</span></h4></div>
-            <div class="phase todo"><h4><span class="num">Fase 12</span> Observabilidad y trazabilidad extremo a extremo <span class="pill">por hacer</span></h4></div>
+            <div class="phase done"><h4><span class="num">Fase 6</span> Validación de decisión y emisión de comando <span class="pill">finalizada</span></h4></div>
+            <div class="phase done"><h4><span class="num">Fase 7</span> Validación del coche como actuador <span class="pill">finalizada</span></h4></div>
+            <div class="phase done"><h4><span class="num">Fase 8</span> Validación extremo a extremo completa <span class="pill">finalizada</span></h4></div>
+            <div class="phase done"><h4><span class="num">Fase 9</span> Validación de seguridad funcional <span class="pill">finalizada</span></h4></div>
+            <div class="phase done"><h4><span class="num">Fase 10</span> Validación final de operación y demo <span class="pill">finalizada</span></h4></div>
+            <div class="phase done"><h4><span class="num">Fase 11</span> Sincronización temporal y correlación de logs <span class="pill">finalizada</span></h4></div>
+            <div class="phase done"><h4><span class="num">Fase 12</span> Observabilidad y trazabilidad extremo a extremo <span class="pill">finalizada</span></h4></div>
           </div>
         </div>
       </div>

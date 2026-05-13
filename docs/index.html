@@ -143,6 +143,15 @@
   }
   .arch svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
 
+  /* Modular planning scheme */
+  .modular-scheme {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 2rem;
+    margin-bottom: 3rem;
+    overflow-x: auto;
+  }
+  .modular-scheme svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+
   /* Phase timeline */
   .timeline { position: relative; padding-left: 2rem; }
   .timeline::before {
@@ -417,6 +426,159 @@
       <span class="eyebrow">Planificación</span>
       <h2>Cuatro tracks en paralelo y un flujo de integración</h2>
       <p>El plan vigente, una vez incorporadas las observaciones de la primera entrega, agrupa el trabajo por máquina física en lugar de por disciplina técnica. La integración recorre todo el calendario como track transversal.</p>
+    </div>
+
+    <div class="modular-scheme">
+      <svg viewBox="0 0 1100 540" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Esquema modular de planificación con cuatro máquinas y un flujo de integración transversal">
+        <defs>
+          <linearGradient id="colEPC" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.15"/>
+            <stop offset="100%" stop-color="#22d3ee" stop-opacity="0.02"/>
+          </linearGradient>
+          <linearGradient id="colENB" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stop-color="#34d399" stop-opacity="0.15"/>
+            <stop offset="100%" stop-color="#34d399" stop-opacity="0.02"/>
+          </linearGradient>
+          <linearGradient id="colCAR" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stop-color="#fbbf24" stop-opacity="0.15"/>
+            <stop offset="100%" stop-color="#fbbf24" stop-opacity="0.02"/>
+          </linearGradient>
+          <linearGradient id="colJET" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stop-color="#a78bfa" stop-opacity="0.15"/>
+            <stop offset="100%" stop-color="#a78bfa" stop-opacity="0.02"/>
+          </linearGradient>
+          <linearGradient id="intBar" x1="0" x2="1" y1="0" y2="0">
+            <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.4"/>
+            <stop offset="33%" stop-color="#34d399" stop-opacity="0.4"/>
+            <stop offset="66%" stop-color="#fbbf24" stop-opacity="0.4"/>
+            <stop offset="100%" stop-color="#a78bfa" stop-opacity="0.4"/>
+          </linearGradient>
+          <filter id="softGlow">
+            <feGaussianBlur stdDeviation="2" result="blur"/>
+            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+
+        <!-- Background label: parallel tracks -->
+        <text x="550" y="28" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#64748b" letter-spacing="2">CUATRO TRACKS EN PARALELO</text>
+
+        <!-- EPC column -->
+        <g>
+          <rect x="40" y="50" width="220" height="360" rx="14" fill="url(#colEPC)" stroke="#22d3ee" stroke-opacity="0.5" stroke-width="1.5"/>
+          <rect x="40" y="50" width="220" height="50" rx="14" fill="#22d3ee" fill-opacity="0.15"/>
+          <text x="150" y="75" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#22d3ee" font-weight="600" letter-spacing="1.5">EPC</text>
+          <text x="150" y="92" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="14" fill="#e8eef5" font-weight="600">CORE · Ordenador 1</text>
+          <!-- phases -->
+          <g font-family="-apple-system, sans-serif" font-size="11" fill="#e8eef5">
+            <rect x="60" y="120" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
+            <text x="70" y="136">Fase 0 · Base de red</text>
+            <rect x="60" y="148" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
+            <text x="70" y="164">Fase 1 · Core LTE</text>
+            <rect x="60" y="176" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
+            <text x="70" y="192">Fase 2 · Routing + NAT</text>
+            <rect x="60" y="204" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
+            <text x="70" y="220">Fase 3 · Plataforma app</text>
+            <rect x="60" y="232" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
+            <text x="70" y="248">Fase 4 · Integ. Jetson</text>
+            <rect x="60" y="260" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
+            <text x="70" y="276">Fase 5 · Decisión</text>
+            <rect x="60" y="288" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
+            <text x="70" y="304">Fase 6 · Orquestación</text>
+            <rect x="60" y="316" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
+            <text x="70" y="332">Fase 7 · Endurecimiento</text>
+            <rect x="60" y="344" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
+            <text x="70" y="360">Fase 8 · Attach UE</text>
+            <rect x="60" y="372" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
+            <text x="70" y="388">Fase 9 · Supervisión</text>
+          </g>
+          <text x="150" y="427" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#64748b">10 fases · Alonso S.</text>
+        </g>
+
+        <!-- eNodeB column -->
+        <g>
+          <rect x="290" y="50" width="220" height="360" rx="14" fill="url(#colENB)" stroke="#34d399" stroke-opacity="0.5" stroke-width="1.5"/>
+          <rect x="290" y="50" width="220" height="50" rx="14" fill="#34d399" fill-opacity="0.15"/>
+          <text x="400" y="75" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#34d399" font-weight="600" letter-spacing="1.5">ENB</text>
+          <text x="400" y="92" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="14" fill="#e8eef5" font-weight="600">eNodeB · Ordenador 2</text>
+          <g font-family="-apple-system, sans-serif" font-size="11" fill="#e8eef5">
+            <rect x="310" y="135" width="180" height="24" rx="5" fill="#151d26" stroke="#34d399" stroke-opacity="0.4"/>
+            <text x="320" y="151">Fase 0 · Preparación radio</text>
+            <rect x="310" y="163" width="180" height="24" rx="5" fill="#151d26" stroke="#34d399" stroke-opacity="0.4"/>
+            <text x="320" y="179">Fase 1 · S1 + celda LTE</text>
+            <rect x="310" y="191" width="180" height="24" rx="5" fill="#151d26" stroke="#34d399" stroke-opacity="0.4"/>
+            <text x="320" y="207">Fase 2 · Attach UE</text>
+            <rect x="310" y="219" width="180" height="24" rx="5" fill="#151d26" stroke="#34d399" stroke-opacity="0.4"/>
+            <text x="320" y="235">Fase 3 · Tráfico app</text>
+            <rect x="310" y="247" width="180" height="24" rx="5" fill="#151d26" stroke="#34d399" stroke-opacity="0.4"/>
+            <text x="320" y="263">Fase 4 · Congelación</text>
+          </g>
+          <text x="400" y="427" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#64748b">5 fases · Luis Francisco S.</text>
+        </g>
+
+        <!-- Coche column -->
+        <g>
+          <rect x="540" y="50" width="220" height="360" rx="14" fill="url(#colCAR)" stroke="#fbbf24" stroke-opacity="0.5" stroke-width="1.5"/>
+          <rect x="540" y="50" width="220" height="50" rx="14" fill="#fbbf24" fill-opacity="0.15"/>
+          <text x="650" y="75" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#fbbf24" font-weight="600" letter-spacing="1.5">CAR</text>
+          <text x="650" y="92" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="14" fill="#e8eef5" font-weight="600">Coche · DeepRacer</text>
+          <g font-family="-apple-system, sans-serif" font-size="11" fill="#e8eef5">
+            <rect x="560" y="127" width="180" height="24" rx="5" fill="#151d26" stroke="#fbbf24" stroke-opacity="0.4"/>
+            <text x="570" y="143">Fase 0 · Preparación</text>
+            <rect x="560" y="155" width="180" height="24" rx="5" fill="#151d26" stroke="#fbbf24" stroke-opacity="0.4"/>
+            <text x="570" y="171">Fase 1 · Alta como UE</text>
+            <rect x="560" y="183" width="180" height="24" rx="5" fill="#151d26" stroke="#fbbf24" stroke-opacity="0.4"/>
+            <text x="570" y="199">Fase 2 · Agente</text>
+            <rect x="560" y="211" width="180" height="24" rx="5" fill="#151d26" stroke="#fbbf24" stroke-opacity="0.4"/>
+            <text x="570" y="227">Fase 3 · Valid. aislada</text>
+            <rect x="560" y="239" width="180" height="24" rx="5" fill="#151d26" stroke="#fbbf24" stroke-opacity="0.4"/>
+            <text x="570" y="255">Fase 4 · E2E</text>
+            <rect x="560" y="267" width="180" height="24" rx="5" fill="#151d26" stroke="#fbbf24" stroke-opacity="0.4"/>
+            <text x="570" y="283">Fase 5 · Seguridad</text>
+            <rect x="560" y="295" width="180" height="24" rx="5" fill="#151d26" stroke="#fbbf24" stroke-opacity="0.4"/>
+            <text x="570" y="311">Fase 6 · Modo degradado</text>
+          </g>
+          <text x="650" y="427" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#64748b">7 fases · Alonso S.</text>
+        </g>
+
+        <!-- Jetson column -->
+        <g>
+          <rect x="790" y="50" width="220" height="360" rx="14" fill="url(#colJET)" stroke="#a78bfa" stroke-opacity="0.5" stroke-width="1.5"/>
+          <rect x="790" y="50" width="220" height="50" rx="14" fill="#a78bfa" fill-opacity="0.15"/>
+          <text x="900" y="75" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#a78bfa" font-weight="600" letter-spacing="1.5">JET</text>
+          <text x="900" y="92" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="14" fill="#e8eef5" font-weight="600">Jetson Orin Nano</text>
+          <g font-family="-apple-system, sans-serif" font-size="11" fill="#e8eef5">
+            <rect x="810" y="131" width="180" height="24" rx="5" fill="#151d26" stroke="#a78bfa" stroke-opacity="0.4"/>
+            <text x="820" y="147">Fase 0 · Entorno</text>
+            <rect x="810" y="159" width="180" height="24" rx="5" fill="#151d26" stroke="#a78bfa" stroke-opacity="0.4"/>
+            <text x="820" y="175">Fase 1 · Inferencia local</text>
+            <rect x="810" y="187" width="180" height="24" rx="5" fill="#151d26" stroke="#a78bfa" stroke-opacity="0.4"/>
+            <text x="820" y="203">Fase 2 · Exposición EPC</text>
+            <rect x="810" y="215" width="180" height="24" rx="5" fill="#151d26" stroke="#a78bfa" stroke-opacity="0.4"/>
+            <text x="820" y="231">Fase 3 · Flujo real</text>
+            <rect x="810" y="243" width="180" height="24" rx="5" fill="#151d26" stroke="#a78bfa" stroke-opacity="0.4"/>
+            <text x="820" y="259">Fase 4 · Robustez</text>
+            <rect x="810" y="271" width="180" height="24" rx="5" fill="#151d26" stroke="#a78bfa" stroke-opacity="0.4"/>
+            <text x="820" y="287">Fase 5 · Supervisión</text>
+          </g>
+          <text x="900" y="427" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#64748b">6 fases · Mario M.</text>
+        </g>
+
+        <!-- Integration transversal layer -->
+        <g>
+          <rect x="40" y="450" width="970" height="70" rx="14" fill="url(#intBar)" stroke="#22d3ee" stroke-opacity="0.6" stroke-width="1.5" filter="url(#softGlow)"/>
+          <text x="525" y="478" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#22d3ee" font-weight="600" letter-spacing="2">INTEGRACIÓN · TRACK TRANSVERSAL</text>
+          <text x="525" y="498" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="13" fill="#e8eef5">13 fases · Une las cuatro máquinas y valida el sistema extremo a extremo</text>
+          <text x="525" y="513" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#94a3b8">Topología · LTE · UE · Plataforma · Jetson · EPC↔Jetson · Decisión · Coche · E2E · Seguridad · Demo · Sync · Observabilidad</text>
+        </g>
+
+        <!-- Vertical connectors from columns to integration bar -->
+        <g stroke="#22d3ee" stroke-opacity="0.3" stroke-width="1.5" stroke-dasharray="3,3" fill="none">
+          <line x1="150" y1="410" x2="150" y2="450"/>
+          <line x1="400" y1="410" x2="400" y2="450"/>
+          <line x1="650" y1="410" x2="650" y2="450"/>
+          <line x1="900" y1="410" x2="900" y2="450"/>
+        </g>
+      </svg>
     </div>
 
     <div class="tracks">

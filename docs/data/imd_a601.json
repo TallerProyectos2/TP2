@@ -1,0 +1,1752 @@
+{
+  "metadata": {
+    "carretera": "A-601",
+    "tramo_proyecto": {
+      "pk_inicial": 0,
+      "pk_final": 104
+    },
+    "fuente": "Ministerio de Transportes y Movilidad Sostenible - Intensidades Medias de Tráfico",
+    "estaciones_analizadas": 9,
+    "longitud_cubierta_km": 88.18,
+    "metodologia": {
+      "ajuste_pandemia": "Regresión lineal ponderada; años 2020 y 2021 reciben peso 0.3 para reducir el sesgo COVID-19",
+      "modelo": "Mínimos cuadrados ponderados sobre IMD anual",
+      "horizonte": 2026
+    },
+    "resumen": {
+      "imd_ponderada_ultimo_ano": 10934,
+      "imd_ponderada_2026": 11357,
+      "crecimiento_pct": 3.9
+    }
+  },
+  "estaciones": [
+    {
+      "estac": "SG-0450",
+      "provincia": "SG",
+      "descripcion": "DE LÍMITE DE PROVINCIA DE VALLADOLID A CUELLAR (CL-602)",
+      "pk_inicial": 44.23,
+      "pk_final": 50.13,
+      "longitud_km": 5.9,
+      "registros": 15,
+      "imd_series": [
+        {
+          "year": 2010,
+          "imd": 5572
+        },
+        {
+          "year": 2011,
+          "imd": 5978
+        },
+        {
+          "year": 2012,
+          "imd": 5738
+        },
+        {
+          "year": 2013,
+          "imd": 5790
+        },
+        {
+          "year": 2014,
+          "imd": 6131
+        },
+        {
+          "year": 2015,
+          "imd": 6622
+        },
+        {
+          "year": 2016,
+          "imd": 7100
+        },
+        {
+          "year": 2017,
+          "imd": 7643
+        },
+        {
+          "year": 2018,
+          "imd": 7633
+        },
+        {
+          "year": 2019,
+          "imd": 7644
+        },
+        {
+          "year": 2020,
+          "imd": 5708
+        },
+        {
+          "year": 2021,
+          "imd": 7416
+        },
+        {
+          "year": 2022,
+          "imd": 7886
+        },
+        {
+          "year": 2023,
+          "imd": 8001
+        },
+        {
+          "year": 2024,
+          "imd": 8323
+        }
+      ],
+      "imd_l_series": [
+        {
+          "year": 2010,
+          "imd_l": 4818
+        },
+        {
+          "year": 2011,
+          "imd_l": 5217
+        },
+        {
+          "year": 2012,
+          "imd_l": 4999
+        },
+        {
+          "year": 2013,
+          "imd_l": 5042
+        },
+        {
+          "year": 2014,
+          "imd_l": 5322
+        },
+        {
+          "year": 2015,
+          "imd_l": 5754
+        },
+        {
+          "year": 2016,
+          "imd_l": 6128
+        },
+        {
+          "year": 2017,
+          "imd_l": 6580
+        },
+        {
+          "year": 2018,
+          "imd_l": 6532
+        },
+        {
+          "year": 2019,
+          "imd_l": 6523
+        },
+        {
+          "year": 2020,
+          "imd_l": 4651
+        },
+        {
+          "year": 2021,
+          "imd_l": 6245
+        },
+        {
+          "year": 2022,
+          "imd_l": 6663
+        },
+        {
+          "year": 2023,
+          "imd_l": 6738
+        },
+        {
+          "year": 2024,
+          "imd_l": 7065
+        }
+      ],
+      "imd_p_series": [
+        {
+          "year": 2010,
+          "imd_p": 754
+        },
+        {
+          "year": 2011,
+          "imd_p": 761
+        },
+        {
+          "year": 2012,
+          "imd_p": 739
+        },
+        {
+          "year": 2013,
+          "imd_p": 748
+        },
+        {
+          "year": 2014,
+          "imd_p": 809
+        },
+        {
+          "year": 2015,
+          "imd_p": 868
+        },
+        {
+          "year": 2016,
+          "imd_p": 972
+        },
+        {
+          "year": 2017,
+          "imd_p": 1063
+        },
+        {
+          "year": 2018,
+          "imd_p": 1101
+        },
+        {
+          "year": 2019,
+          "imd_p": 1121
+        },
+        {
+          "year": 2020,
+          "imd_p": 1057
+        },
+        {
+          "year": 2021,
+          "imd_p": 1171
+        },
+        {
+          "year": 2022,
+          "imd_p": 1223
+        },
+        {
+          "year": 2023,
+          "imd_p": 1263
+        },
+        {
+          "year": 2024,
+          "imd_p": 1258
+        }
+      ],
+      "imd_last_year": 2024,
+      "imd_last": 8323,
+      "imd_2026": 8745,
+      "imd_l_2026": 7356,
+      "imd_p_2026": 1389,
+      "growth_pct_to_2026": 5.1,
+      "regression": {
+        "slope": 195.84,
+        "intercept": -388028.19,
+        "r2": 0.8156
+      },
+      "pct_pesados_last": 15.11474228,
+      "velocidad_media_last": 118.0
+    },
+    {
+      "estac": "SG-0455",
+      "provincia": "SG",
+      "descripcion": "DE CUÉLLAR (CL-602) A NAVALMANZANO (SG-332)",
+      "pk_inicial": 50.13,
+      "pk_final": 77.62,
+      "longitud_km": 27.49,
+      "registros": 15,
+      "imd_series": [
+        {
+          "year": 2010,
+          "imd": 6450
+        },
+        {
+          "year": 2011,
+          "imd": 6783
+        },
+        {
+          "year": 2012,
+          "imd": 6378
+        },
+        {
+          "year": 2013,
+          "imd": 6443
+        },
+        {
+          "year": 2014,
+          "imd": 6818
+        },
+        {
+          "year": 2015,
+          "imd": 7292
+        },
+        {
+          "year": 2016,
+          "imd": 7738
+        },
+        {
+          "year": 2017,
+          "imd": 8205
+        },
+        {
+          "year": 2018,
+          "imd": 8013
+        },
+        {
+          "year": 2019,
+          "imd": 7983
+        },
+        {
+          "year": 2020,
+          "imd": 6348
+        },
+        {
+          "year": 2021,
+          "imd": 8143
+        },
+        {
+          "year": 2022,
+          "imd": 8521
+        },
+        {
+          "year": 2023,
+          "imd": 9043
+        },
+        {
+          "year": 2024,
+          "imd": 9056
+        }
+      ],
+      "imd_l_series": [
+        {
+          "year": 2010,
+          "imd_l": 5427
+        },
+        {
+          "year": 2011,
+          "imd_l": 5831
+        },
+        {
+          "year": 2012,
+          "imd_l": 5497
+        },
+        {
+          "year": 2013,
+          "imd_l": 5545
+        },
+        {
+          "year": 2014,
+          "imd_l": 5844
+        },
+        {
+          "year": 2015,
+          "imd_l": 6247
+        },
+        {
+          "year": 2016,
+          "imd_l": 6635
+        },
+        {
+          "year": 2017,
+          "imd_l": 7031
+        },
+        {
+          "year": 2018,
+          "imd_l": 6799
+        },
+        {
+          "year": 2019,
+          "imd_l": 6797
+        },
+        {
+          "year": 2020,
+          "imd_l": 5166
+        },
+        {
+          "year": 2021,
+          "imd_l": 6836
+        },
+        {
+          "year": 2022,
+          "imd_l": 7207
+        },
+        {
+          "year": 2023,
+          "imd_l": 7162
+        },
+        {
+          "year": 2024,
+          "imd_l": 7633
+        }
+      ],
+      "imd_p_series": [
+        {
+          "year": 2010,
+          "imd_p": 1023
+        },
+        {
+          "year": 2011,
+          "imd_p": 952
+        },
+        {
+          "year": 2012,
+          "imd_p": 881
+        },
+        {
+          "year": 2013,
+          "imd_p": 898
+        },
+        {
+          "year": 2014,
+          "imd_p": 974
+        },
+        {
+          "year": 2015,
+          "imd_p": 1045
+        },
+        {
+          "year": 2016,
+          "imd_p": 1103
+        },
+        {
+          "year": 2017,
+          "imd_p": 1174
+        },
+        {
+          "year": 2018,
+          "imd_p": 1214
+        },
+        {
+          "year": 2019,
+          "imd_p": 1186
+        },
+        {
+          "year": 2020,
+          "imd_p": 1182
+        },
+        {
+          "year": 2021,
+          "imd_p": 1307
+        },
+        {
+          "year": 2022,
+          "imd_p": 1314
+        },
+        {
+          "year": 2023,
+          "imd_p": 1881
+        },
+        {
+          "year": 2024,
+          "imd_p": 1423
+        }
+      ],
+      "imd_last_year": 2024,
+      "imd_last": 9056,
+      "imd_2026": 9394,
+      "imd_l_2026": 7774,
+      "imd_p_2026": 1621,
+      "growth_pct_to_2026": 3.7,
+      "regression": {
+        "slope": 193.95,
+        "intercept": -383540.49,
+        "r2": 0.8288
+      },
+      "pct_pesados_last": 15.71333922,
+      "velocidad_media_last": 119.0
+    },
+    {
+      "estac": "SG-0460",
+      "provincia": "SG",
+      "descripcion": "DE NAVALMANZANO (SG-332) A TABANERA LA LUENGA (SG-211)",
+      "pk_inicial": 77.62,
+      "pk_final": 91.44,
+      "longitud_km": 13.82,
+      "registros": 15,
+      "imd_series": [
+        {
+          "year": 2010,
+          "imd": 5341
+        },
+        {
+          "year": 2011,
+          "imd": 5685
+        },
+        {
+          "year": 2012,
+          "imd": 5435
+        },
+        {
+          "year": 2013,
+          "imd": 5405
+        },
+        {
+          "year": 2014,
+          "imd": 5663
+        },
+        {
+          "year": 2015,
+          "imd": 6079
+        },
+        {
+          "year": 2016,
+          "imd": 6454
+        },
+        {
+          "year": 2017,
+          "imd": 6851
+        },
+        {
+          "year": 2018,
+          "imd": 6663
+        },
+        {
+          "year": 2019,
+          "imd": 6657
+        },
+        {
+          "year": 2020,
+          "imd": 4991
+        },
+        {
+          "year": 2021,
+          "imd": 6651
+        },
+        {
+          "year": 2022,
+          "imd": 7110
+        },
+        {
+          "year": 2023,
+          "imd": 7640
+        },
+        {
+          "year": 2024,
+          "imd": 7623
+        }
+      ],
+      "imd_l_series": [
+        {
+          "year": 2010,
+          "imd_l": 4521
+        },
+        {
+          "year": 2011,
+          "imd_l": 4847
+        },
+        {
+          "year": 2012,
+          "imd_l": 4639
+        },
+        {
+          "year": 2013,
+          "imd_l": 4634
+        },
+        {
+          "year": 2014,
+          "imd_l": 4877
+        },
+        {
+          "year": 2015,
+          "imd_l": 5234
+        },
+        {
+          "year": 2016,
+          "imd_l": 5542
+        },
+        {
+          "year": 2017,
+          "imd_l": 5879
+        },
+        {
+          "year": 2018,
+          "imd_l": 5685
+        },
+        {
+          "year": 2019,
+          "imd_l": 5704
+        },
+        {
+          "year": 2020,
+          "imd_l": 4115
+        },
+        {
+          "year": 2021,
+          "imd_l": 5667
+        },
+        {
+          "year": 2022,
+          "imd_l": 6111
+        },
+        {
+          "year": 2023,
+          "imd_l": 6151
+        },
+        {
+          "year": 2024,
+          "imd_l": 6525
+        }
+      ],
+      "imd_p_series": [
+        {
+          "year": 2010,
+          "imd_p": 820
+        },
+        {
+          "year": 2011,
+          "imd_p": 838
+        },
+        {
+          "year": 2012,
+          "imd_p": 796
+        },
+        {
+          "year": 2013,
+          "imd_p": 771
+        },
+        {
+          "year": 2014,
+          "imd_p": 786
+        },
+        {
+          "year": 2015,
+          "imd_p": 845
+        },
+        {
+          "year": 2016,
+          "imd_p": 912
+        },
+        {
+          "year": 2017,
+          "imd_p": 972
+        },
+        {
+          "year": 2018,
+          "imd_p": 978
+        },
+        {
+          "year": 2019,
+          "imd_p": 953
+        },
+        {
+          "year": 2020,
+          "imd_p": 876
+        },
+        {
+          "year": 2021,
+          "imd_p": 984
+        },
+        {
+          "year": 2022,
+          "imd_p": 999
+        },
+        {
+          "year": 2023,
+          "imd_p": 1489
+        },
+        {
+          "year": 2024,
+          "imd_p": 1098
+        }
+      ],
+      "imd_last_year": 2024,
+      "imd_last": 7623,
+      "imd_2026": 7850,
+      "imd_l_2026": 6610,
+      "imd_p_2026": 1240,
+      "growth_pct_to_2026": 3.0,
+      "regression": {
+        "slope": 162.34,
+        "intercept": -321060.34,
+        "r2": 0.7964
+      },
+      "pct_pesados_last": 14.40377804,
+      "velocidad_media_last": 118.0
+    },
+    {
+      "estac": "SG-0465",
+      "provincia": "SG",
+      "descripcion": "DE TABANERA LA LUENGA (SG-211) A  VALSECA (CL-603)",
+      "pk_inicial": 91.44,
+      "pk_final": 104.9,
+      "longitud_km": 13.46,
+      "registros": 15,
+      "imd_series": [
+        {
+          "year": 2010,
+          "imd": 7998
+        },
+        {
+          "year": 2011,
+          "imd": 8260
+        },
+        {
+          "year": 2012,
+          "imd": 7646
+        },
+        {
+          "year": 2013,
+          "imd": 7660
+        },
+        {
+          "year": 2014,
+          "imd": 8239
+        },
+        {
+          "year": 2015,
+          "imd": 8771
+        },
+        {
+          "year": 2016,
+          "imd": 9233
+        },
+        {
+          "year": 2017,
+          "imd": 9735
+        },
+        {
+          "year": 2018,
+          "imd": 9505
+        },
+        {
+          "year": 2019,
+          "imd": 9473
+        },
+        {
+          "year": 2020,
+          "imd": 7138
+        },
+        {
+          "year": 2021,
+          "imd": 9357
+        },
+        {
+          "year": 2022,
+          "imd": 9935
+        },
+        {
+          "year": 2023,
+          "imd": 10481
+        },
+        {
+          "year": 2024,
+          "imd": 10575
+        }
+      ],
+      "imd_l_series": [
+        {
+          "year": 2010,
+          "imd_l": 7169
+        },
+        {
+          "year": 2011,
+          "imd_l": 7450
+        },
+        {
+          "year": 2012,
+          "imd_l": 6882
+        },
+        {
+          "year": 2013,
+          "imd_l": 6874
+        },
+        {
+          "year": 2014,
+          "imd_l": 7417
+        },
+        {
+          "year": 2015,
+          "imd_l": 7899
+        },
+        {
+          "year": 2016,
+          "imd_l": 8311
+        },
+        {
+          "year": 2017,
+          "imd_l": 8745
+        },
+        {
+          "year": 2018,
+          "imd_l": 8517
+        },
+        {
+          "year": 2019,
+          "imd_l": 8470
+        },
+        {
+          "year": 2020,
+          "imd_l": 6205
+        },
+        {
+          "year": 2021,
+          "imd_l": 8293
+        },
+        {
+          "year": 2022,
+          "imd_l": 8857
+        },
+        {
+          "year": 2023,
+          "imd_l": 8670
+        },
+        {
+          "year": 2024,
+          "imd_l": 9380
+        }
+      ],
+      "imd_p_series": [
+        {
+          "year": 2010,
+          "imd_p": 829
+        },
+        {
+          "year": 2011,
+          "imd_p": 810
+        },
+        {
+          "year": 2012,
+          "imd_p": 764
+        },
+        {
+          "year": 2013,
+          "imd_p": 786
+        },
+        {
+          "year": 2014,
+          "imd_p": 822
+        },
+        {
+          "year": 2015,
+          "imd_p": 872
+        },
+        {
+          "year": 2016,
+          "imd_p": 922
+        },
+        {
+          "year": 2017,
+          "imd_p": 990
+        },
+        {
+          "year": 2018,
+          "imd_p": 988
+        },
+        {
+          "year": 2019,
+          "imd_p": 1003
+        },
+        {
+          "year": 2020,
+          "imd_p": 933
+        },
+        {
+          "year": 2021,
+          "imd_p": 1064
+        },
+        {
+          "year": 2022,
+          "imd_p": 1078
+        },
+        {
+          "year": 2023,
+          "imd_p": 1811
+        },
+        {
+          "year": 2024,
+          "imd_p": 1195
+        }
+      ],
+      "imd_last_year": 2024,
+      "imd_last": 10575,
+      "imd_2026": 10832,
+      "imd_l_2026": 9417,
+      "imd_p_2026": 1415,
+      "growth_pct_to_2026": 2.4,
+      "regression": {
+        "slope": 195.23,
+        "intercept": -384702.88,
+        "r2": 0.7355
+      },
+      "pct_pesados_last": 11.30023641,
+      "velocidad_media_last": 117.0
+    },
+    {
+      "estac": "VA-0600",
+      "provincia": "VA",
+      "descripcion": "DE CL-600 A ALDEAMAYOR (VA-200)",
+      "pk_inicial": 12.89,
+      "pk_final": 17.59,
+      "longitud_km": 4.7,
+      "registros": 15,
+      "imd_series": [
+        {
+          "year": 2010,
+          "imd": 12751
+        },
+        {
+          "year": 2011,
+          "imd": 13114
+        },
+        {
+          "year": 2012,
+          "imd": 12451
+        },
+        {
+          "year": 2013,
+          "imd": 12529
+        },
+        {
+          "year": 2014,
+          "imd": 13082
+        },
+        {
+          "year": 2015,
+          "imd": 13913
+        },
+        {
+          "year": 2016,
+          "imd": 14821
+        },
+        {
+          "year": 2017,
+          "imd": 15751
+        },
+        {
+          "year": 2018,
+          "imd": 15952
+        },
+        {
+          "year": 2019,
+          "imd": 16203
+        },
+        {
+          "year": 2020,
+          "imd": 12869
+        },
+        {
+          "year": 2021,
+          "imd": 15951
+        },
+        {
+          "year": 2022,
+          "imd": 16626
+        },
+        {
+          "year": 2023,
+          "imd": 16917
+        },
+        {
+          "year": 2024,
+          "imd": 17550
+        }
+      ],
+      "imd_l_series": [
+        {
+          "year": 2010,
+          "imd_l": 11457
+        },
+        {
+          "year": 2011,
+          "imd_l": 11870
+        },
+        {
+          "year": 2012,
+          "imd_l": 11218
+        },
+        {
+          "year": 2013,
+          "imd_l": 11274
+        },
+        {
+          "year": 2014,
+          "imd_l": 11761
+        },
+        {
+          "year": 2015,
+          "imd_l": 12501
+        },
+        {
+          "year": 2016,
+          "imd_l": 13258
+        },
+        {
+          "year": 2017,
+          "imd_l": 14070
+        },
+        {
+          "year": 2018,
+          "imd_l": 14216
+        },
+        {
+          "year": 2019,
+          "imd_l": 14453
+        },
+        {
+          "year": 2020,
+          "imd_l": 11277
+        },
+        {
+          "year": 2021,
+          "imd_l": 14203
+        },
+        {
+          "year": 2022,
+          "imd_l": 14826
+        },
+        {
+          "year": 2023,
+          "imd_l": 15078
+        },
+        {
+          "year": 2024,
+          "imd_l": 15657
+        }
+      ],
+      "imd_p_series": [
+        {
+          "year": 2010,
+          "imd_p": 1294
+        },
+        {
+          "year": 2011,
+          "imd_p": 1244
+        },
+        {
+          "year": 2012,
+          "imd_p": 1233
+        },
+        {
+          "year": 2013,
+          "imd_p": 1255
+        },
+        {
+          "year": 2014,
+          "imd_p": 1321
+        },
+        {
+          "year": 2015,
+          "imd_p": 1412
+        },
+        {
+          "year": 2016,
+          "imd_p": 1563
+        },
+        {
+          "year": 2017,
+          "imd_p": 1681
+        },
+        {
+          "year": 2018,
+          "imd_p": 1736
+        },
+        {
+          "year": 2019,
+          "imd_p": 1750
+        },
+        {
+          "year": 2020,
+          "imd_p": 1592
+        },
+        {
+          "year": 2021,
+          "imd_p": 1748
+        },
+        {
+          "year": 2022,
+          "imd_p": 1800
+        },
+        {
+          "year": 2023,
+          "imd_p": 1839
+        },
+        {
+          "year": 2024,
+          "imd_p": 1893
+        }
+      ],
+      "imd_last_year": 2024,
+      "imd_last": 17550,
+      "imd_2026": 18194,
+      "imd_l_2026": 16161,
+      "imd_p_2026": 2033,
+      "growth_pct_to_2026": 3.7,
+      "regression": {
+        "slope": 370.21,
+        "intercept": -731858.24,
+        "r2": 0.8412
+      },
+      "pct_pesados_last": 10.78632479,
+      "velocidad_media_last": 114.0
+    },
+    {
+      "estac": "VA-0605",
+      "provincia": "VA",
+      "descripcion": "DE ALDEAMAYOR (VA-200) A PORTILLO (VA-301)",
+      "pk_inicial": 17.59,
+      "pk_final": 24.24,
+      "longitud_km": 6.65,
+      "registros": 15,
+      "imd_series": [
+        {
+          "year": 2010,
+          "imd": 10460
+        },
+        {
+          "year": 2011,
+          "imd": 10883
+        },
+        {
+          "year": 2012,
+          "imd": 10233
+        },
+        {
+          "year": 2013,
+          "imd": 10291
+        },
+        {
+          "year": 2014,
+          "imd": 10702
+        },
+        {
+          "year": 2015,
+          "imd": 11401
+        },
+        {
+          "year": 2016,
+          "imd": 12113
+        },
+        {
+          "year": 2017,
+          "imd": 12855
+        },
+        {
+          "year": 2018,
+          "imd": 12992
+        },
+        {
+          "year": 2019,
+          "imd": 13188
+        },
+        {
+          "year": 2020,
+          "imd": 10363
+        },
+        {
+          "year": 2021,
+          "imd": 12947
+        },
+        {
+          "year": 2022,
+          "imd": 13482
+        },
+        {
+          "year": 2023,
+          "imd": 13751
+        },
+        {
+          "year": 2024,
+          "imd": 14357
+        }
+      ],
+      "imd_l_series": [
+        {
+          "year": 2010,
+          "imd_l": 9262
+        },
+        {
+          "year": 2011,
+          "imd_l": 9728
+        },
+        {
+          "year": 2012,
+          "imd_l": 9138
+        },
+        {
+          "year": 2013,
+          "imd_l": 9172
+        },
+        {
+          "year": 2014,
+          "imd_l": 9542
+        },
+        {
+          "year": 2015,
+          "imd_l": 10170
+        },
+        {
+          "year": 2016,
+          "imd_l": 10755
+        },
+        {
+          "year": 2017,
+          "imd_l": 11402
+        },
+        {
+          "year": 2018,
+          "imd_l": 11514
+        },
+        {
+          "year": 2019,
+          "imd_l": 11672
+        },
+        {
+          "year": 2020,
+          "imd_l": 8936
+        },
+        {
+          "year": 2021,
+          "imd_l": 11287
+        },
+        {
+          "year": 2022,
+          "imd_l": 11794
+        },
+        {
+          "year": 2023,
+          "imd_l": 12080
+        },
+        {
+          "year": 2024,
+          "imd_l": 12646
+        }
+      ],
+      "imd_p_series": [
+        {
+          "year": 2010,
+          "imd_p": 1198
+        },
+        {
+          "year": 2011,
+          "imd_p": 1155
+        },
+        {
+          "year": 2012,
+          "imd_p": 1095
+        },
+        {
+          "year": 2013,
+          "imd_p": 1119
+        },
+        {
+          "year": 2014,
+          "imd_p": 1160
+        },
+        {
+          "year": 2015,
+          "imd_p": 1231
+        },
+        {
+          "year": 2016,
+          "imd_p": 1358
+        },
+        {
+          "year": 2017,
+          "imd_p": 1453
+        },
+        {
+          "year": 2018,
+          "imd_p": 1478
+        },
+        {
+          "year": 2019,
+          "imd_p": 1516
+        },
+        {
+          "year": 2020,
+          "imd_p": 1427
+        },
+        {
+          "year": 2021,
+          "imd_p": 1660
+        },
+        {
+          "year": 2022,
+          "imd_p": 1688
+        },
+        {
+          "year": 2023,
+          "imd_p": 1671
+        },
+        {
+          "year": 2024,
+          "imd_p": 1711
+        }
+      ],
+      "imd_last_year": 2024,
+      "imd_last": 14357,
+      "imd_2026": 14757,
+      "imd_l_2026": 12931,
+      "imd_p_2026": 1825,
+      "growth_pct_to_2026": 2.8,
+      "regression": {
+        "slope": 290.56,
+        "intercept": -573914.7,
+        "r2": 0.8239
+      },
+      "pct_pesados_last": 11.91753152,
+      "velocidad_media_last": 108.0
+    },
+    {
+      "estac": "VA-0610",
+      "provincia": "VA",
+      "descripcion": "DE PORTILLO (VA-301) A SANTIAGO DEL ARROYO (VP-2203)",
+      "pk_inicial": 24.24,
+      "pk_final": 30.11,
+      "longitud_km": 5.87,
+      "registros": 15,
+      "imd_series": [
+        {
+          "year": 2010,
+          "imd": 6659
+        },
+        {
+          "year": 2011,
+          "imd": 7044
+        },
+        {
+          "year": 2012,
+          "imd": 6740
+        },
+        {
+          "year": 2013,
+          "imd": 6759
+        },
+        {
+          "year": 2014,
+          "imd": 7081
+        },
+        {
+          "year": 2015,
+          "imd": 7587
+        },
+        {
+          "year": 2016,
+          "imd": 8073
+        },
+        {
+          "year": 2017,
+          "imd": 8629
+        },
+        {
+          "year": 2018,
+          "imd": 8538
+        },
+        {
+          "year": 2019,
+          "imd": 8570
+        },
+        {
+          "year": 2020,
+          "imd": 6501
+        },
+        {
+          "year": 2021,
+          "imd": 8406
+        },
+        {
+          "year": 2022,
+          "imd": 8925
+        },
+        {
+          "year": 2023,
+          "imd": 9064
+        },
+        {
+          "year": 2024,
+          "imd": 9388
+        }
+      ],
+      "imd_l_series": [
+        {
+          "year": 2010,
+          "imd_l": 5754
+        },
+        {
+          "year": 2011,
+          "imd_l": 6136
+        },
+        {
+          "year": 2012,
+          "imd_l": 5875
+        },
+        {
+          "year": 2013,
+          "imd_l": 5911
+        },
+        {
+          "year": 2014,
+          "imd_l": 6178
+        },
+        {
+          "year": 2015,
+          "imd_l": 6628
+        },
+        {
+          "year": 2016,
+          "imd_l": 7015
+        },
+        {
+          "year": 2017,
+          "imd_l": 7475
+        },
+        {
+          "year": 2018,
+          "imd_l": 7370
+        },
+        {
+          "year": 2019,
+          "imd_l": 7365
+        },
+        {
+          "year": 2020,
+          "imd_l": 5372
+        },
+        {
+          "year": 2021,
+          "imd_l": 7131
+        },
+        {
+          "year": 2022,
+          "imd_l": 7565
+        },
+        {
+          "year": 2023,
+          "imd_l": 7671
+        },
+        {
+          "year": 2024,
+          "imd_l": 8010
+        }
+      ],
+      "imd_p_series": [
+        {
+          "year": 2010,
+          "imd_p": 905
+        },
+        {
+          "year": 2011,
+          "imd_p": 908
+        },
+        {
+          "year": 2012,
+          "imd_p": 865
+        },
+        {
+          "year": 2013,
+          "imd_p": 848
+        },
+        {
+          "year": 2014,
+          "imd_p": 903
+        },
+        {
+          "year": 2015,
+          "imd_p": 959
+        },
+        {
+          "year": 2016,
+          "imd_p": 1058
+        },
+        {
+          "year": 2017,
+          "imd_p": 1154
+        },
+        {
+          "year": 2018,
+          "imd_p": 1168
+        },
+        {
+          "year": 2019,
+          "imd_p": 1205
+        },
+        {
+          "year": 2020,
+          "imd_p": 1129
+        },
+        {
+          "year": 2021,
+          "imd_p": 1275
+        },
+        {
+          "year": 2022,
+          "imd_p": 1360
+        },
+        {
+          "year": 2023,
+          "imd_p": 1393
+        },
+        {
+          "year": 2024,
+          "imd_p": 1378
+        }
+      ],
+      "imd_last_year": 2024,
+      "imd_last": 9388,
+      "imd_2026": 9737,
+      "imd_l_2026": 8249,
+      "imd_p_2026": 1488,
+      "growth_pct_to_2026": 3.7,
+      "regression": {
+        "slope": 195.53,
+        "intercept": -386397.53,
+        "r2": 0.8046
+      },
+      "pct_pesados_last": 14.67831274,
+      "velocidad_media_last": 107.0
+    },
+    {
+      "estac": "VA-3020",
+      "provincia": "VA",
+      "descripcion": "DE ENLACE ÁREA INDUSTRIAL SALIDA 6  A CL-600",
+      "pk_inicial": 4.4,
+      "pk_final": 12.89,
+      "longitud_km": 8.49,
+      "registros": 15,
+      "imd_series": [
+        {
+          "year": 2010,
+          "imd": 15226
+        },
+        {
+          "year": 2011,
+          "imd": 13980
+        },
+        {
+          "year": 2012,
+          "imd": 13331
+        },
+        {
+          "year": 2013,
+          "imd": 13502
+        },
+        {
+          "year": 2014,
+          "imd": 14211
+        },
+        {
+          "year": 2015,
+          "imd": 14139
+        },
+        {
+          "year": 2016,
+          "imd": 15255
+        },
+        {
+          "year": 2017,
+          "imd": 16381
+        },
+        {
+          "year": 2018,
+          "imd": 16927
+        },
+        {
+          "year": 2019,
+          "imd": 16979
+        },
+        {
+          "year": 2020,
+          "imd": 13908
+        },
+        {
+          "year": 2021,
+          "imd": 17589
+        },
+        {
+          "year": 2022,
+          "imd": 17569
+        },
+        {
+          "year": 2023,
+          "imd": 18114
+        },
+        {
+          "year": 2024,
+          "imd": 17905
+        }
+      ],
+      "imd_l_series": [
+        {
+          "year": 2010,
+          "imd_l": 11536
+        },
+        {
+          "year": 2011,
+          "imd_l": 11271
+        },
+        {
+          "year": 2012,
+          "imd_l": 11907
+        },
+        {
+          "year": 2013,
+          "imd_l": 12076
+        },
+        {
+          "year": 2014,
+          "imd_l": 12737
+        },
+        {
+          "year": 2015,
+          "imd_l": 12596
+        },
+        {
+          "year": 2016,
+          "imd_l": 13576
+        },
+        {
+          "year": 2017,
+          "imd_l": 14390
+        },
+        {
+          "year": 2018,
+          "imd_l": 14801
+        },
+        {
+          "year": 2019,
+          "imd_l": 15309
+        },
+        {
+          "year": 2020,
+          "imd_l": 12075
+        },
+        {
+          "year": 2021,
+          "imd_l": 14739
+        },
+        {
+          "year": 2022,
+          "imd_l": 15204
+        },
+        {
+          "year": 2023,
+          "imd_l": 15447
+        },
+        {
+          "year": 2024,
+          "imd_l": 15783
+        }
+      ],
+      "imd_p_series": [
+        {
+          "year": 2010,
+          "imd_p": 3690
+        },
+        {
+          "year": 2011,
+          "imd_p": 2709
+        },
+        {
+          "year": 2012,
+          "imd_p": 1424
+        },
+        {
+          "year": 2013,
+          "imd_p": 1426
+        },
+        {
+          "year": 2014,
+          "imd_p": 1474
+        },
+        {
+          "year": 2015,
+          "imd_p": 1543
+        },
+        {
+          "year": 2016,
+          "imd_p": 1679
+        },
+        {
+          "year": 2017,
+          "imd_p": 1991
+        },
+        {
+          "year": 2018,
+          "imd_p": 2126
+        },
+        {
+          "year": 2019,
+          "imd_p": 1670
+        },
+        {
+          "year": 2020,
+          "imd_p": 1833
+        },
+        {
+          "year": 2021,
+          "imd_p": 2850
+        },
+        {
+          "year": 2022,
+          "imd_p": 2365
+        },
+        {
+          "year": 2023,
+          "imd_p": 2667
+        },
+        {
+          "year": 2024,
+          "imd_p": 2122
+        }
+      ],
+      "imd_last_year": 2024,
+      "imd_last": 17905,
+      "imd_2026": 18740,
+      "imd_l_2026": 16684,
+      "imd_p_2026": 2056,
+      "growth_pct_to_2026": 4.7,
+      "regression": {
+        "slope": 329.12,
+        "intercept": -648058.55,
+        "r2": 0.7378
+      },
+      "pct_pesados_last": 11.85143815,
+      "velocidad_media_last": 105.0
+    },
+    {
+      "estac": "VA-3070",
+      "provincia": "VA",
+      "descripcion": "DE VALLADOLID (VA-30) A ENLACE ÁREA INDUSTRIAL SALIDA 6",
+      "pk_inicial": 4.42,
+      "pk_final": 6.22,
+      "longitud_km": 1.8,
+      "registros": 3,
+      "imd_series": [
+        {
+          "year": 2022,
+          "imd": 17768
+        },
+        {
+          "year": 2023,
+          "imd": 22596
+        },
+        {
+          "year": 2024,
+          "imd": 18544
+        }
+      ],
+      "imd_l_series": [
+        {
+          "year": 2022,
+          "imd_l": 14242
+        },
+        {
+          "year": 2023,
+          "imd_l": 19029
+        },
+        {
+          "year": 2024,
+          "imd_l": 15630
+        }
+      ],
+      "imd_p_series": [
+        {
+          "year": 2022,
+          "imd_p": 3526
+        },
+        {
+          "year": 2023,
+          "imd_p": 3567
+        },
+        {
+          "year": 2024,
+          "imd_p": 2914
+        }
+      ],
+      "imd_last_year": 2024,
+      "imd_last": 18544,
+      "imd_2026": 20800,
+      "imd_l_2026": 18382,
+      "imd_p_2026": 2418,
+      "growth_pct_to_2026": 12.2,
+      "regression": {
+        "slope": 388.0,
+        "intercept": -765288.0,
+        "r2": 0.0224
+      },
+      "pct_pesados_last": 15.71397757,
+      "velocidad_media_last": 57.0
+    }
+  ]
+}

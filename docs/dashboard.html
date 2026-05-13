@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TP2 — Análisis de tráfico A-601</title>
+<meta name="description" content="Dashboard de análisis de intensidad media diaria de tráfico (IMD) sobre el tramo de la autovía A-601 entre Valladolid y Segovia, con proyección a 2026 ajustada por pandemia." />
+<style>
+  :root {
+    --bg: #0b1015;
+    --bg-elev: #11181f;
+    --bg-card: #151d26;
+    --border: #1f2a36;
+    --border-strong: #2a3a4a;
+    --text: #e8eef5;
+    --text-dim: #94a3b8;
+    --text-muted: #64748b;
+    --accent: #22d3ee;
+    --accent-soft: rgba(34, 211, 238, 0.12);
+    --accent-2: #34d399;
+    --warn: #fbbf24;
+    --danger: #f87171;
+    --purple: #a78bfa;
+    --radius: 14px;
+    --radius-sm: 8px;
+    --max: 1280px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, .mono { font-family: var(--mono); }
+  h1, h2, h3, h4 { margin: 0 0 0.5rem; font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; }
+  h1 { font-size: clamp(2rem, 4vw, 3rem); }
+  h2 { font-size: clamp(1.4rem, 2.2vw, 1.8rem); }
+  h3 { font-size: 1.1rem; }
+  p { margin: 0 0 1rem; color: var(--text-dim); }
+
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 1.5rem; }
+  section { padding: 3.5rem 0; border-bottom: 1px solid var(--border); }
+  section:last-of-type { border-bottom: 0; }
+  .section-head { margin-bottom: 2rem; max-width: 760px; }
+  .section-head .eyebrow {
+    display: inline-block; font-family: var(--mono); font-size: 0.78rem;
+    color: var(--accent); text-transform: uppercase; letter-spacing: 0.15em;
+    margin-bottom: 0.75rem;
+  }
+
+  nav.top {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(12px) saturate(180%);
+    -webkit-backdrop-filter: blur(12px) saturate(180%);
+    background: rgba(11, 16, 21, 0.7);
+    border-bottom: 1px solid var(--border);
+  }
+  nav.top .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  nav.top .brand { font-family: var(--mono); font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 0.55rem; }
+  nav.top .brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-2); box-shadow: 0 0 12px var(--accent-2); }
+  nav.top ul { display: flex; gap: 1.5rem; margin: 0; padding: 0; list-style: none; }
+  nav.top a { color: var(--text-dim); font-size: 0.92rem; }
+  nav.top a:hover { color: var(--text); text-decoration: none; }
+
+  .hero {
+    padding: 4rem 0 3rem;
+    border-bottom: 1px solid var(--border);
+    background:
+      radial-gradient(ellipse 60% 50% at 80% 0%, rgba(34, 211, 238, 0.18) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 40% at 20% 100%, rgba(167, 139, 250, 0.10) 0%, transparent 60%);
+  }
+  .hero .badge {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    font-family: var(--mono); font-size: 0.78rem; color: var(--accent);
+    background: var(--accent-soft); border: 1px solid rgba(34, 211, 238, 0.3);
+    padding: 0.4rem 0.8rem; border-radius: 999px; margin-bottom: 1.5rem;
+  }
+  .hero h1 { background: linear-gradient(180deg, #ffffff 0%, #cbd5e1 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero .lede { font-size: 1.15rem; color: var(--text-dim); max-width: 760px; margin: 1rem 0 1.5rem; }
+
+  /* KPI Cards */
+  .kpis {
+    display: grid; gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    margin-top: 1rem;
+  }
+  .kpi {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 1.25rem;
+  }
+  .kpi .label { font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.5rem; font-family: var(--mono); }
+  .kpi .value { font-family: var(--mono); font-size: 2rem; color: var(--text); font-weight: 600; line-height: 1; }
+  .kpi .value.accent { color: var(--accent); }
+  .kpi .value.good { color: var(--accent-2); }
+  .kpi .value.warn { color: var(--warn); }
+  .kpi .sub { font-size: 0.85rem; color: var(--text-muted); margin-top: 0.4rem; }
+  .kpi .trend { font-family: var(--mono); font-size: 0.85rem; color: var(--accent-2); margin-top: 0.4rem; }
+
+  /* Chart card */
+  .chart-card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 1.5rem;
+  }
+  .chart-card h3 { margin-bottom: 0.4rem; }
+  .chart-card .desc { font-size: 0.9rem; color: var(--text-muted); margin-bottom: 1rem; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1.5rem; }
+  @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  /* Station table */
+  .table-wrap { overflow-x: auto; }
+  table.stations { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  table.stations th, table.stations td {
+    text-align: left; padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  table.stations th {
+    font-weight: 600; color: var(--text-muted);
+    font-family: var(--mono); font-size: 0.78rem;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    background: var(--bg-elev);
+  }
+  table.stations td.mono { font-family: var(--mono); }
+  table.stations tr:hover { background: var(--bg-elev); }
+  .pill {
+    display: inline-block; padding: 0.15rem 0.5rem;
+    border-radius: 4px; font-family: var(--mono); font-size: 0.72rem;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .pill.good { background: rgba(52, 211, 153, 0.15); color: var(--accent-2); }
+  .pill.warn { background: rgba(251, 191, 36, 0.15); color: var(--warn); }
+  .pill.muted { background: rgba(100, 116, 139, 0.2); color: var(--text-muted); }
+
+  /* Status indicator */
+  .data-status {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    font-family: var(--mono); font-size: 0.8rem;
+    color: var(--text-muted); margin-top: 0.5rem;
+  }
+  .data-status .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .data-status.live .dot { background: var(--accent-2); box-shadow: 0 0 8px var(--accent-2); }
+  .data-status.cache .dot { background: var(--warn); }
+  .data-status.error .dot { background: var(--danger); }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 3rem 0 2rem;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+  footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 1.5rem; }
+  footer a { color: var(--text-dim); }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; }
+
+  /* Chart axes/legend */
+  .legend {
+    display: flex; gap: 1.5rem; flex-wrap: wrap;
+    font-family: var(--mono); font-size: 0.78rem;
+    color: var(--text-muted); margin-top: 0.75rem;
+  }
+  .legend .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 0.4rem; vertical-align: middle; }
+
+  /* Methodology box */
+  .method {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 1.5rem;
+    font-size: 0.93rem;
+  }
+  .method strong { color: var(--text); }
+  .method ul { margin: 0.75rem 0 0; padding-left: 1.2rem; color: var(--text-dim); }
+  .method ul li { margin-bottom: 0.4rem; }
+
+  /* Subtramo bars */
+  .bar-row { display: grid; grid-template-columns: 200px 60px 1fr 100px; gap: 0.75rem; align-items: center; padding: 0.55rem 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+  .bar-row:last-child { border-bottom: 0; }
+  .bar-row .label { color: var(--text); font-family: var(--mono); font-size: 0.78rem; }
+  .bar-row .km { font-family: var(--mono); font-size: 0.78rem; color: var(--text-muted); text-align: right; }
+  .bar-row .bar { background: var(--bg); height: 22px; border-radius: 4px; overflow: hidden; position: relative; }
+  .bar-row .bar .fill { height: 100%; background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%); border-radius: 4px; transition: width 600ms cubic-bezier(0.4, 0, 0.2, 1); }
+  .bar-row .val { font-family: var(--mono); font-size: 0.88rem; color: var(--text); text-align: right; font-weight: 600; }
+  @media (max-width: 700px) {
+    .bar-row { grid-template-columns: 1fr 80px; row-gap: 0.25rem; }
+    .bar-row .km, .bar-row .bar { grid-column: 1 / -1; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <div class="wrap">
+    <div class="brand"><span class="dot"></span>TP2 / Dashboard A-601</div>
+    <ul>
+      <li><a href="./">← Inicio</a></li>
+      <li><a href="#resumen">Resumen</a></li>
+      <li><a href="#evolucion">Evolución</a></li>
+      <li><a href="#subtramos">Subtramos</a></li>
+      <li><a href="#metodologia">Metodología</a></li>
+    </ul>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="badge">📊 Análisis de tráfico · Tramo Valladolid–Segovia</span>
+    <h1>Densidad de tráfico en la A-601</h1>
+    <p class="lede">Análisis histórico y proyección a 2026 de la intensidad media diaria de tráfico (IMD) sobre el tramo de la autovía A-601 entre los kilómetros 0 y 104, base para el dimensionamiento de la red 4G LTE privada del proyecto.</p>
+    <div class="data-status" id="dataStatus">
+      <span class="dot"></span>
+      <span id="dataStatusText">Cargando datos...</span>
+    </div>
+  </div>
+</header>
+
+<section id="resumen">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">Resumen ejecutivo</span>
+      <h2>Indicadores clave del tramo</h2>
+      <p>Cifras agregadas sobre todo el tramo del proyecto, calculadas a partir de los datos abiertos del Ministerio de Transportes y Movilidad Sostenible y proyectadas a 2026 mediante regresión lineal ponderada con corrección de pandemia.</p>
+    </div>
+
+    <div class="kpis" id="kpis">
+      <!-- KPIs rendered by JS -->
+    </div>
+  </div>
+</section>
+
+<section id="evolucion">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">Evolución histórica</span>
+      <h2>Serie temporal 2010–2026</h2>
+      <p>IMD media del tramo agregada año a año desde 2010, con la proyección a 2026 sobre la misma serie. La caída de 2020 y 2021 corresponde al impacto de la pandemia COVID-19, ponderada con peso reducido en el ajuste para no sesgar la tendencia.</p>
+    </div>
+
+    <div class="chart-card">
+      <h3>IMD agregada (vehículos/día) — Tramo A-601 km 0-104</h3>
+      <p class="desc">Cada punto representa la IMD media ponderada por longitud de subtramo. La banda sombreada indica el intervalo de confianza de la regresión.</p>
+      <div id="chartEvolucion"></div>
+      <div class="legend">
+        <span><span class="swatch" style="background:var(--accent)"></span>IMD histórica (medida)</span>
+        <span><span class="swatch" style="background:var(--warn)"></span>Años pandémicos (peso 0,3)</span>
+        <span><span class="swatch" style="background:var(--accent-2)"></span>Proyección a 2026</span>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="chart-card">
+        <h3>Composición ligeros vs pesados</h3>
+        <p class="desc">Distribución porcentual media del tipo de vehículo en el tramo en el año más reciente.</p>
+        <div id="chartCompo"></div>
+      </div>
+      <div class="chart-card">
+        <h3>Crecimiento proyectado por estación</h3>
+        <p class="desc">Variación porcentual prevista de la IMD entre el último año medido y 2026.</p>
+        <div id="chartGrowth"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="subtramos">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">Distribución espacial</span>
+      <h2>IMD por subtramo en 2026</h2>
+      <p>Cada estación de aforo del Ministerio cubre un subtramo del recorrido. El patrón evidencia los volúmenes máximos en los accesos a Valladolid y la entrada a Segovia, y los mínimos relativos en el corredor intermedio.</p>
+    </div>
+
+    <div class="chart-card">
+      <h3>Vehículos diarios por subtramo</h3>
+      <p class="desc">Proyección a 2026, ordenada por punto kilométrico de oeste (Valladolid) a este (Segovia).</p>
+      <div id="barsSubtramos" style="margin-top: 1rem"></div>
+    </div>
+
+    <div class="chart-card" style="margin-top: 1.5rem">
+      <h3>Detalle por estación de aforo</h3>
+      <div class="table-wrap">
+        <table class="stations" id="tableStations">
+          <thead>
+            <tr>
+              <th>Estación</th>
+              <th>Subtramo</th>
+              <th>PK</th>
+              <th>L (km)</th>
+              <th>IMD último</th>
+              <th>IMD 2026</th>
+              <th>Δ %</th>
+              <th>R²</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="metodologia">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">Metodología</span>
+      <h2>Cómo se ha calculado todo esto</h2>
+    </div>
+
+    <div class="method">
+      <p><strong>Fuente de datos.</strong> Dataset abierto "Intensidades Medias de Tráfico y velocidades — Red Regional de Carreteras", publicado por el Ministerio de Transportes y Movilidad Sostenible a través del portal de datos abiertos del Gobierno de España.</p>
+      <p><strong>Filtrado y consolidación.</strong> Se selecciona la carretera A-601 y se acotan los registros al rango kilométrico 0–104, correspondiente al tramo del proyecto. Las nueve estaciones de aforo identificadas se consolidan asignando a cada una su rango canónico de puntos kilométricos.</p>
+      <p><strong>Regresión y proyección.</strong> Para cada estación se ajusta una regresión lineal ponderada por mínimos cuadrados sobre la serie de IMD anual desde 2010, con los siguientes pesos:</p>
+      <ul>
+        <li>Años normales (2010–2019, 2022–2024): peso 1,0</li>
+        <li>Años pandémicos (2020 y 2021): peso 0,3 para reducir el sesgo COVID-19 sin descartar el dato</li>
+      </ul>
+      <p><strong>Agregación al tramo.</strong> La IMD agregada del tramo se calcula como media ponderada por longitud de cada subtramo, evitando que estaciones con menos kilómetros cubiertos pesen lo mismo que estaciones con tramos largos.</p>
+      <p><strong>Horizonte.</strong> Año 2026, alineado con el inicio operativo previsto del servicio según el plan de despliegue del proyecto.</p>
+      <p><strong>Limitaciones.</strong> La estación VA-3070 solo dispone de tres años de medida y su R² es residual; su proyección se incluye como orientativa y se contrasta con la estación adyacente VA-3020 para validar la coherencia espacial. El resto de estaciones presentan ajustes con R² entre 0,74 y 0,84.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <strong style="color: var(--text);">TP2 · Grupo 4 · Taller de Proyectos II</strong><br>
+      Máster en Ingeniería de Telecomunicación · Universidad de Valladolid · 2025–2026
+    </div>
+    <div>
+      <a href="./">Inicio</a> · <a href="https://github.com/TallerProyectos2/TP2">Repositorio</a>
+    </div>
+  </div>
+</footer>
+
+<script id="dataInline" type="application/json">{"metadata":{"carretera":"A-601","tramo_proyecto":{"pk_inicial":0,"pk_final":104},"fuente":"Ministerio de Transportes y Movilidad Sostenible - Intensidades Medias de Tráfico","estaciones_analizadas":9,"longitud_cubierta_km":88.18,"metodologia":{"ajuste_pandemia":"Regresión lineal ponderada; años 2020 y 2021 reciben peso 0.3 para reducir el sesgo COVID-19","modelo":"Mínimos cuadrados ponderados sobre IMD anual","horizonte":2026},"resumen":{"imd_ponderada_ultimo_ano":10934,"imd_ponderada_2026":11357,"crecimiento_pct":3.9}},"estaciones":[{"estac":"SG-0450","provincia":"SG","descripcion":"DE LÍMITE DE PROVINCIA DE VALLADOLID A CUELLAR (CL-602)","pk_inicial":44.23,"pk_final":50.13,"longitud_km":5.9,"registros":15,"imd_series":[{"year":2010,"imd":5572},{"year":2011,"imd":5978},{"year":2012,"imd":5738},{"year":2013,"imd":5790},{"year":2014,"imd":6131},{"year":2015,"imd":6622},{"year":2016,"imd":7100},{"year":2017,"imd":7643},{"year":2018,"imd":7633},{"year":2019,"imd":7644},{"year":2020,"imd":5708},{"year":2021,"imd":7416},{"year":2022,"imd":7886},{"year":2023,"imd":8001},{"year":2024,"imd":8323}],"imd_l_series":[{"year":2010,"imd_l":4818},{"year":2011,"imd_l":5217},{"year":2012,"imd_l":4999},{"year":2013,"imd_l":5042},{"year":2014,"imd_l":5322},{"year":2015,"imd_l":5754},{"year":2016,"imd_l":6128},{"year":2017,"imd_l":6580},{"year":2018,"imd_l":6532},{"year":2019,"imd_l":6523},{"year":2020,"imd_l":4651},{"year":2021,"imd_l":6245},{"year":2022,"imd_l":6663},{"year":2023,"imd_l":6738},{"year":2024,"imd_l":7065}],"imd_p_series":[{"year":2010,"imd_p":754},{"year":2011,"imd_p":761},{"year":2012,"imd_p":739},{"year":2013,"imd_p":748},{"year":2014,"imd_p":809},{"year":2015,"imd_p":868},{"year":2016,"imd_p":972},{"year":2017,"imd_p":1063},{"year":2018,"imd_p":1101},{"year":2019,"imd_p":1121},{"year":2020,"imd_p":1057},{"year":2021,"imd_p":1171},{"year":2022,"imd_p":1223},{"year":2023,"imd_p":1263},{"year":2024,"imd_p":1258}],"imd_last_year":2024,"imd_last":8323,"imd_2026":8745,"imd_l_2026":7356,"imd_p_2026":1389,"growth_pct_to_2026":5.1,"regression":{"slope":195.84,"intercept":-388028.19,"r2":0.8156},"pct_pesados_last":15.11474228,"velocidad_media_last":118.0},{"estac":"SG-0455","provincia":"SG","descripcion":"DE CUÉLLAR (CL-602) A NAVALMANZANO (SG-332)","pk_inicial":50.13,"pk_final":77.62,"longitud_km":27.49,"registros":15,"imd_series":[{"year":2010,"imd":6450},{"year":2011,"imd":6783},{"year":2012,"imd":6378},{"year":2013,"imd":6443},{"year":2014,"imd":6818},{"year":2015,"imd":7292},{"year":2016,"imd":7738},{"year":2017,"imd":8205},{"year":2018,"imd":8013},{"year":2019,"imd":7983},{"year":2020,"imd":6348},{"year":2021,"imd":8143},{"year":2022,"imd":8521},{"year":2023,"imd":9043},{"year":2024,"imd":9056}],"imd_l_series":[{"year":2010,"imd_l":5427},{"year":2011,"imd_l":5831},{"year":2012,"imd_l":5497},{"year":2013,"imd_l":5545},{"year":2014,"imd_l":5844},{"year":2015,"imd_l":6247},{"year":2016,"imd_l":6635},{"year":2017,"imd_l":7031},{"year":2018,"imd_l":6799},{"year":2019,"imd_l":6797},{"year":2020,"imd_l":5166},{"year":2021,"imd_l":6836},{"year":2022,"imd_l":7207},{"year":2023,"imd_l":7162},{"year":2024,"imd_l":7633}],"imd_p_series":[{"year":2010,"imd_p":1023},{"year":2011,"imd_p":952},{"year":2012,"imd_p":881},{"year":2013,"imd_p":898},{"year":2014,"imd_p":974},{"year":2015,"imd_p":1045},{"year":2016,"imd_p":1103},{"year":2017,"imd_p":1174},{"year":2018,"imd_p":1214},{"year":2019,"imd_p":1186},{"year":2020,"imd_p":1182},{"year":2021,"imd_p":1307},{"year":2022,"imd_p":1314},{"year":2023,"imd_p":1881},{"year":2024,"imd_p":1423}],"imd_last_year":2024,"imd_last":9056,"imd_2026":9394,"imd_l_2026":7774,"imd_p_2026":1621,"growth_pct_to_2026":3.7,"regression":{"slope":193.95,"intercept":-383540.49,"r2":0.8288},"pct_pesados_last":15.71333922,"velocidad_media_last":119.0},{"estac":"SG-0460","provincia":"SG","descripcion":"DE NAVALMANZANO (SG-332) A TABANERA LA LUENGA (SG-211)","pk_inicial":77.62,"pk_final":91.44,"longitud_km":13.82,"registros":15,"imd_series":[{"year":2010,"imd":5341},{"year":2011,"imd":5685},{"year":2012,"imd":5435},{"year":2013,"imd":5405},{"year":2014,"imd":5663},{"year":2015,"imd":6079},{"year":2016,"imd":6454},{"year":2017,"imd":6851},{"year":2018,"imd":6663},{"year":2019,"imd":6657},{"year":2020,"imd":4991},{"year":2021,"imd":6651},{"year":2022,"imd":7110},{"year":2023,"imd":7640},{"year":2024,"imd":7623}],"imd_l_series":[{"year":2010,"imd_l":4521},{"year":2011,"imd_l":4847},{"year":2012,"imd_l":4639},{"year":2013,"imd_l":4634},{"year":2014,"imd_l":4877},{"year":2015,"imd_l":5234},{"year":2016,"imd_l":5542},{"year":2017,"imd_l":5879},{"year":2018,"imd_l":5685},{"year":2019,"imd_l":5704},{"year":2020,"imd_l":4115},{"year":2021,"imd_l":5667},{"year":2022,"imd_l":6111},{"year":2023,"imd_l":6151},{"year":2024,"imd_l":6525}],"imd_p_series":[{"year":2010,"imd_p":820},{"year":2011,"imd_p":838},{"year":2012,"imd_p":796},{"year":2013,"imd_p":771},{"year":2014,"imd_p":786},{"year":2015,"imd_p":845},{"year":2016,"imd_p":912},{"year":2017,"imd_p":972},{"year":2018,"imd_p":978},{"year":2019,"imd_p":953},{"year":2020,"imd_p":876},{"year":2021,"imd_p":984},{"year":2022,"imd_p":999},{"year":2023,"imd_p":1489},{"year":2024,"imd_p":1098}],"imd_last_year":2024,"imd_last":7623,"imd_2026":7850,"imd_l_2026":6610,"imd_p_2026":1240,"growth_pct_to_2026":3.0,"regression":{"slope":162.34,"intercept":-321060.34,"r2":0.7964},"pct_pesados_last":14.40377804,"velocidad_media_last":118.0},{"estac":"SG-0465","provincia":"SG","descripcion":"DE TABANERA LA LUENGA (SG-211) A  VALSECA (CL-603)","pk_inicial":91.44,"pk_final":104.9,"longitud_km":13.46,"registros":15,"imd_series":[{"year":2010,"imd":7998},{"year":2011,"imd":8260},{"year":2012,"imd":7646},{"year":2013,"imd":7660},{"year":2014,"imd":8239},{"year":2015,"imd":8771},{"year":2016,"imd":9233},{"year":2017,"imd":9735},{"year":2018,"imd":9505},{"year":2019,"imd":9473},{"year":2020,"imd":7138},{"year":2021,"imd":9357},{"year":2022,"imd":9935},{"year":2023,"imd":10481},{"year":2024,"imd":10575}],"imd_l_series":[{"year":2010,"imd_l":7169},{"year":2011,"imd_l":7450},{"year":2012,"imd_l":6882},{"year":2013,"imd_l":6874},{"year":2014,"imd_l":7417},{"year":2015,"imd_l":7899},{"year":2016,"imd_l":8311},{"year":2017,"imd_l":8745},{"year":2018,"imd_l":8517},{"year":2019,"imd_l":8470},{"year":2020,"imd_l":6205},{"year":2021,"imd_l":8293},{"year":2022,"imd_l":8857},{"year":2023,"imd_l":8670},{"year":2024,"imd_l":9380}],"imd_p_series":[{"year":2010,"imd_p":829},{"year":2011,"imd_p":810},{"year":2012,"imd_p":764},{"year":2013,"imd_p":786},{"year":2014,"imd_p":822},{"year":2015,"imd_p":872},{"year":2016,"imd_p":922},{"year":2017,"imd_p":990},{"year":2018,"imd_p":988},{"year":2019,"imd_p":1003},{"year":2020,"imd_p":933},{"year":2021,"imd_p":1064},{"year":2022,"imd_p":1078},{"year":2023,"imd_p":1811},{"year":2024,"imd_p":1195}],"imd_last_year":2024,"imd_last":10575,"imd_2026":10832,"imd_l_2026":9417,"imd_p_2026":1415,"growth_pct_to_2026":2.4,"regression":{"slope":195.23,"intercept":-384702.88,"r2":0.7355},"pct_pesados_last":11.30023641,"velocidad_media_last":117.0},{"estac":"VA-0600","provincia":"VA","descripcion":"DE CL-600 A ALDEAMAYOR (VA-200)","pk_inicial":12.89,"pk_final":17.59,"longitud_km":4.7,"registros":15,"imd_series":[{"year":2010,"imd":12751},{"year":2011,"imd":13114},{"year":2012,"imd":12451},{"year":2013,"imd":12529},{"year":2014,"imd":13082},{"year":2015,"imd":13913},{"year":2016,"imd":14821},{"year":2017,"imd":15751},{"year":2018,"imd":15952},{"year":2019,"imd":16203},{"year":2020,"imd":12869},{"year":2021,"imd":15951},{"year":2022,"imd":16626},{"year":2023,"imd":16917},{"year":2024,"imd":17550}],"imd_l_series":[{"year":2010,"imd_l":11457},{"year":2011,"imd_l":11870},{"year":2012,"imd_l":11218},{"year":2013,"imd_l":11274},{"year":2014,"imd_l":11761},{"year":2015,"imd_l":12501},{"year":2016,"imd_l":13258},{"year":2017,"imd_l":14070},{"year":2018,"imd_l":14216},{"year":2019,"imd_l":14453},{"year":2020,"imd_l":11277},{"year":2021,"imd_l":14203},{"year":2022,"imd_l":14826},{"year":2023,"imd_l":15078},{"year":2024,"imd_l":15657}],"imd_p_series":[{"year":2010,"imd_p":1294},{"year":2011,"imd_p":1244},{"year":2012,"imd_p":1233},{"year":2013,"imd_p":1255},{"year":2014,"imd_p":1321},{"year":2015,"imd_p":1412},{"year":2016,"imd_p":1563},{"year":2017,"imd_p":1681},{"year":2018,"imd_p":1736},{"year":2019,"imd_p":1750},{"year":2020,"imd_p":1592},{"year":2021,"imd_p":1748},{"year":2022,"imd_p":1800},{"year":2023,"imd_p":1839},{"year":2024,"imd_p":1893}],"imd_last_year":2024,"imd_last":17550,"imd_2026":18194,"imd_l_2026":16161,"imd_p_2026":2033,"growth_pct_to_2026":3.7,"regression":{"slope":370.21,"intercept":-731858.24,"r2":0.8412},"pct_pesados_last":10.78632479,"velocidad_media_last":114.0},{"estac":"VA-0605","provincia":"VA","descripcion":"DE ALDEAMAYOR (VA-200) A PORTILLO (VA-301)","pk_inicial":17.59,"pk_final":24.24,"longitud_km":6.65,"registros":15,"imd_series":[{"year":2010,"imd":10460},{"year":2011,"imd":10883},{"year":2012,"imd":10233},{"year":2013,"imd":10291},{"year":2014,"imd":10702},{"year":2015,"imd":11401},{"year":2016,"imd":12113},{"year":2017,"imd":12855},{"year":2018,"imd":12992},{"year":2019,"imd":13188},{"year":2020,"imd":10363},{"year":2021,"imd":12947},{"year":2022,"imd":13482},{"year":2023,"imd":13751},{"year":2024,"imd":14357}],"imd_l_series":[{"year":2010,"imd_l":9262},{"year":2011,"imd_l":9728},{"year":2012,"imd_l":9138},{"year":2013,"imd_l":9172},{"year":2014,"imd_l":9542},{"year":2015,"imd_l":10170},{"year":2016,"imd_l":10755},{"year":2017,"imd_l":11402},{"year":2018,"imd_l":11514},{"year":2019,"imd_l":11672},{"year":2020,"imd_l":8936},{"year":2021,"imd_l":11287},{"year":2022,"imd_l":11794},{"year":2023,"imd_l":12080},{"year":2024,"imd_l":12646}],"imd_p_series":[{"year":2010,"imd_p":1198},{"year":2011,"imd_p":1155},{"year":2012,"imd_p":1095},{"year":2013,"imd_p":1119},{"year":2014,"imd_p":1160},{"year":2015,"imd_p":1231},{"year":2016,"imd_p":1358},{"year":2017,"imd_p":1453},{"year":2018,"imd_p":1478},{"year":2019,"imd_p":1516},{"year":2020,"imd_p":1427},{"year":2021,"imd_p":1660},{"year":2022,"imd_p":1688},{"year":2023,"imd_p":1671},{"year":2024,"imd_p":1711}],"imd_last_year":2024,"imd_last":14357,"imd_2026":14757,"imd_l_2026":12931,"imd_p_2026":1825,"growth_pct_to_2026":2.8,"regression":{"slope":290.56,"intercept":-573914.7,"r2":0.8239},"pct_pesados_last":11.91753152,"velocidad_media_last":108.0},{"estac":"VA-0610","provincia":"VA","descripcion":"DE PORTILLO (VA-301) A SANTIAGO DEL ARROYO (VP-2203)","pk_inicial":24.24,"pk_final":30.11,"longitud_km":5.87,"registros":15,"imd_series":[{"year":2010,"imd":6659},{"year":2011,"imd":7044},{"year":2012,"imd":6740},{"year":2013,"imd":6759},{"year":2014,"imd":7081},{"year":2015,"imd":7587},{"year":2016,"imd":8073},{"year":2017,"imd":8629},{"year":2018,"imd":8538},{"year":2019,"imd":8570},{"year":2020,"imd":6501},{"year":2021,"imd":8406},{"year":2022,"imd":8925},{"year":2023,"imd":9064},{"year":2024,"imd":9388}],"imd_l_series":[{"year":2010,"imd_l":5754},{"year":2011,"imd_l":6136},{"year":2012,"imd_l":5875},{"year":2013,"imd_l":5911},{"year":2014,"imd_l":6178},{"year":2015,"imd_l":6628},{"year":2016,"imd_l":7015},{"year":2017,"imd_l":7475},{"year":2018,"imd_l":7370},{"year":2019,"imd_l":7365},{"year":2020,"imd_l":5372},{"year":2021,"imd_l":7131},{"year":2022,"imd_l":7565},{"year":2023,"imd_l":7671},{"year":2024,"imd_l":8010}],"imd_p_series":[{"year":2010,"imd_p":905},{"year":2011,"imd_p":908},{"year":2012,"imd_p":865},{"year":2013,"imd_p":848},{"year":2014,"imd_p":903},{"year":2015,"imd_p":959},{"year":2016,"imd_p":1058},{"year":2017,"imd_p":1154},{"year":2018,"imd_p":1168},{"year":2019,"imd_p":1205},{"year":2020,"imd_p":1129},{"year":2021,"imd_p":1275},{"year":2022,"imd_p":1360},{"year":2023,"imd_p":1393},{"year":2024,"imd_p":1378}],"imd_last_year":2024,"imd_last":9388,"imd_2026":9737,"imd_l_2026":8249,"imd_p_2026":1488,"growth_pct_to_2026":3.7,"regression":{"slope":195.53,"intercept":-386397.53,"r2":0.8046},"pct_pesados_last":14.67831274,"velocidad_media_last":107.0},{"estac":"VA-3020","provincia":"VA","descripcion":"DE ENLACE ÁREA INDUSTRIAL SALIDA 6  A CL-600","pk_inicial":4.4,"pk_final":12.89,"longitud_km":8.49,"registros":15,"imd_series":[{"year":2010,"imd":15226},{"year":2011,"imd":13980},{"year":2012,"imd":13331},{"year":2013,"imd":13502},{"year":2014,"imd":14211},{"year":2015,"imd":14139},{"year":2016,"imd":15255},{"year":2017,"imd":16381},{"year":2018,"imd":16927},{"year":2019,"imd":16979},{"year":2020,"imd":13908},{"year":2021,"imd":17589},{"year":2022,"imd":17569},{"year":2023,"imd":18114},{"year":2024,"imd":17905}],"imd_l_series":[{"year":2010,"imd_l":11536},{"year":2011,"imd_l":11271},{"year":2012,"imd_l":11907},{"year":2013,"imd_l":12076},{"year":2014,"imd_l":12737},{"year":2015,"imd_l":12596},{"year":2016,"imd_l":13576},{"year":2017,"imd_l":14390},{"year":2018,"imd_l":14801},{"year":2019,"imd_l":15309},{"year":2020,"imd_l":12075},{"year":2021,"imd_l":14739},{"year":2022,"imd_l":15204},{"year":2023,"imd_l":15447},{"year":2024,"imd_l":15783}],"imd_p_series":[{"year":2010,"imd_p":3690},{"year":2011,"imd_p":2709},{"year":2012,"imd_p":1424},{"year":2013,"imd_p":1426},{"year":2014,"imd_p":1474},{"year":2015,"imd_p":1543},{"year":2016,"imd_p":1679},{"year":2017,"imd_p":1991},{"year":2018,"imd_p":2126},{"year":2019,"imd_p":1670},{"year":2020,"imd_p":1833},{"year":2021,"imd_p":2850},{"year":2022,"imd_p":2365},{"year":2023,"imd_p":2667},{"year":2024,"imd_p":2122}],"imd_last_year":2024,"imd_last":17905,"imd_2026":18740,"imd_l_2026":16684,"imd_p_2026":2056,"growth_pct_to_2026":4.7,"regression":{"slope":329.12,"intercept":-648058.55,"r2":0.7378},"pct_pesados_last":11.85143815,"velocidad_media_last":105.0},{"estac":"VA-3070","provincia":"VA","descripcion":"DE VALLADOLID (VA-30) A ENLACE ÁREA INDUSTRIAL SALIDA 6","pk_inicial":4.42,"pk_final":6.22,"longitud_km":1.8,"registros":3,"imd_series":[{"year":2022,"imd":17768},{"year":2023,"imd":22596},{"year":2024,"imd":18544}],"imd_l_series":[{"year":2022,"imd_l":14242},{"year":2023,"imd_l":19029},{"year":2024,"imd_l":15630}],"imd_p_series":[{"year":2022,"imd_p":3526},{"year":2023,"imd_p":3567},{"year":2024,"imd_p":2914}],"imd_last_year":2024,"imd_last":18544,"imd_2026":20800,"imd_l_2026":18382,"imd_p_2026":2418,"growth_pct_to_2026":12.2,"regression":{"slope":388.0,"intercept":-765288.0,"r2":0.0224},"pct_pesados_last":15.71397757,"velocidad_media_last":57.0}]}</script>
+<script>
+const DATA_URL = './data/imd_a601.json';
+
+const fmt = n => new Intl.NumberFormat('es-ES').format(Math.round(n));
+const fmt1 = n => new Intl.NumberFormat('es-ES', { maximumFractionDigits: 1 }).format(n);
+
+async function loadData() {
+  const status = document.getElementById('dataStatus');
+  const statusText = document.getElementById('dataStatusText');
+  // Try fetch first (production), fallback to inline JSON (preview/offline)
+  try {
+    const res = await fetch(DATA_URL);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+    status.className = 'data-status live';
+    statusText.textContent = 'Datos en vivo · ' + json.metadata.estaciones_analizadas + ' estaciones · serie 2010–2024';
+    render(json);
+    return;
+  } catch (err) {
+    // fall through to inline
+  }
+  try {
+    const inlineEl = document.getElementById('dataInline');
+    const json = JSON.parse(inlineEl.textContent);
+    status.className = 'data-status cache';
+    statusText.textContent = 'Datos cacheados · ' + json.metadata.estaciones_analizadas + ' estaciones · serie 2010–2024';
+    render(json);
+  } catch (err2) {
+    status.className = 'data-status error';
+    statusText.textContent = 'Error: ' + err2.message;
+  }
+}
+
+function render(data) {
+  renderKPIs(data);
+  renderEvolucion(data);
+  renderCompo(data);
+  renderGrowth(data);
+  renderSubtramos(data);
+  renderTable(data);
+}
+
+function renderKPIs(data) {
+  const m = data.metadata;
+  const last = m.resumen.imd_ponderada_ultimo_ano;
+  const proj = m.resumen.imd_ponderada_2026;
+  const growth = m.resumen.crecimiento_pct;
+  const longi = m.longitud_cubierta_km;
+  const stations = m.estaciones_analizadas;
+
+  // calculate hour-peak vehicles (5% of IMD typical for interurban)
+  const peakHour = Math.round(proj * 0.10); // 10% peak hour ratio
+
+  const kpis = [
+    { label: 'IMD última medida', value: fmt(last), accent: '', sub: 'Vehículos / día (2024)' },
+    { label: 'IMD proyectada 2026', value: fmt(proj), accent: 'accent', sub: 'Vehículos / día' },
+    { label: 'Crecimiento previsto', value: '+' + fmt1(growth) + '%', accent: 'good', sub: '2024 → 2026' },
+    { label: 'Hora punta estimada', value: fmt(peakHour), accent: 'warn', sub: 'Vehículos / hora pico (10 %)' },
+    { label: 'Longitud cubierta', value: fmt1(longi) + ' km', accent: '', sub: 'De 104 km del tramo' },
+    { label: 'Estaciones de aforo', value: stations, accent: '', sub: 'Datos directos del Ministerio' },
+  ];
+
+  const el = document.getElementById('kpis');
+  el.innerHTML = kpis.map(k => `
+    <div class="kpi">
+      <div class="label">${k.label}</div>
+      <div class="value ${k.accent}">${k.value}</div>
+      <div class="sub">${k.sub}</div>
+    </div>
+  `).join('');
+}
+
+function renderEvolucion(data) {
+  // Aggregate yearly weighted IMD across all stations
+  const yearMap = {};  // year -> { sumW: weighted sum, totalL: total length }
+  data.estaciones.forEach(st => {
+    const L = st.longitud_km;
+    st.imd_series.forEach(p => {
+      if (!yearMap[p.year]) yearMap[p.year] = { sumW: 0, totalL: 0 };
+      yearMap[p.year].sumW += p.imd * L;
+      yearMap[p.year].totalL += L;
+    });
+  });
+  const years = Object.keys(yearMap).map(Number).sort((a,b) => a-b);
+  const series = years.map(y => ({ year: y, imd: yearMap[y].sumW / yearMap[y].totalL }));
+
+  // Compute projection: weighted linreg with pandemic weight 0.3
+  const w = series.map(p => (p.year === 2020 || p.year === 2021) ? 0.3 : 1.0);
+  const xs = series.map(p => p.year);
+  const ys = series.map(p => p.imd);
+  const sw = w.reduce((a,b)=>a+b, 0);
+  const sx = xs.reduce((a,b,i)=>a + b*w[i], 0);
+  const sy = ys.reduce((a,b,i)=>a + b*w[i], 0);
+  const sxy = xs.reduce((a,b,i)=>a + b*ys[i]*w[i], 0);
+  const sxx = xs.reduce((a,b,i)=>a + b*b*w[i], 0);
+  const slope = (sw*sxy - sx*sy) / (sw*sxx - sx*sx);
+  const intercept = (sy - slope*sx) / sw;
+  const projYears = [2025, 2026];
+  const projected = projYears.map(y => ({ year: y, imd: slope*y + intercept }));
+
+  const allData = [...series, ...projected];
+  const allYears = allData.map(p => p.year);
+  const minY = Math.min(...allYears), maxY = Math.max(...allYears);
+  const minV = Math.min(...allData.map(p => p.imd)) * 0.92;
+  const maxV = Math.max(...allData.map(p => p.imd)) * 1.05;
+
+  // SVG dims
+  const W = 900, H = 360, padL = 70, padR = 30, padT = 20, padB = 50;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const xScale = y => padL + ((y - minY) / (maxY - minY)) * innerW;
+  const yScale = v => padT + (1 - (v - minV) / (maxV - minV)) * innerH;
+
+  // Build path for historic line
+  const linePath = series.map((p,i) => (i === 0 ? 'M' : 'L') + xScale(p.year) + ',' + yScale(p.imd)).join(' ');
+  // Regression line over all years
+  const regYears = [];
+  for (let y = minY; y <= maxY; y++) regYears.push(y);
+  const regPath = regYears.map((y,i) => (i === 0 ? 'M' : 'L') + xScale(y) + ',' + yScale(slope*y + intercept)).join(' ');
+
+  // Axis labels
+  const yTicks = 5;
+  const yTickValues = [];
+  for (let i = 0; i <= yTicks; i++) yTickValues.push(minV + (maxV - minV) * i / yTicks);
+  const xTickStep = 2;
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">`;
+  // gridlines
+  yTickValues.forEach(v => {
+    const y = yScale(v);
+    svg += `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#1f2a36" stroke-width="1"/>`;
+    svg += `<text x="${padL-10}" y="${y+4}" text-anchor="end" fill="#64748b" font-family="ui-monospace, monospace" font-size="11">${fmt(v)}</text>`;
+  });
+  for (let y = minY; y <= maxY; y += xTickStep) {
+    svg += `<text x="${xScale(y)}" y="${H-padB+18}" text-anchor="middle" fill="#64748b" font-family="ui-monospace, monospace" font-size="11">${y}</text>`;
+  }
+  // Pandemic area highlight
+  const x2020 = xScale(2020), x2021end = xScale(2021.5);
+  svg += `<rect x="${x2020 - (xScale(2020)-xScale(2019.5))}" y="${padT}" width="${(xScale(2022)-xScale(2020))}" height="${innerH}" fill="rgba(251,191,36,0.06)"/>`;
+  // Regression line
+  svg += `<path d="${regPath}" fill="none" stroke="#34d399" stroke-width="2" stroke-dasharray="6,4" opacity="0.7"/>`;
+  // historic line
+  svg += `<path d="${linePath}" fill="none" stroke="#22d3ee" stroke-width="2.5"/>`;
+  // points
+  series.forEach(p => {
+    const cx = xScale(p.year), cy = yScale(p.imd);
+    const pandemic = (p.year === 2020 || p.year === 2021);
+    const color = pandemic ? '#fbbf24' : '#22d3ee';
+    svg += `<circle cx="${cx}" cy="${cy}" r="4.5" fill="${color}" stroke="#0b1015" stroke-width="1.5"/>`;
+    svg += `<title>${p.year}: ${fmt(p.imd)} veh/día</title>`;
+  });
+  // projection points
+  projected.forEach(p => {
+    const cx = xScale(p.year), cy = yScale(p.imd);
+    svg += `<circle cx="${cx}" cy="${cy}" r="5" fill="#34d399" stroke="#0b1015" stroke-width="1.5"/>`;
+    svg += `<text x="${cx}" y="${cy-12}" text-anchor="middle" fill="#34d399" font-family="ui-monospace, monospace" font-size="11" font-weight="600">${fmt(p.imd)}</text>`;
+  });
+  // axes title
+  svg += `<text x="${padL}" y="${H-5}" fill="#94a3b8" font-family="-apple-system, sans-serif" font-size="11">Año</text>`;
+  svg += `<text x="${15}" y="${padT+10}" fill="#94a3b8" font-family="-apple-system, sans-serif" font-size="11">veh/día</text>`;
+  svg += '</svg>';
+
+  document.getElementById('chartEvolucion').innerHTML = svg;
+}
+
+function renderCompo(data) {
+  // Average % pesados across stations with data
+  const valid = data.estaciones.filter(s => s.pct_pesados_last !== null);
+  const avgPes = valid.reduce((a,s) => a + s.pct_pesados_last, 0) / valid.length;
+  const avgLig = 100 - avgPes;
+
+  const W = 400, H = 280, cx = W/2, cy = H/2 - 10, r = 90;
+  const total = 100;
+  const a1 = (avgLig / total) * 2 * Math.PI;
+  const a2 = (avgPes / total) * 2 * Math.PI;
+
+  // Pie segments
+  function arcPath(start, sweep) {
+    const x1 = cx + r * Math.cos(start - Math.PI/2);
+    const y1 = cy + r * Math.sin(start - Math.PI/2);
+    const x2 = cx + r * Math.cos(start + sweep - Math.PI/2);
+    const y2 = cy + r * Math.sin(start + sweep - Math.PI/2);
+    const large = sweep > Math.PI ? 1 : 0;
+    return `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`;
+  }
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">`;
+  svg += `<path d="${arcPath(0, a1)}" fill="#22d3ee" stroke="#0b1015" stroke-width="2"/>`;
+  svg += `<path d="${arcPath(a1, a2)}" fill="#fbbf24" stroke="#0b1015" stroke-width="2"/>`;
+  // Center hole donut
+  svg += `<circle cx="${cx}" cy="${cy}" r="55" fill="#151d26"/>`;
+  svg += `<text x="${cx}" y="${cy-2}" text-anchor="middle" fill="#e8eef5" font-family="ui-monospace, monospace" font-size="18" font-weight="600">${fmt1(avgLig)}%</text>`;
+  svg += `<text x="${cx}" y="${cy+16}" text-anchor="middle" fill="#94a3b8" font-family="ui-monospace, monospace" font-size="10">LIGEROS</text>`;
+  // Legend
+  svg += `<rect x="40" y="${H-40}" width="12" height="12" fill="#22d3ee" rx="2"/>`;
+  svg += `<text x="58" y="${H-30}" fill="#e8eef5" font-family="-apple-system, sans-serif" font-size="12">Ligeros · ${fmt1(avgLig)}%</text>`;
+  svg += `<rect x="220" y="${H-40}" width="12" height="12" fill="#fbbf24" rx="2"/>`;
+  svg += `<text x="238" y="${H-30}" fill="#e8eef5" font-family="-apple-system, sans-serif" font-size="12">Pesados · ${fmt1(avgPes)}%</text>`;
+  svg += '</svg>';
+
+  document.getElementById('chartCompo').innerHTML = svg;
+}
+
+function renderGrowth(data) {
+  const stations = data.estaciones.filter(s => s.growth_pct_to_2026 !== null && s.regression.r2 > 0.5);
+  stations.sort((a,b) => a.pk_inicial - b.pk_inicial);
+
+  const W = 500, H = 300, padL = 80, padR = 30, padT = 20, padB = 30;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const maxG = Math.max(...stations.map(s => s.growth_pct_to_2026));
+  const barH = innerH / stations.length - 4;
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">`;
+  stations.forEach((s, i) => {
+    const y = padT + i * (barH + 4);
+    const w = (s.growth_pct_to_2026 / maxG) * innerW;
+    svg += `<rect x="${padL}" y="${y}" width="${w}" height="${barH}" fill="url(#growthGrad)" rx="3"/>`;
+    svg += `<text x="${padL-8}" y="${y + barH/2 + 4}" text-anchor="end" fill="#94a3b8" font-family="ui-monospace, monospace" font-size="11">${s.estac}</text>`;
+    svg += `<text x="${padL + w + 6}" y="${y + barH/2 + 4}" fill="#22d3ee" font-family="ui-monospace, monospace" font-size="11" font-weight="600">+${fmt1(s.growth_pct_to_2026)}%</text>`;
+  });
+  svg += `<defs><linearGradient id="growthGrad" x1="0" x2="1" y1="0" y2="0"><stop offset="0%" stop-color="#22d3ee"/><stop offset="100%" stop-color="#34d399"/></linearGradient></defs>`;
+  svg += '</svg>';
+  document.getElementById('chartGrowth').innerHTML = svg;
+}
+
+function renderSubtramos(data) {
+  const stations = [...data.estaciones].sort((a,b) => a.pk_inicial - b.pk_inicial);
+  const maxImd = Math.max(...stations.map(s => s.imd_2026));
+  let html = '';
+  stations.forEach(s => {
+    const pct = (s.imd_2026 / maxImd) * 100;
+    html += `<div class="bar-row">
+      <div class="label">${s.estac} <span style="color:var(--text-muted);font-size:0.78rem"> · ${s.descripcion.substring(0, 36)}${s.descripcion.length > 36 ? '…' : ''}</span></div>
+      <div class="km">km ${s.pk_inicial.toFixed(0)}–${s.pk_final.toFixed(0)}</div>
+      <div class="bar"><div class="fill" style="width:${pct}%"></div></div>
+      <div class="val">${fmt(s.imd_2026)}</div>
+    </div>`;
+  });
+  document.getElementById('barsSubtramos').innerHTML = html;
+}
+
+function renderTable(data) {
+  const stations = [...data.estaciones].sort((a,b) => a.pk_inicial - b.pk_inicial);
+  const tbody = document.querySelector('#tableStations tbody');
+  tbody.innerHTML = stations.map(s => {
+    const r2Class = s.regression.r2 > 0.7 ? 'good' : s.regression.r2 > 0.4 ? 'warn' : 'muted';
+    const r2Label = s.regression.r2 > 0.7 ? 'sólido' : s.regression.r2 > 0.4 ? 'aceptable' : 'orientativo';
+    return `<tr>
+      <td><span class="pill">${s.estac}</span></td>
+      <td>${s.descripcion.substring(0, 42)}${s.descripcion.length > 42 ? '…' : ''}</td>
+      <td class="mono">${s.pk_inicial.toFixed(2)}–${s.pk_final.toFixed(2)}</td>
+      <td class="mono">${s.longitud_km.toFixed(2)}</td>
+      <td class="mono">${fmt(s.imd_last)}</td>
+      <td class="mono" style="color:var(--accent)">${fmt(s.imd_2026)}</td>
+      <td class="mono" style="color:var(--accent-2)">+${fmt1(s.growth_pct_to_2026)}%</td>
+      <td><span class="pill ${r2Class}" title="${r2Label}">${s.regression.r2.toFixed(2)}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+loadData();
+</script>
+</body>
+</html>

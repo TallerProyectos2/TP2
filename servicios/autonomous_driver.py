@@ -10,6 +10,8 @@ SIGN_TURN_RIGHT = "OBLIGATORIO-GIRAR-DERECHA"
 SIGN_TURN_LEFT = "OBLIGATORIO-GIRAR-IZQUIERDA"
 SIGN_NO_ENTRY = "PROHIBIDO"
 SIGN_STOP = "STOP"
+SIGN_CONES = "CONOS"
+SIGN_BARRIER = "VALLA"
 SIGN_SPEED_30 = "VELOCIDAD-MAX-30"
 SIGN_SPEED_90 = "VELOCIDAD-MAX-90"
 
@@ -19,11 +21,13 @@ KNOWN_SIGNS = {
     SIGN_TURN_LEFT,
     SIGN_NO_ENTRY,
     SIGN_STOP,
+    SIGN_CONES,
+    SIGN_BARRIER,
     SIGN_SPEED_30,
     SIGN_SPEED_90,
 }
 
-SAFETY_SIGNS = {SIGN_STOP, SIGN_NO_ENTRY}
+SAFETY_SIGNS = {SIGN_STOP, SIGN_NO_ENTRY, SIGN_CONES, SIGN_BARRIER}
 TURN_SIGNS = {SIGN_TURN_LEFT, SIGN_TURN_RIGHT}
 SPEED_SIGNS = {SIGN_SPEED_30, SIGN_SPEED_90}
 
@@ -50,10 +54,10 @@ class AutonomousConfig:
     neutral_steering: float = 0.25
     neutral_throttle: float = 0.0
     crawl_throttle: float = 0.65
-    slow_throttle: float = 0.65
+    slow_throttle: float = 0.50
     turn_throttle: float = 0.65
     cruise_throttle: float = 0.65
-    fast_throttle: float = 0.65
+    fast_throttle: float = 0.70
     left_steering: float = 1.0
     right_steering: float = -1.0
     confirm_frames: int = 1
@@ -63,7 +67,8 @@ class AutonomousConfig:
     match_iou: float = 0.14
     match_center_distance: float = 0.18
     ambiguous_score_ratio: float = 0.82
-    stop_hold_sec: float = 1.15
+    stop_hold_sec: float = 5.00
+    stop_ignore_sec: float = 5.00
     turn_hold_sec: float = 1.20
     turn_pulse_enabled: bool = True
     turn_degrees: int = 90
@@ -299,6 +304,7 @@ class AutonomousController:
         self.last_observations: list[SignObservation] = []
         self.active_track_id: int | None = None
         self.stop_until = 0.0
+        self.stop_ignore_until = 0.0
         self.maneuver_until = 0.0
         self.cooldown_until = 0.0
         self.track_cooldowns: dict[int, float] = {}
@@ -358,6 +364,8 @@ class AutonomousController:
 
         observations: list[SignObservation] = []
         for observation in self.last_observations:
+            if observation.label in SAFETY_SIGNS and now < self.stop_ignore_until:
+                continue
             if observation.track_id in self.track_cooldowns and observation.label not in SAFETY_SIGNS:
                 continue
             observations.append(observation)
@@ -457,8 +465,9 @@ class AutonomousController:
             self.state = STATE_STOP_HOLD
             self.active_track_id = target.track_id
             self.stop_until = now + self.config.stop_hold_sec
+            self.stop_ignore_until = self.stop_until + self.config.stop_ignore_sec
             if target.track_id is not None:
-                self.track_cooldowns[target.track_id] = now + self.config.stop_hold_sec + self.config.cooldown_sec
+                self.track_cooldowns[target.track_id] = self.stop_ignore_until
             return self._decision(
                 now,
                 steering=self.config.neutral_steering,
@@ -737,6 +746,8 @@ def observation_from_prediction(
     class_weight = {
         SIGN_STOP: 1.80,
         SIGN_NO_ENTRY: 1.72,
+        SIGN_CONES: 1.68,
+        SIGN_BARRIER: 1.68,
         SIGN_TURN_LEFT: 1.28,
         SIGN_TURN_RIGHT: 1.28,
         SIGN_SPEED_30: 1.14,

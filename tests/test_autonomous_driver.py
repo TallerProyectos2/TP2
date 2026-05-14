@@ -5,7 +5,10 @@ import unittest
 from autonomous_driver import (
     AutonomousConfig,
     AutonomousController,
+    SIGN_BARRIER,
     SIGN_CONTINUE,
+    SIGN_CONES,
+    SIGN_NO_ENTRY,
     SIGN_SPEED_30,
     SIGN_SPEED_90,
     SIGN_STOP,
@@ -92,16 +95,16 @@ class AutonomousDriverTest(unittest.TestCase):
         fast = self.decide_confirmed([prediction(SIGN_SPEED_90, x=320, width=150, height=150)])
         self.assertEqual(slow.action, "speed-30")
         self.assertEqual(fast.action, "speed-90")
-        self.assertEqual(slow.raw_throttle, 0.65)
-        self.assertEqual(fast.raw_throttle, 0.65)
-        self.assertEqual(slow.throttle, 0.65)
-        self.assertEqual(fast.throttle, 0.65)
+        self.assertEqual(slow.raw_throttle, 0.50)
+        self.assertEqual(fast.raw_throttle, 0.70)
+        self.assertEqual(slow.throttle, 0.50)
+        self.assertEqual(fast.throttle, 0.70)
 
     def test_far_stop_stops_immediately(self):
         decision = self.decide([prediction(SIGN_STOP, x=320, width=50, height=50)])
         self.assertEqual(decision.action, "stop")
         self.assertEqual(decision.throttle, self.config.neutral_throttle)
-        self.assertIn("immediate", decision.reason)
+        self.assertEqual(decision.state, STATE_STOP_HOLD)
 
     def test_mid_distance_stop_triggers_before_sign_is_close(self):
         decision = self.decide([prediction(SIGN_STOP, x=320, width=65, height=65)])
@@ -123,7 +126,6 @@ class AutonomousDriverTest(unittest.TestCase):
         decisions = [
             self.decide([]),
             self.decide_confirmed([prediction(SIGN_TURN_LEFT, x=160, width=180, height=180)]),
-            self.decide_confirmed([prediction(SIGN_SPEED_90, x=320, width=150, height=150)]),
         ]
         for decision in decisions:
             self.assertGreater(decision.raw_throttle, 0.0)
@@ -187,6 +189,44 @@ class AutonomousDriverTest(unittest.TestCase):
         decision = self.decide([prediction(SIGN_STOP, x=320, width=180, height=180)])
         self.assertEqual(decision.state, STATE_STOP_HOLD)
         self.assertEqual(decision.action, "stop")
+
+    def test_safety_signs_hold_five_seconds_then_continue(self):
+        self.assertEqual(self.config.stop_hold_sec, 5.0)
+        self.assertEqual(self.config.stop_ignore_sec, 5.0)
+        for label in (SIGN_STOP, SIGN_NO_ENTRY, SIGN_CONES, SIGN_BARRIER):
+            with self.subTest(label=label):
+                controller = AutonomousController(self.config)
+                preds = [prediction(label, x=320, width=180, height=180)]
+
+                stopped = controller.decide(
+                    preds,
+                    frame_shape=FRAME_SHAPE,
+                    now=NOW,
+                    frame_time=NOW - 0.05,
+                    predictions_time=NOW - 0.05,
+                    prediction_seq=1,
+                )
+                held = controller.decide(
+                    preds,
+                    frame_shape=FRAME_SHAPE,
+                    now=NOW + self.config.stop_hold_sec - 0.01,
+                    frame_time=NOW + self.config.stop_hold_sec - 0.06,
+                    predictions_time=NOW + self.config.stop_hold_sec - 0.06,
+                    prediction_seq=2,
+                )
+                ignored = controller.decide(
+                    preds,
+                    frame_shape=FRAME_SHAPE,
+                    now=NOW + self.config.stop_hold_sec + 0.10,
+                    frame_time=NOW + self.config.stop_hold_sec + 0.05,
+                    predictions_time=NOW + self.config.stop_hold_sec + 0.05,
+                    prediction_seq=3,
+                )
+
+                self.assertEqual(stopped.action, "stop")
+                self.assertEqual(held.action, "stop-hold")
+                self.assertEqual(ignored.action, "continue")
+                self.assertGreater(ignored.throttle, self.config.neutral_throttle)
 
     def test_turn_starts_on_first_detection_for_faster_decision(self):
         decision = self.decide([prediction(SIGN_TURN_LEFT, x=160, width=180, height=180)])

@@ -13,7 +13,7 @@ TP2 runs as a four-machine lab, but the current critical path is script-based an
 
 1. Car attaches to LTE and gets UE IP from EPC. The previous fixed target was `172.16.0.2`; the live EPC HSS was observed on `2026-04-27` with dynamic allocation and the active session at `172.16.0.4`.
 2. Car sends UDP payloads (image/battery/runtime/LiDAR when connected, and BMI160 IMU telemetry when available) to EPC control server.
-3. EPC script computes steering/throttle in either manual web mode or autonomous mode. In autonomous mode, traffic-sign decisions remain Roboflow-driven, `lane_detector.py` adds a bounded OpenCV lane correction from the blue/green tape lines when the car is moving forward, BMI160 telemetry can close a bounded PID speed-control loop over throttle, and `lidar_processor.py` can stop or slow the car from fresh frontal LiDAR obstacles.
+3. EPC script computes steering/throttle in either manual web mode or autonomous mode. In autonomous mode, traffic-sign decisions remain Roboflow-driven: `VELOCIDAD-MAX-30` caps autonomous throttle at `0.50`, `VELOCIDAD-MAX-90` raises it to `0.70`, and safety classes (`STOP`, `PROHIBIDO`, `CONOS`, `VALLA`) hold neutral for 5 s before being ignored briefly so the car can continue. `lane_detector.py` adds a bounded OpenCV lane correction from the blue/green tape lines when the car is moving forward, BMI160 telemetry can close a bounded PID speed-control loop over throttle, and `lidar_processor.py` can stop or slow the car from fresh frontal LiDAR obstacles.
 4. EPC sends UDP control packet back to car.
 
 This path works without introducing a new backend API layer.

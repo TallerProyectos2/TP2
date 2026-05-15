@@ -69,6 +69,7 @@ class AutonomousConfig:
     ambiguous_score_ratio: float = 0.82
     stop_hold_sec: float = 5.00
     stop_ignore_sec: float = 5.00
+    speed_override_sec: float = 3.00
     turn_hold_sec: float = 1.20
     turn_pulse_enabled: bool = True
     turn_degrees: int = 90
@@ -308,6 +309,9 @@ class AutonomousController:
         self.maneuver_until = 0.0
         self.cooldown_until = 0.0
         self.track_cooldowns: dict[int, float] = {}
+        self.speed_override_until = 0.0
+        self.speed_override_throttle: float | None = None
+        self.speed_handled_track_ids: set[int] = set()
         self.speed_cap = config.cruise_throttle
 
     def update_config(self, config: AutonomousConfig, *, reset_filter: bool = False) -> None:
@@ -361,10 +365,13 @@ class AutonomousController:
         expired = [track_id for track_id, until in self.track_cooldowns.items() if until <= now]
         for track_id in expired:
             self.track_cooldowns.pop(track_id, None)
+        self.speed_handled_track_ids.intersection_update(self.tracker.tracks.keys())
 
         observations: list[SignObservation] = []
         for observation in self.last_observations:
             if observation.label in SAFETY_SIGNS and now < self.stop_ignore_until:
+                continue
+            if observation.label in SPEED_SIGNS and observation.track_id in self.speed_handled_track_ids:
                 continue
             if observation.track_id in self.track_cooldowns and observation.label not in SAFETY_SIGNS:
                 continue
@@ -392,6 +399,7 @@ class AutonomousController:
             )
 
         if self.state in {STATE_TURN_LEFT, STATE_TURN_RIGHT} and now < self.maneuver_until:
+            forward_throttle = self._current_forward_throttle(now)
             steering = (
                 self.config.left_steering
                 if self.state == STATE_TURN_LEFT
@@ -401,7 +409,7 @@ class AutonomousController:
             return self._decision(
                 now,
                 steering=steering,
-                throttle=min(self.config.turn_throttle, self.speed_cap),
+                throttle=min(self.config.turn_throttle, forward_throttle),
                 action=self.state,
                 state=self.state,
                 reason="maneuver-hold",
@@ -411,10 +419,11 @@ class AutonomousController:
             )
 
         if self.cooldown_until > now:
+            forward_throttle = self._current_forward_throttle(now)
             return self._decision(
                 now,
                 steering=self.config.neutral_steering,
-                throttle=min(self.config.slow_throttle, self.speed_cap),
+                throttle=min(self.config.slow_throttle, forward_throttle),
                 action="cooldown",
                 state=STATE_COOLDOWN,
                 reason="post-maneuver-cooldown",
@@ -423,10 +432,11 @@ class AutonomousController:
             )
 
         if not observations:
+            forward_throttle = self._current_forward_throttle(now)
             return self._decision(
                 now,
                 steering=self.config.neutral_steering,
-                throttle=self.speed_cap,
+                throttle=forward_throttle,
                 action="continue",
                 state=STATE_CRUISE,
                 reason="no-relevant-sign",
@@ -450,10 +460,11 @@ class AutonomousController:
 
         target = observations[0]
         if not self._is_confirmed(target):
+            forward_throttle = self._current_forward_throttle(now)
             return self._decision(
                 now,
                 steering=self._steer_towards_zone(target, strength=0.08),
-                throttle=min(self.config.crawl_throttle, self.speed_cap),
+                throttle=min(self.config.crawl_throttle, forward_throttle),
                 action="confirming",
                 state=STATE_CONFIRMING,
                 reason=f"track-{target.track_id}-needs-persistence",
@@ -486,36 +497,40 @@ class AutonomousController:
             return self._turn_decision(target, observations, now, left=False)
 
         if target.label == SIGN_SPEED_30:
-            self.speed_cap = self.config.slow_throttle
+            forward_throttle = self._start_speed_override(self.config.slow_throttle, now)
+            if target.track_id is not None:
+                self.speed_handled_track_ids.add(target.track_id)
             return self._decision(
                 now,
                 steering=self._steer_towards_zone(target, strength=0.05),
-                throttle=self.speed_cap,
+                throttle=forward_throttle,
                 action="speed-30",
                 state=STATE_CRUISE,
-                reason=f"{target.label}:{target.distance}-{target.zone}",
+                reason=f"{target.label}:{target.distance}-{target.zone}:override-{self.config.speed_override_sec:.1f}s",
                 target=target,
                 candidates=tuple(observations),
             )
 
         if target.label == SIGN_SPEED_90:
-            self.speed_cap = self.config.fast_throttle
+            forward_throttle = self._start_speed_override(self.config.fast_throttle, now)
+            if target.track_id is not None:
+                self.speed_handled_track_ids.add(target.track_id)
             return self._decision(
                 now,
                 steering=self._steer_towards_zone(target, strength=0.03),
-                throttle=self.speed_cap,
+                throttle=forward_throttle,
                 action="speed-90",
                 state=STATE_CRUISE,
-                reason=f"{target.label}:{target.distance}-{target.zone}",
+                reason=f"{target.label}:{target.distance}-{target.zone}:override-{self.config.speed_override_sec:.1f}s",
                 target=target,
                 candidates=tuple(observations),
             )
 
-        self.speed_cap = max(self.speed_cap, self.config.cruise_throttle)
+        forward_throttle = self._current_forward_throttle(now)
         return self._decision(
             now,
             steering=self._steer_towards_zone(target, strength=0.05),
-            throttle=min(self.config.cruise_throttle, self.speed_cap),
+            throttle=forward_throttle,
             action="continue",
             state=STATE_CRUISE,
             reason=f"{target.label}:{target.distance}-{target.zone}",
@@ -531,12 +546,13 @@ class AutonomousController:
         *,
         left: bool,
     ) -> AutonomousDecision:
+        forward_throttle = self._current_forward_throttle(now)
         steering_target = self.config.left_steering if left else self.config.right_steering
         if not self.config.turn_pulse_enabled:
             return self._decision(
                 now,
                 steering=steering_target,
-                throttle=min(self.config.turn_throttle, self.speed_cap),
+                throttle=min(self.config.turn_throttle, forward_throttle),
                 action="turn-left" if left else "turn-right",
                 state=STATE_APPROACH,
                 reason=f"{target.label}:{target.distance}-{target.zone}:pulse-disabled",
@@ -553,7 +569,7 @@ class AutonomousController:
         return self._decision(
             now,
             steering=steering_target,
-            throttle=min(self.config.turn_throttle, self.speed_cap),
+            throttle=min(self.config.turn_throttle, forward_throttle),
             action="turn-left" if left else "turn-right",
             state=self.state,
             reason=f"{target.label}:{target.distance}-{target.zone}:turn-{self.config.turn_degrees}",
@@ -605,6 +621,10 @@ class AutonomousController:
         self.stop_until = 0.0
         self.maneuver_until = 0.0
         self.cooldown_until = 0.0
+        self.speed_override_until = 0.0
+        self.speed_override_throttle = None
+        self.speed_handled_track_ids.clear()
+        self.speed_cap = self.config.cruise_throttle
         self.filter.reset(now)
         return AutonomousDecision(
             active=False,
@@ -663,6 +683,21 @@ class AutonomousController:
         if observation.zone == "right":
             return blend(self.config.neutral_steering, self.config.right_steering, strength)
         return self.config.neutral_steering
+
+    def _start_speed_override(self, throttle: float, now: float) -> float:
+        self.speed_override_throttle = throttle
+        self.speed_override_until = now + max(0.0, self.config.speed_override_sec)
+        self.speed_cap = throttle
+        return throttle
+
+    def _current_forward_throttle(self, now: float) -> float:
+        if self.speed_override_throttle is not None and now < self.speed_override_until:
+            self.speed_cap = self.speed_override_throttle
+            return self.speed_override_throttle
+        self.speed_override_throttle = None
+        self.speed_override_until = 0.0
+        self.speed_cap = self.config.cruise_throttle
+        return self.config.cruise_throttle
 
 
 def decide_autonomous_control(

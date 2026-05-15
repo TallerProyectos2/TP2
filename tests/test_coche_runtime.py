@@ -170,9 +170,9 @@ class RuntimeStateModeTest(unittest.TestCase):
 
         self.assertEqual(config["cruise_throttle"], 0.42)
         self.assertEqual(config["crawl_throttle"], 0.42)
-        self.assertEqual(config["slow_throttle"], 0.42)
         self.assertEqual(config["turn_throttle"], 0.42)
-        self.assertEqual(config["fast_throttle"], 0.42)
+        self.assertEqual(config["slow_throttle"], 0.50)
+        self.assertEqual(config["fast_throttle"], 0.70)
 
     def test_rejects_invalid_live_cruise_speed(self):
         state = RuntimeState()
@@ -223,6 +223,7 @@ class RuntimeStateModeTest(unittest.TestCase):
                         "steering_trim": -0.31,
                         "cruise_throttle": 0.44,
                         "stop_ignore_sec": 1.7,
+                        "speed_override_sec": 2.5,
                         "turn_pulse_enabled": False,
                         "turn_compensation_enabled": True,
                         "turn_compensation_interval_sec": 0.5,
@@ -241,6 +242,7 @@ class RuntimeStateModeTest(unittest.TestCase):
             self.assertEqual(settings["values"]["steering_trim"], -0.31)
             self.assertEqual(settings["values"]["cruise_throttle"], 0.44)
             self.assertEqual(settings["values"]["stop_ignore_sec"], 1.7)
+            self.assertEqual(settings["values"]["speed_override_sec"], 2.5)
             self.assertFalse(settings["values"]["turn_pulse_enabled"])
             self.assertTrue(settings["values"]["turn_compensation_enabled"])
             self.assertEqual(settings["values"]["turn_compensation_interval_sec"], 0.5)

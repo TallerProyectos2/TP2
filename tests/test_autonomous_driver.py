@@ -100,6 +100,42 @@ class AutonomousDriverTest(unittest.TestCase):
         self.assertEqual(slow.throttle, 0.50)
         self.assertEqual(fast.throttle, 0.70)
 
+    def test_speed_signs_override_for_three_seconds_then_return_to_cruise(self):
+        self.assertEqual(self.config.speed_override_sec, 3.0)
+        controller = AutonomousController(self.config)
+
+        fast = controller.decide(
+            [prediction(SIGN_SPEED_90, x=320, width=150, height=150)],
+            frame_shape=FRAME_SHAPE,
+            now=NOW,
+            frame_time=NOW - 0.05,
+            predictions_time=NOW - 0.05,
+            prediction_seq=1,
+        )
+        held = controller.decide(
+            [prediction(SIGN_SPEED_90, x=320, width=150, height=150)],
+            frame_shape=FRAME_SHAPE,
+            now=NOW + self.config.speed_override_sec - 0.1,
+            frame_time=NOW + self.config.speed_override_sec - 0.15,
+            predictions_time=NOW + self.config.speed_override_sec - 0.15,
+            prediction_seq=2,
+        )
+        restored = controller.decide(
+            [prediction(SIGN_SPEED_90, x=320, width=150, height=150)],
+            frame_shape=FRAME_SHAPE,
+            now=NOW + self.config.speed_override_sec + 0.1,
+            frame_time=NOW + self.config.speed_override_sec + 0.05,
+            predictions_time=NOW + self.config.speed_override_sec + 0.05,
+            prediction_seq=3,
+        )
+
+        self.assertEqual(fast.action, "speed-90")
+        self.assertEqual(fast.raw_throttle, self.config.fast_throttle)
+        self.assertEqual(held.action, "continue")
+        self.assertEqual(held.raw_throttle, self.config.fast_throttle)
+        self.assertEqual(restored.action, "continue")
+        self.assertEqual(restored.raw_throttle, self.config.cruise_throttle)
+
     def test_far_stop_stops_immediately(self):
         decision = self.decide([prediction(SIGN_STOP, x=320, width=50, height=50)])
         self.assertEqual(decision.action, "stop")

@@ -165,6 +165,7 @@ AUTONOMOUS_CONFIG = AutonomousConfig(
     ambiguous_score_ratio=env_float("TP2_AUTONOMOUS_AMBIGUOUS_SCORE_RATIO", 0.82),
     stop_hold_sec=env_float("TP2_AUTONOMOUS_STOP_HOLD_SEC", 5.0),
     stop_ignore_sec=env_float("TP2_AUTONOMOUS_STOP_IGNORE_SEC", 5.0),
+    speed_override_sec=env_float("TP2_AUTONOMOUS_SPEED_OVERRIDE_SEC", 3.0),
     turn_hold_sec=env_float("TP2_AUTONOMOUS_TURN_HOLD_SEC", 1.20),
     turn_pulse_enabled=env_bool("TP2_AUTONOMOUS_TURN_PULSE_ENABLED", True),
     turn_degrees=env_int("TP2_AUTONOMOUS_TURN_DEGREES", 90),
@@ -377,6 +378,7 @@ RUNTIME_SETTING_RANGES: dict[str, tuple[float, float]] = {
     "right_steering": (-1.0, 1.0),
     "stop_hold_sec": (0.0, 5.0),
     "stop_ignore_sec": (0.0, 5.0),
+    "speed_override_sec": (0.0, 10.0),
     "turn_hold_sec": (0.0, 5.0),
     "cooldown_sec": (0.0, 5.0),
     "min_area_ratio": (0.0001, 0.1),
@@ -430,6 +432,7 @@ AUTONOMOUS_RUNTIME_FIELDS = {
     "right_steering",
     "stop_hold_sec",
     "stop_ignore_sec",
+    "speed_override_sec",
     "turn_hold_sec",
     "cooldown_sec",
     "min_area_ratio",
@@ -509,6 +512,7 @@ def runtime_setting_defaults() -> dict[str, Any]:
         "right_steering": AUTONOMOUS_CONFIG.right_steering,
         "stop_hold_sec": AUTONOMOUS_CONFIG.stop_hold_sec,
         "stop_ignore_sec": AUTONOMOUS_CONFIG.stop_ignore_sec,
+        "speed_override_sec": AUTONOMOUS_CONFIG.speed_override_sec,
         "turn_hold_sec": AUTONOMOUS_CONFIG.turn_hold_sec,
         "turn_pulse_enabled": AUTONOMOUS_CONFIG.turn_pulse_enabled,
         "cooldown_sec": AUTONOMOUS_CONFIG.cooldown_sec,
@@ -1492,6 +1496,7 @@ class RuntimeState:
             "right_steering": round(self.autonomous_config.right_steering, 4),
             "stop_hold_sec": round(self.autonomous_config.stop_hold_sec, 4),
             "stop_ignore_sec": round(self.autonomous_config.stop_ignore_sec, 4),
+            "speed_override_sec": round(self.autonomous_config.speed_override_sec, 4),
             "turn_hold_sec": round(self.autonomous_config.turn_hold_sec, 4),
             "turn_pulse_enabled": bool(self.autonomous_config.turn_pulse_enabled),
             "cooldown_sec": round(self.autonomous_config.cooldown_sec, 4),
@@ -2474,13 +2479,10 @@ class RuntimeState:
             self.autonomous_config = replace(
                 self.autonomous_config,
                 crawl_throttle=speed,
-                slow_throttle=speed,
                 turn_throttle=speed,
                 cruise_throttle=speed,
-                fast_throttle=speed,
             )
             self.autonomous_controller.update_config(self.autonomous_config)
-            self.autonomous_controller.speed_cap = speed
             if self.drive_mode == "autonomous":
                 self._apply_autonomous_control_locked()
             else:
@@ -2587,6 +2589,7 @@ class RuntimeState:
             "safety_confirm_frames": config.safety_confirm_frames,
             "stop_hold_sec": config.stop_hold_sec,
             "stop_ignore_sec": config.stop_ignore_sec,
+            "speed_override_sec": config.speed_override_sec,
             "turn_hold_sec": config.turn_hold_sec,
             "turn_pulse_enabled": config.turn_pulse_enabled,
             "turn_degrees": config.turn_degrees,
@@ -4849,6 +4852,10 @@ LIVE_VIEW_HTML = r"""<!doctype html>
                   <label class="compact-field" for="tune-stop-ignore">
                     <span>Ign. stop</span>
                     <input type="number" id="tune-stop-ignore" data-setting="stop_ignore_sec" min="0" max="5" step="0.05" inputmode="decimal">
+                  </label>
+                  <label class="compact-field" for="tune-speed-override">
+                    <span>Vel s</span>
+                    <input type="number" id="tune-speed-override" data-setting="speed_override_sec" min="0" max="10" step="0.05" inputmode="decimal">
                   </label>
                   <label class="compact-field" for="tune-turn-hold">
                     <span>Giro s</span>

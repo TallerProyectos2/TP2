@@ -67,7 +67,7 @@ These apply to every piece of memoria text you produce. They are strict.
 
 - Language: Spanish from Spain (Castilian). Natural, fluent, academic but readable. Do not use Latin American vocabulary or constructions.
 - Forbidden punctuation: never use an em dash (—) and never use a semicolon (;). These are not natural in Castilian academic prose. Rewrite the sentence with commas, parentheses, periods or connectors instead.
-- Plain text by default. When the user asks for text, deliver plain text without bold, italics, underline, headings, bullet points or any other markup, unless the user explicitly asks for a list or a heading.
+- Plain text by default. When the user asks for text, deliver plain text without bold, italics, underline, headings, bullet points or any other markup, unless the user explicitly asks for a list or a heading. Do not use ` characters either.
 - Math and formulas: when the user asks for a formula, return a single-line LaTeX expression ready to paste directly into Microsoft Word using its equation field. One line per formula, no display math wrappers, no `$$` fences, no surrounding code block unless requested. Example shape: `P_{RX} = P_{TX} + G_{TX} + G_{RX} - L_{path} - L_{misc}`.
 - Tables: only if the user asks for a table, deliver it as a clean Markdown table or as Word-pasteable rows, never as ASCII art.
 - Length: match the granularity the user asked for. A request for "un párrafo" gets one paragraph, not a section. A request for "la sección 5" gets the full section.

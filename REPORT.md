@@ -73,7 +73,7 @@ These apply to every piece of memoria text you produce. They are strict.
 - Length: match the granularity the user asked for. A request for "un párrafo" gets one paragraph, not a section. A request for "la sección 5" gets the full section.
 - Tone: technical, precise, third person or impersonal ("se optó por", "se desarrolló", "se ha implementado", "el sistema utiliza", "implementamos", "realizamos"), never first person plural unless the user asks for it.
 - Numbers and units: SI units, decimal dot ("2.4 GHz"), space before unit. Frequencies, bitrates, ranges, dates and money must come from the repo or from official sources cited in references, never invented.
-- Citations: when a claim depends on a regulation, a datasheet or a third-party source, mark it with a placeholder like `[ref: BOE Ley 11/2022]` so the user can fold it into the references section. Do not fabricate citation numbers.
+- Citations: when a claim depends on a regulation, a datasheet or a third-party source, mark it with a placeholder like `[ref: BOE Ley 11/2022]` so the user can fold it into the references section. Do not fabricate citation numbers. Do not cite markdown or code files in this repo, just standard documents and online sources.
 - Honesty: if the repo does not have evidence for a claim, say so to the user and propose either a TODO marker in the draft or a question to resolve before writing. Never invent results, never claim accuracy figures, latencies or coverage numbers that are not in the repo.
 
 ## 7. Word document handling (only when explicitly requested)

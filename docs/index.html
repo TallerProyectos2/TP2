@@ -3,773 +3,506 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>TP2 — Vehículo conectado sobre 4G LTE privada</title>
-<meta name="description" content="Demostrador de vehículo conectado con detección de señales de tráfico por IA sobre una red 4G LTE privada construida con SDR. Taller de Proyectos II, Máster en Ingeniería de Telecomunicación, Universidad de Valladolid." />
-<style>
-  :root {
-    --bg: #0b1015;
-    --bg-elev: #11181f;
-    --bg-card: #151d26;
-    --border: #1f2a36;
-    --border-strong: #2a3a4a;
-    --text: #e8eef5;
-    --text-dim: #94a3b8;
-    --text-muted: #64748b;
-    --accent: #22d3ee;
-    --accent-soft: rgba(34, 211, 238, 0.12);
-    --accent-2: #34d399;
-    --warn: #fbbf24;
-    --danger: #f87171;
-    --radius: 14px;
-    --radius-sm: 8px;
-    --max: 1180px;
-    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  }
-
-  *, *::before, *::after { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--sans);
-    font-size: 16px;
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
-  }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  code, .mono { font-family: var(--mono); }
-  h1, h2, h3, h4 { line-height: 1.2; margin: 0 0 0.5rem; font-weight: 600; letter-spacing: -0.01em; }
-  h1 { font-size: clamp(2rem, 4.5vw, 3.4rem); letter-spacing: -0.02em; }
-  h2 { font-size: clamp(1.5rem, 2.5vw, 2rem); }
-  h3 { font-size: 1.15rem; }
-  p { margin: 0 0 1rem; color: var(--text-dim); }
-  ul { margin: 0 0 1rem; padding-left: 1.2rem; color: var(--text-dim); }
-  ul li { margin-bottom: 0.3rem; }
-
-  /* Layout */
-  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 1.5rem; }
-  section { padding: 5rem 0; border-bottom: 1px solid var(--border); }
-  section:last-of-type { border-bottom: 0; }
-  .section-head { margin-bottom: 2.5rem; max-width: 720px; }
-  .section-head .eyebrow {
-    display: inline-block; font-family: var(--mono); font-size: 0.78rem;
-    color: var(--accent); text-transform: uppercase; letter-spacing: 0.15em;
-    margin-bottom: 0.75rem;
-  }
-  .section-head p { font-size: 1.05rem; color: var(--text-dim); }
-
-  /* Navbar */
-  nav.top {
-    position: sticky; top: 0; z-index: 50;
-    backdrop-filter: blur(12px) saturate(180%);
-    -webkit-backdrop-filter: blur(12px) saturate(180%);
-    background: rgba(11, 16, 21, 0.7);
-    border-bottom: 1px solid var(--border);
-  }
-  nav.top .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
-  nav.top .brand { font-family: var(--mono); font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 0.55rem; }
-  nav.top .brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-2); box-shadow: 0 0 12px var(--accent-2); }
-  nav.top ul { display: flex; gap: 1.5rem; margin: 0; padding: 0; list-style: none; }
-  nav.top a { color: var(--text-dim); font-size: 0.92rem; }
-  nav.top a:hover { color: var(--text); text-decoration: none; }
-  @media (max-width: 720px) { nav.top ul { display: none; } }
-
-  /* Hero */
-  .hero {
-    position: relative; overflow: hidden;
-    padding: 6rem 0 5rem;
-    border-bottom: 1px solid var(--border);
-    background:
-      radial-gradient(ellipse 60% 50% at 80% 0%, rgba(34, 211, 238, 0.18) 0%, transparent 60%),
-      radial-gradient(ellipse 50% 40% at 20% 100%, rgba(52, 211, 153, 0.12) 0%, transparent 60%);
-  }
-  .hero .badge {
-    display: inline-flex; align-items: center; gap: 0.5rem;
-    font-family: var(--mono); font-size: 0.78rem; color: var(--accent);
-    background: var(--accent-soft); border: 1px solid rgba(34, 211, 238, 0.3);
-    padding: 0.4rem 0.8rem; border-radius: 999px; margin-bottom: 1.5rem;
-  }
-  .hero h1 { background: linear-gradient(180deg, #ffffff 0%, #cbd5e1 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .hero .lede { font-size: 1.2rem; color: var(--text-dim); max-width: 700px; margin: 1.2rem 0 2rem; }
-  .hero .meta { display: flex; flex-wrap: wrap; gap: 1.5rem 2.5rem; margin-top: 2.5rem; }
-  .hero .meta div { font-family: var(--mono); font-size: 0.85rem; }
-  .hero .meta div span { display: block; color: var(--text-muted); text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.12em; margin-bottom: 0.3rem; }
-  .hero .meta div strong { color: var(--text); font-weight: 500; }
-  .cta { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.2rem; border-radius: var(--radius-sm); background: var(--accent); color: #0b1015; font-weight: 600; }
-  .cta:hover { text-decoration: none; background: #67e8f9; }
-  .cta.ghost { background: transparent; color: var(--text); border: 1px solid var(--border-strong); }
-  .cta.ghost:hover { background: var(--bg-elev); border-color: var(--accent); }
-  .hero-cta { display: flex; flex-wrap: wrap; gap: 0.75rem; }
-
-  /* Cards */
-  .grid { display: grid; gap: 1.25rem; }
-  .grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
-  .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
-  .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
-  @media (max-width: 900px) {
-    .grid.cols-2, .grid.cols-3, .grid.cols-4 { grid-template-columns: 1fr; }
-  }
-  .card {
-    background: var(--bg-card); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 1.5rem; transition: border-color 160ms, transform 160ms;
-  }
-  .card:hover { border-color: var(--border-strong); transform: translateY(-2px); }
-  .card h3 { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.75rem; }
-  .card h3 .tag {
-    font-family: var(--mono); font-size: 0.68rem; padding: 0.2rem 0.5rem;
-    background: var(--accent-soft); color: var(--accent);
-    border-radius: 4px; letter-spacing: 0.08em; text-transform: uppercase;
-  }
-  .card .owner { font-family: var(--mono); font-size: 0.78rem; color: var(--text-muted); margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
-  .card .owner span { color: var(--accent-2); }
-
-  /* Machine cards */
-  .machine-icon {
-    display: inline-flex; width: 36px; height: 36px;
-    align-items: center; justify-content: center;
-    border-radius: var(--radius-sm); background: var(--accent-soft);
-    color: var(--accent); margin-bottom: 1rem; font-family: var(--mono); font-weight: 600;
-  }
-
-  /* Architecture diagram */
-  .arch {
-    background: var(--bg-elev); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 2rem;
-    overflow-x: auto;
-  }
-  .arch svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
-
-  /* Modular planning scheme */
-  .modular-scheme {
-    background: var(--bg-elev); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 2rem;
-    margin-bottom: 3rem;
-    overflow-x: auto;
-  }
-  .modular-scheme svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
-
-  /* Phase timeline */
-  .timeline { position: relative; padding-left: 2rem; }
-  .timeline::before {
-    content: ''; position: absolute; left: 8px; top: 0; bottom: 0;
-    width: 2px; background: var(--border);
-  }
-  .phase { position: relative; margin-bottom: 1.5rem; }
-  .phase::before {
-    content: ''; position: absolute; left: -1.65rem; top: 7px;
-    width: 14px; height: 14px; border-radius: 50%;
-    background: var(--bg); border: 2px solid var(--text-muted);
-  }
-  .phase.done::before { background: var(--accent-2); border-color: var(--accent-2); }
-  .phase.doing::before { background: var(--warn); border-color: var(--warn); box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.2); }
-  .phase.todo::before { background: var(--bg); border-color: var(--text-muted); }
-  .phase h4 { display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 0.2rem; }
-  .phase h4 .num { font-family: var(--mono); color: var(--text-muted); font-size: 0.85rem; }
-  .phase h4 .pill {
-    margin-left: auto; font-family: var(--mono); font-size: 0.7rem; padding: 0.15rem 0.5rem;
-    border-radius: 4px; text-transform: uppercase; letter-spacing: 0.08em;
-  }
-  .phase.done h4 .pill { background: rgba(52, 211, 153, 0.15); color: var(--accent-2); }
-  .phase.doing h4 .pill { background: rgba(251, 191, 36, 0.15); color: var(--warn); }
-  .phase.todo h4 .pill { background: rgba(100, 116, 139, 0.2); color: var(--text-muted); }
-  .phase p { font-size: 0.9rem; margin: 0; }
-
-  /* Track tabs */
-  .tracks { display: grid; grid-template-columns: 220px 1fr; gap: 2rem; align-items: start; }
-  @media (max-width: 800px) { .tracks { grid-template-columns: 1fr; } }
-  .track-nav { position: sticky; top: 80px; }
-  .track-nav button {
-    display: block; width: 100%; text-align: left;
-    background: transparent; border: 0; color: var(--text-dim);
-    padding: 0.65rem 1rem; border-radius: var(--radius-sm);
-    cursor: pointer; font-family: inherit; font-size: 0.95rem;
-    transition: background 120ms, color 120ms;
-    border-left: 2px solid transparent;
-  }
-  .track-nav button:hover { color: var(--text); }
-  .track-nav button.active {
-    background: var(--accent-soft); color: var(--accent);
-    border-left-color: var(--accent);
-  }
-  .track-panel { display: none; }
-  .track-panel.active { display: block; }
-  .track-panel h3 { font-size: 1.4rem; margin-bottom: 0.5rem; }
-  .track-panel .owner-line {
-    font-family: var(--mono); color: var(--text-muted); font-size: 0.85rem;
-    margin-bottom: 1.5rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border);
-  }
-  .track-panel .owner-line span { color: var(--accent-2); }
-
-  /* Stats */
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-top: 2rem; }
-  @media (max-width: 700px) { .stats { grid-template-columns: repeat(2, 1fr); } }
-  .stat { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem; }
-  .stat .value { font-family: var(--mono); font-size: 1.8rem; color: var(--accent); font-weight: 600; }
-  .stat .label { font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem; }
-
-  /* Team */
-  .person { display: flex; align-items: center; gap: 1rem; }
-  .person .avatar {
-    width: 48px; height: 48px; border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    display: flex; align-items: center; justify-content: center;
-    color: #0b1015; font-weight: 700; font-family: var(--mono); font-size: 1rem;
-  }
-  .person .info strong { display: block; color: var(--text); }
-  .person .info span { font-size: 0.85rem; color: var(--text-muted); }
-
-  /* Footer */
-  footer {
-    border-top: 1px solid var(--border);
-    padding: 3rem 0 2rem;
-    color: var(--text-muted);
-    font-size: 0.9rem;
-  }
-  footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 1.5rem; }
-  footer a { color: var(--text-dim); }
-
-  /* Scrollbar (webkit) */
-  ::-webkit-scrollbar { width: 10px; height: 10px; }
-  ::-webkit-scrollbar-track { background: var(--bg); }
-  ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; }
-  ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
-</style>
+<title>TP2 · Demostrador de vehículo conectado sobre LTE privada</title>
+<meta name="description" content="Laboratorio de cuatro máquinas físicas que sostiene un vehículo conectado sobre una red 4G LTE privada con SDR, control centralizado en el EPC e inferencia YOLO26 ofloadada a Jetson Orin Nano. Taller de Proyectos II, Máster en Ingeniería de Telecomunicación, Universidad de Valladolid." />
+<meta name="theme-color" content="#14181c" />
+<link rel="stylesheet" href="./site.css" />
 </head>
 <body>
 
-<nav class="top">
+<a class="visually-hidden" href="#main" style="position:absolute;left:-9999px;">Saltar al contenido</a>
+
+<nav class="bar" aria-label="Principal">
   <div class="wrap">
-    <div class="brand"><span class="dot"></span>TP2 / Grupo 4</div>
-    <ul>
-      <li><a href="#arquitectura">Arquitectura</a></li>
-      <li><a href="#maquinas">Máquinas</a></li>
-      <li><a href="#planificacion">Planificación</a></li>
-      <li><a href="./dashboard.html">📊 Dashboard A-601</a></li>
-      <li><a href="./coverage.html">✅ Validación cobertura</a></li>
+    <a class="brand" href="./index.html">
+      <span class="mark" aria-hidden="true"></span>
+      TP2<span class="label">· Grupo 4 · 2025–2026</span>
+    </a>
+    <button class="menu-toggle" aria-expanded="false" aria-controls="nav-list" type="button">Menú</button>
+    <ul id="nav-list">
+      <li><a href="#sistema">Sistema</a></li>
+      <li><a href="#evidencia">Evidencia</a></li>
+      <li><a href="#servicios">Servicios</a></li>
       <li><a href="#equipo">Equipo</a></li>
+      <li><a href="./dashboard.html">Dashboard A-601</a></li>
+      <li><a href="./coverage.html">Cobertura</a></li>
+      <li><a href="./demo.html" aria-current="false">Demostración</a></li>
     </ul>
   </div>
 </nav>
 
-<header class="hero">
+<header class="hero" id="main">
   <div class="wrap">
-    <span class="badge">● Taller de Proyectos II · Curso 2025–2026</span>
-    <h1>Vehículo conectado sobre una red 4G LTE privada con detección de señales por IA</h1>
-    <p class="lede">Demostrador real construido sobre cuatro máquinas físicas: una estación base LTE basada en SDR bladeRF, un núcleo de paquetes EPC con srsRAN, un vehículo AWS DeepRacer como UE y una NVIDIA Jetson Orin Nano dedicada a inferencia. Toda la lógica de decisión vive en la red, no en el coche.</p>
-    <div class="hero-cta">
-      <a class="cta" href="#arquitectura">Ver arquitectura</a>
-      <a class="cta ghost" href="./dashboard.html">📊 Dashboard A-601</a>
-      <a class="cta ghost" href="./coverage.html">✅ Validación de cobertura</a>
-    </div>
-    <div class="meta">
-      <div><span>Asignatura</span><strong>Taller de Proyectos II</strong></div>
-      <div><span>Titulación</span><strong>Máster Ing. Telecomunicación</strong></div>
-      <div><span>Universidad</span><strong>Universidad de Valladolid</strong></div>
-      <div><span>Tramo despliegue</span><strong>A-601 · km 0–104</strong></div>
-      <div><span>Banda RF</span><strong>B7 · 2540–2670 MHz</strong></div>
+    <div class="hero-row">
+      <div>
+        <div class="ribbon">
+          <span class="pill"><span class="num">2025</span>—<span class="num">2026</span> · Curso</span>
+          <span class="pill">A-601 · <span class="num">km 0–104</span></span>
+          <span class="pill">Banda <span class="num">7</span> · FDD 10 MHz</span>
+          <span class="status"><span class="dot" aria-hidden="true"></span>Lab operativo</span>
+        </div>
+
+        <h1>
+          Demostrador real de <em>vehículo conectado</em><br/>
+          sobre una red 4G LTE privada construida con SDR.
+        </h1>
+
+        <p class="lede subtitle">
+          Cuatro máquinas físicas trabajando en concierto. Toda la lógica de decisión vive en
+          el núcleo de la red, no en el coche. La inferencia es un servicio aislado consumido por
+          el EPC. La radio queda acotada al eNodeB. El vehículo es un cliente delgado.
+        </p>
+
+        <div class="cta-row">
+          <a class="btn" href="./demo.html"><span>Ver la demostración</span><span class="arrow" aria-hidden="true">→</span></a>
+          <a class="btn ghost" href="#sistema">Arquitectura</a>
+          <a class="btn ghost" href="./dashboard.html">Tráfico A-601</a>
+          <a class="btn ghost" href="./coverage.html">Cobertura RF</a>
+        </div>
+      </div>
+
+      <aside aria-label="Ficha técnica">
+        <dl class="hero-meta">
+          <div class="row"><dt>Asignatura</dt><dd>Taller de Proyectos II</dd></div>
+          <div class="row"><dt>Titulación</dt><dd>Máster Ing. Telecomunicación</dd></div>
+          <div class="row"><dt>Centro</dt><dd>ETSIT · UVa</dd></div>
+          <div class="row"><dt>UL · DL</dt><dd>2540–2550 / 2660–2670 MHz</dd></div>
+          <div class="row"><dt>Cesión espectro</dt><dd>Vodafone S.A.U. (contrato académico)</dd></div>
+          <div class="row"><dt>Detector visual</dt><dd>YOLO26 X · TP2-G4-2026</dd></div>
+          <div class="row"><dt>Subred UE</dt><dd>172.16.0.0/24</dd></div>
+        </dl>
+      </aside>
     </div>
   </div>
 </header>
 
-<section id="resumen">
+<!-- ─────────────── BLOQUE 1 · SISTEMA ─────────────── -->
+<section class="block" id="sistema">
   <div class="wrap">
-    <div class="section-head">
-      <span class="eyebrow">Resumen</span>
-      <h2>Qué hace el sistema</h2>
-      <p>El coche captura vídeo de la carretera y telemetría, lo envía sobre LTE al núcleo de la red. Allí, un backend orquesta la inferencia contra un servicio dedicado en la Jetson, toma decisiones de control basadas en las señales detectadas y devuelve comandos al vehículo, todo bajo un presupuesto de latencia acotado.</p>
-    </div>
-
-    <div class="grid cols-3">
-      <div class="card">
-        <h3>📡 Red 4G LTE privada</h3>
-        <p>Estación base 4G operativa sobre bladeRF 2.0 xA9 en banda 7, con srsRAN. Núcleo EPC con MME, HSS y SPGW, encaminamiento del UE, NAT y DNS. Backhaul EPC–eNodeB validado y S1 estable.</p>
+    <div class="block-head">
+      <div>
+        <span class="eyebrow"><span class="ord">01.</span>Sistema</span>
+        <h2>Cuatro nodos, una sola decisión</h2>
       </div>
-      <div class="card">
-        <h3>🤖 Inferencia en la red</h3>
-        <p>Modelo de detección de señales de tráfico desplegado como servicio HTTP en la NVIDIA Jetson Orin Nano. El EPC orquesta el flujo extremo a extremo y centraliza la decisión, manteniendo al coche como cliente delgado.</p>
-      </div>
-      <div class="card">
-        <h3>🚗 Vehículo conectado</h3>
-        <p>AWS DeepRacer en miniatura actuando como equipo de usuario LTE. Captura cámara, sube frame al EPC, recibe comandos por MQTT y ejecuta el alfabeto STOP, SLOW, LEFT, RIGHT, STRAIGHT con watchdog de seguridad.</p>
-      </div>
+      <p class="lede">
+        El plano de control es unidireccional. El coche captura, ejecuta y obedece.
+        El EPC orquesta, decide y ordena. El eNodeB transporta radio. La Jetson resuelve
+        inferencia bajo contrato. No hay backend monolítico ni base de datos persistente
+        en el camino crítico, sólo scripts en el EPC que sostienen UDP con el coche y
+        HTTP con la Jetson.
+      </p>
     </div>
 
-    <div class="stats">
-      <div class="stat"><div class="value">4</div><div class="label">Nodos físicos</div></div>
-      <div class="stat"><div class="value">25</div><div class="label">Emplazamientos A-601</div></div>
-      <div class="stat"><div class="value">92,2%</div><div class="label">Cobertura útil RSRP ≥ −110 dBm</div></div>
-      <div class="stat"><div class="value">104 km</div><div class="label">Tramo cubierto</div></div>
-    </div>
-  </div>
-</section>
-
-<section id="arquitectura">
-  <div class="wrap">
-    <div class="section-head">
-      <span class="eyebrow">Arquitectura</span>
-      <h2>Cómo se conectan las piezas</h2>
-      <p>El flujo es unidireccional en cuanto a control: el coche solo ejecuta, la red decide. La radio queda acotada al eNodeB, el plano de datos sale por la SGi del EPC, y la inferencia es un servicio aislado consumido por el backend.</p>
-    </div>
-
-    <div class="arch">
-      <svg viewBox="0 0 920 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Diagrama de arquitectura del sistema TP2">
+    <div class="arch" aria-label="Diagrama de arquitectura del sistema TP2">
+      <svg viewBox="0 0 960 320" xmlns="http://www.w3.org/2000/svg" role="img">
         <defs>
-          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-            <path d="M0,0 L10,5 L0,10 z" fill="#22d3ee"/>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#14181c"/>
           </marker>
-          <marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-            <path d="M0,0 L10,5 L0,10 z" fill="#34d399"/>
+          <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#486b3a"/>
           </marker>
         </defs>
 
-        <!-- Boxes -->
-        <g font-family="ui-monospace, monospace" font-size="13" fill="#e8eef5">
+        <g font-family="IBM Plex Mono, monospace" font-size="11" fill="#14181c">
           <!-- Coche -->
-          <rect x="20" y="130" width="160" height="100" rx="10" fill="#151d26" stroke="#2a3a4a" stroke-width="1.5"/>
-          <text x="100" y="160" text-anchor="middle" font-size="22">🚗</text>
-          <text x="100" y="190" text-anchor="middle" font-weight="600">Coche (UE)</text>
-          <text x="100" y="210" text-anchor="middle" fill="#94a3b8" font-size="11">DeepRacer · agente</text>
+          <rect x="20" y="110" width="170" height="100" fill="#f4f3ee" stroke="#14181c" stroke-width="1.5"/>
+          <text x="105" y="138" text-anchor="middle" font-size="11" font-weight="600">COCHE · UE LTE</text>
+          <text x="105" y="158" text-anchor="middle" fill="#5d5e58">DeepRacer · agente</text>
+          <text x="105" y="178" text-anchor="middle" fill="#5d5e58">cámara · LiDAR · IMU</text>
+          <text x="105" y="198" text-anchor="middle" fill="#5d5e58" font-size="10">172.16.0.0/24</text>
 
           <!-- eNodeB -->
-          <rect x="240" y="130" width="160" height="100" rx="10" fill="#151d26" stroke="#2a3a4a" stroke-width="1.5"/>
-          <text x="320" y="160" text-anchor="middle" font-size="22">📡</text>
-          <text x="320" y="190" text-anchor="middle" font-weight="600">eNodeB</text>
-          <text x="320" y="210" text-anchor="middle" fill="#94a3b8" font-size="11">srsenb · bladeRF</text>
+          <rect x="240" y="110" width="170" height="100" fill="#f4f3ee" stroke="#14181c" stroke-width="1.5"/>
+          <text x="325" y="138" text-anchor="middle" font-size="11" font-weight="600">eNodeB</text>
+          <text x="325" y="158" text-anchor="middle" fill="#5d5e58">srsenb · bladeRF 2.0</text>
+          <text x="325" y="178" text-anchor="middle" fill="#5d5e58">radio only</text>
+          <text x="325" y="198" text-anchor="middle" fill="#5d5e58" font-size="10">10.10.10.2</text>
 
           <!-- EPC -->
-          <rect x="460" y="80" width="180" height="200" rx="10" fill="#151d26" stroke="#22d3ee" stroke-width="2"/>
-          <text x="550" y="110" text-anchor="middle" font-size="22">🧠</text>
-          <text x="550" y="138" text-anchor="middle" font-weight="600">EPC · Núcleo</text>
-          <line x1="475" y1="150" x2="625" y2="150" stroke="#1f2a36" stroke-width="1"/>
-          <text x="550" y="172" text-anchor="middle" fill="#94a3b8" font-size="11">srsepc + MME/HSS/SPGW</text>
-          <text x="550" y="192" text-anchor="middle" fill="#94a3b8" font-size="11">Backend · MQTT · DB</text>
-          <text x="550" y="212" text-anchor="middle" fill="#94a3b8" font-size="11">Lógica de decisión</text>
-          <text x="550" y="232" text-anchor="middle" fill="#94a3b8" font-size="11">NAT · DNS · Routing UE</text>
-          <text x="550" y="258" text-anchor="middle" fill="#22d3ee" font-size="10" font-weight="600">ORQUESTADOR</text>
+          <rect x="460" y="60" width="200" height="200" fill="#f4f3ee" stroke="#14181c" stroke-width="2"/>
+          <rect x="460" y="60" width="200" height="22" fill="#14181c"/>
+          <text x="560" y="76" text-anchor="middle" fill="#f4f3ee" font-weight="600">EPC · CORE / ORQUESTADOR</text>
+          <text x="560" y="100" text-anchor="middle" fill="#5d5e58" font-size="10">srsepc (MME+HSS+SPGW)</text>
+          <text x="560" y="118" text-anchor="middle" fill="#5d5e58" font-size="10">coche.py · 20001/UDP · 8088/TCP</text>
+          <text x="560" y="138" text-anchor="middle">decisión autónoma</text>
+          <text x="560" y="158" text-anchor="middle">lane assist · LiDAR safety</text>
+          <text x="560" y="178" text-anchor="middle">IMU speed PID</text>
+          <text x="560" y="198" text-anchor="middle" fill="#5d5e58" font-size="10">NAT · routing · DNS</text>
+          <text x="560" y="218" text-anchor="middle" fill="#5d5e58" font-size="10">grabación · replayer</text>
+          <text x="560" y="244" text-anchor="middle" fill="#486b3a" font-size="10" font-weight="600">CONTROL VIVE AQUÍ</text>
 
           <!-- Jetson -->
-          <rect x="720" y="130" width="180" height="100" rx="10" fill="#151d26" stroke="#2a3a4a" stroke-width="1.5"/>
-          <text x="810" y="160" text-anchor="middle" font-size="22">⚡</text>
-          <text x="810" y="190" text-anchor="middle" font-weight="600">Jetson Orin Nano</text>
-          <text x="810" y="210" text-anchor="middle" fill="#94a3b8" font-size="11">inference-service</text>
+          <rect x="710" y="110" width="220" height="100" fill="#f4f3ee" stroke="#486b3a" stroke-width="1.5"/>
+          <text x="820" y="138" text-anchor="middle" font-size="11" font-weight="600">JETSON ORIN NANO</text>
+          <text x="820" y="158" text-anchor="middle" fill="#5d5e58">inference-service</text>
+          <text x="820" y="178" text-anchor="middle" fill="#5d5e58">YOLO26 X · tp2-g4-2026/2</text>
+          <text x="820" y="198" text-anchor="middle" fill="#5d5e58" font-size="10">100.115.99.8:9001</text>
         </g>
 
-        <!-- Arrows: Coche -> eNodeB -> EPC (LTE) -->
-        <line x1="180" y1="170" x2="240" y2="170" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrow)"/>
-        <line x1="400" y1="170" x2="460" y2="170" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrow)"/>
-        <!-- EPC -> Jetson -->
-        <line x1="640" y1="170" x2="720" y2="170" stroke="#34d399" stroke-width="2" marker-end="url(#arrow2)"/>
-        <!-- Jetson -> EPC return -->
-        <line x1="720" y1="200" x2="640" y2="200" stroke="#34d399" stroke-width="2" stroke-dasharray="4,3" marker-end="url(#arrow2)"/>
-        <!-- EPC -> eNodeB -> Coche (return) -->
-        <line x1="460" y1="200" x2="400" y2="200" stroke="#22d3ee" stroke-width="2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
-        <line x1="240" y1="200" x2="180" y2="200" stroke="#22d3ee" stroke-width="2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+        <!-- arrows -->
+        <line x1="190" y1="150" x2="240" y2="150" stroke="#14181c" stroke-width="1.5" marker-end="url(#ar)"/>
+        <line x1="410" y1="150" x2="460" y2="150" stroke="#14181c" stroke-width="1.5" marker-end="url(#ar)"/>
+        <line x1="660" y1="150" x2="710" y2="150" stroke="#486b3a" stroke-width="1.5" marker-end="url(#ar2)"/>
+        <line x1="710" y1="180" x2="660" y2="180" stroke="#486b3a" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#ar2)"/>
+        <line x1="460" y1="180" x2="410" y2="180" stroke="#14181c" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#ar)"/>
+        <line x1="240" y1="180" x2="190" y2="180" stroke="#14181c" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#ar)"/>
 
-        <!-- Labels -->
-        <g font-family="ui-monospace, monospace" font-size="10" fill="#94a3b8">
-          <text x="210" y="160" text-anchor="middle">LTE</text>
-          <text x="430" y="160" text-anchor="middle">S1</text>
-          <text x="680" y="160" text-anchor="middle">HTTP</text>
-          <text x="680" y="215" text-anchor="middle">resultado</text>
-          <text x="430" y="215" text-anchor="middle">MQTT cmd</text>
-          <text x="210" y="215" text-anchor="middle">cmd</text>
-          <text x="100" y="260" text-anchor="middle" fill="#64748b" font-size="10">captura · ejecuta</text>
-          <text x="320" y="260" text-anchor="middle" fill="#64748b" font-size="10">radio only</text>
-          <text x="810" y="260" text-anchor="middle" fill="#64748b" font-size="10">inferencia</text>
-        </g>
-      </svg>
-    </div>
-  </div>
-</section>
-
-<section id="maquinas">
-  <div class="wrap">
-    <div class="section-head">
-      <span class="eyebrow">Las cuatro máquinas</span>
-      <h2>Una responsabilidad clara por nodo</h2>
-      <p>La planificación se ha rediseñado en torno al hardware físico del laboratorio. Cada máquina tiene un dueño técnico, su propio ciclo de fases y un criterio de salida explícito en cada hito.</p>
-    </div>
-
-    <div class="grid cols-4">
-      <div class="card">
-        <div class="machine-icon">EPC</div>
-        <h3>Ordenador 1 · CORE</h3>
-        <p>Núcleo de la red 4G y orquestador de toda la aplicación: srsepc, NAT, DNS, backend HTTP, broker MQTT, base de datos y lógica de decisión.</p>
-        <div class="owner">Responsable · <span>Alonso Sandoval</span></div>
-      </div>
-      <div class="card">
-        <div class="machine-icon">ENB</div>
-        <h3>Ordenador 2 · eNodeB</h3>
-        <p>Estación base LTE basada en SDR bladeRF 2.0 xA9. Acotado a transporte radio: S1, attach del UE y tráfico de aplicación. Nada de orquestación.</p>
-        <div class="owner">Responsable · <span>Luis Francisco Sánchez</span></div>
-      </div>
-      <div class="card">
-        <div class="machine-icon">CAR</div>
-        <h3>Coche · DeepRacer</h3>
-        <p>Vehículo en miniatura actuando como UE LTE. Captura cámara, sube frame, recibe comandos y ejecuta con un watchdog de seguridad funcional.</p>
-        <div class="owner">Responsable · <span>Alonso Sandoval</span></div>
-      </div>
-      <div class="card">
-        <div class="machine-icon">JET</div>
-        <h3>Jetson Orin Nano</h3>
-        <p>Servicio de inferencia HTTP que detecta señales de tráfico sobre los frames que le envía el EPC. Devuelve etiqueta, confianza y latencia.</p>
-        <div class="owner">Responsable · <span>Mario Medrano</span></div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="planificacion">
-  <div class="wrap">
-    <div class="section-head">
-      <span class="eyebrow">Planificación</span>
-      <h2>Cuatro tracks en paralelo y un flujo de integración</h2>
-      <p>El plan vigente, una vez incorporadas las observaciones de la primera entrega, agrupa el trabajo por máquina física en lugar de por disciplina técnica. La integración recorre todo el calendario como track transversal.</p>
-    </div>
-
-    <div class="modular-scheme">
-      <svg viewBox="0 0 1100 540" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Esquema modular de planificación con cuatro máquinas y un flujo de integración transversal">
-        <defs>
-          <linearGradient id="colEPC" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.15"/>
-            <stop offset="100%" stop-color="#22d3ee" stop-opacity="0.02"/>
-          </linearGradient>
-          <linearGradient id="colENB" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stop-color="#34d399" stop-opacity="0.15"/>
-            <stop offset="100%" stop-color="#34d399" stop-opacity="0.02"/>
-          </linearGradient>
-          <linearGradient id="colCAR" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stop-color="#fbbf24" stop-opacity="0.15"/>
-            <stop offset="100%" stop-color="#fbbf24" stop-opacity="0.02"/>
-          </linearGradient>
-          <linearGradient id="colJET" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stop-color="#a78bfa" stop-opacity="0.15"/>
-            <stop offset="100%" stop-color="#a78bfa" stop-opacity="0.02"/>
-          </linearGradient>
-          <linearGradient id="intBar" x1="0" x2="1" y1="0" y2="0">
-            <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.4"/>
-            <stop offset="33%" stop-color="#34d399" stop-opacity="0.4"/>
-            <stop offset="66%" stop-color="#fbbf24" stop-opacity="0.4"/>
-            <stop offset="100%" stop-color="#a78bfa" stop-opacity="0.4"/>
-          </linearGradient>
-          <filter id="softGlow">
-            <feGaussianBlur stdDeviation="2" result="blur"/>
-            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-          </filter>
-        </defs>
-
-        <!-- Background label: parallel tracks -->
-        <text x="550" y="28" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#64748b" letter-spacing="2">CUATRO TRACKS EN PARALELO</text>
-
-        <!-- EPC column -->
-        <g>
-          <rect x="40" y="50" width="220" height="360" rx="14" fill="url(#colEPC)" stroke="#22d3ee" stroke-opacity="0.5" stroke-width="1.5"/>
-          <rect x="40" y="50" width="220" height="50" rx="14" fill="#22d3ee" fill-opacity="0.15"/>
-          <text x="150" y="75" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#22d3ee" font-weight="600" letter-spacing="1.5">EPC</text>
-          <text x="150" y="92" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="14" fill="#e8eef5" font-weight="600">CORE · Ordenador 1</text>
-          <!-- phases -->
-          <g font-family="-apple-system, sans-serif" font-size="11" fill="#e8eef5">
-            <rect x="60" y="120" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
-            <text x="70" y="136">Fase 0 · Base de red</text>
-            <rect x="60" y="148" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
-            <text x="70" y="164">Fase 1 · Core LTE</text>
-            <rect x="60" y="176" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
-            <text x="70" y="192">Fase 2 · Routing + NAT</text>
-            <rect x="60" y="204" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
-            <text x="70" y="220">Fase 3 · Plataforma app</text>
-            <rect x="60" y="232" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
-            <text x="70" y="248">Fase 4 · Integ. Jetson</text>
-            <rect x="60" y="260" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
-            <text x="70" y="276">Fase 5 · Decisión</text>
-            <rect x="60" y="288" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
-            <text x="70" y="304">Fase 6 · Orquestación</text>
-            <rect x="60" y="316" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
-            <text x="70" y="332">Fase 7 · Endurecimiento</text>
-            <rect x="60" y="344" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
-            <text x="70" y="360">Fase 8 · Attach UE</text>
-            <rect x="60" y="372" width="180" height="24" rx="5" fill="#151d26" stroke="#22d3ee" stroke-opacity="0.4"/>
-            <text x="70" y="388">Fase 9 · Supervisión</text>
-          </g>
-          <text x="150" y="427" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#64748b">10 fases · Alonso S.</text>
-        </g>
-
-        <!-- eNodeB column -->
-        <g>
-          <rect x="290" y="50" width="220" height="360" rx="14" fill="url(#colENB)" stroke="#34d399" stroke-opacity="0.5" stroke-width="1.5"/>
-          <rect x="290" y="50" width="220" height="50" rx="14" fill="#34d399" fill-opacity="0.15"/>
-          <text x="400" y="75" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#34d399" font-weight="600" letter-spacing="1.5">ENB</text>
-          <text x="400" y="92" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="14" fill="#e8eef5" font-weight="600">eNodeB · Ordenador 2</text>
-          <g font-family="-apple-system, sans-serif" font-size="11" fill="#e8eef5">
-            <rect x="310" y="135" width="180" height="24" rx="5" fill="#151d26" stroke="#34d399" stroke-opacity="0.4"/>
-            <text x="320" y="151">Fase 0 · Preparación radio</text>
-            <rect x="310" y="163" width="180" height="24" rx="5" fill="#151d26" stroke="#34d399" stroke-opacity="0.4"/>
-            <text x="320" y="179">Fase 1 · S1 + celda LTE</text>
-            <rect x="310" y="191" width="180" height="24" rx="5" fill="#151d26" stroke="#34d399" stroke-opacity="0.4"/>
-            <text x="320" y="207">Fase 2 · Attach UE</text>
-            <rect x="310" y="219" width="180" height="24" rx="5" fill="#151d26" stroke="#34d399" stroke-opacity="0.4"/>
-            <text x="320" y="235">Fase 3 · Tráfico app</text>
-            <rect x="310" y="247" width="180" height="24" rx="5" fill="#151d26" stroke="#34d399" stroke-opacity="0.4"/>
-            <text x="320" y="263">Fase 4 · Congelación</text>
-          </g>
-          <text x="400" y="427" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#64748b">5 fases · Luis Francisco S.</text>
-        </g>
-
-        <!-- Coche column -->
-        <g>
-          <rect x="540" y="50" width="220" height="360" rx="14" fill="url(#colCAR)" stroke="#fbbf24" stroke-opacity="0.5" stroke-width="1.5"/>
-          <rect x="540" y="50" width="220" height="50" rx="14" fill="#fbbf24" fill-opacity="0.15"/>
-          <text x="650" y="75" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#fbbf24" font-weight="600" letter-spacing="1.5">CAR</text>
-          <text x="650" y="92" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="14" fill="#e8eef5" font-weight="600">Coche · DeepRacer</text>
-          <g font-family="-apple-system, sans-serif" font-size="11" fill="#e8eef5">
-            <rect x="560" y="127" width="180" height="24" rx="5" fill="#151d26" stroke="#fbbf24" stroke-opacity="0.4"/>
-            <text x="570" y="143">Fase 0 · Preparación</text>
-            <rect x="560" y="155" width="180" height="24" rx="5" fill="#151d26" stroke="#fbbf24" stroke-opacity="0.4"/>
-            <text x="570" y="171">Fase 1 · Alta como UE</text>
-            <rect x="560" y="183" width="180" height="24" rx="5" fill="#151d26" stroke="#fbbf24" stroke-opacity="0.4"/>
-            <text x="570" y="199">Fase 2 · Agente</text>
-            <rect x="560" y="211" width="180" height="24" rx="5" fill="#151d26" stroke="#fbbf24" stroke-opacity="0.4"/>
-            <text x="570" y="227">Fase 3 · Valid. aislada</text>
-            <rect x="560" y="239" width="180" height="24" rx="5" fill="#151d26" stroke="#fbbf24" stroke-opacity="0.4"/>
-            <text x="570" y="255">Fase 4 · E2E</text>
-            <rect x="560" y="267" width="180" height="24" rx="5" fill="#151d26" stroke="#fbbf24" stroke-opacity="0.4"/>
-            <text x="570" y="283">Fase 5 · Seguridad</text>
-            <rect x="560" y="295" width="180" height="24" rx="5" fill="#151d26" stroke="#fbbf24" stroke-opacity="0.4"/>
-            <text x="570" y="311">Fase 6 · Modo degradado</text>
-          </g>
-          <text x="650" y="427" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#64748b">7 fases · Alonso S.</text>
-        </g>
-
-        <!-- Jetson column -->
-        <g>
-          <rect x="790" y="50" width="220" height="360" rx="14" fill="url(#colJET)" stroke="#a78bfa" stroke-opacity="0.5" stroke-width="1.5"/>
-          <rect x="790" y="50" width="220" height="50" rx="14" fill="#a78bfa" fill-opacity="0.15"/>
-          <text x="900" y="75" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#a78bfa" font-weight="600" letter-spacing="1.5">JET</text>
-          <text x="900" y="92" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="14" fill="#e8eef5" font-weight="600">Jetson Orin Nano</text>
-          <g font-family="-apple-system, sans-serif" font-size="11" fill="#e8eef5">
-            <rect x="810" y="131" width="180" height="24" rx="5" fill="#151d26" stroke="#a78bfa" stroke-opacity="0.4"/>
-            <text x="820" y="147">Fase 0 · Entorno</text>
-            <rect x="810" y="159" width="180" height="24" rx="5" fill="#151d26" stroke="#a78bfa" stroke-opacity="0.4"/>
-            <text x="820" y="175">Fase 1 · Inferencia local</text>
-            <rect x="810" y="187" width="180" height="24" rx="5" fill="#151d26" stroke="#a78bfa" stroke-opacity="0.4"/>
-            <text x="820" y="203">Fase 2 · Exposición EPC</text>
-            <rect x="810" y="215" width="180" height="24" rx="5" fill="#151d26" stroke="#a78bfa" stroke-opacity="0.4"/>
-            <text x="820" y="231">Fase 3 · Flujo real</text>
-            <rect x="810" y="243" width="180" height="24" rx="5" fill="#151d26" stroke="#a78bfa" stroke-opacity="0.4"/>
-            <text x="820" y="259">Fase 4 · Robustez</text>
-            <rect x="810" y="271" width="180" height="24" rx="5" fill="#151d26" stroke="#a78bfa" stroke-opacity="0.4"/>
-            <text x="820" y="287">Fase 5 · Supervisión</text>
-          </g>
-          <text x="900" y="427" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#64748b">6 fases · Mario M.</text>
-        </g>
-
-        <!-- Integration transversal layer -->
-        <g>
-          <rect x="40" y="450" width="970" height="70" rx="14" fill="url(#intBar)" stroke="#22d3ee" stroke-opacity="0.6" stroke-width="1.5" filter="url(#softGlow)"/>
-          <text x="525" y="478" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#22d3ee" font-weight="600" letter-spacing="2">INTEGRACIÓN · TRACK TRANSVERSAL</text>
-          <text x="525" y="498" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="13" fill="#e8eef5">13 fases · Une las cuatro máquinas y valida el sistema extremo a extremo</text>
-          <text x="525" y="513" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#94a3b8">Topología · LTE · UE · Plataforma · Jetson · EPC↔Jetson · Decisión · Coche · E2E · Seguridad · Demo · Sync · Observabilidad</text>
-        </g>
-
-        <!-- Vertical connectors from columns to integration bar -->
-        <g stroke="#22d3ee" stroke-opacity="0.3" stroke-width="1.5" stroke-dasharray="3,3" fill="none">
-          <line x1="150" y1="410" x2="150" y2="450"/>
-          <line x1="400" y1="410" x2="400" y2="450"/>
-          <line x1="650" y1="410" x2="650" y2="450"/>
-          <line x1="900" y1="410" x2="900" y2="450"/>
+        <!-- labels -->
+        <g font-family="IBM Plex Mono, monospace" font-size="10" fill="#5d5e58">
+          <text x="215" y="142" text-anchor="middle">LTE Uu</text>
+          <text x="435" y="142" text-anchor="middle">S1</text>
+          <text x="685" y="142" text-anchor="middle">HTTP</text>
+          <text x="685" y="194" text-anchor="middle">detección</text>
+          <text x="435" y="194" text-anchor="middle">UDP · C</text>
+          <text x="215" y="194" text-anchor="middle">comando</text>
+          <text x="105" y="240" text-anchor="middle" font-size="9">datos · ejecuta</text>
+          <text x="325" y="240" text-anchor="middle" font-size="9">transporte radio</text>
+          <text x="820" y="240" text-anchor="middle" font-size="9">offload de inferencia</text>
         </g>
       </svg>
     </div>
 
-    <div class="tracks">
-      <aside class="track-nav">
-        <button class="active" data-track="epc">CORE / EPC</button>
-        <button data-track="enb">eNodeB</button>
-        <button data-track="car">Coche</button>
-        <button data-track="jet">Jetson</button>
-        <button data-track="int">Integración</button>
-      </aside>
-
-      <div class="track-panels">
-        <!-- EPC -->
-        <div class="track-panel active" data-track="epc">
-          <h3>Ordenador 1 · CORE / EPC</h3>
-          <div class="owner-line">Responsable · <span>Alonso Sandoval</span> · 10 fases · feb–may 2026</div>
-          <div class="timeline">
-            <div class="phase done"><h4><span class="num">Fase 0</span> Base de red y estructura del nodo <span class="pill">finalizada</span></h4><p>IP backhaul 10.10.10.1/24, IP SGi 172.16.0.1/24, estructura bajo /srv/tp2, puertos y logs documentados.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 1</span> Core LTE operativo <span class="pill">finalizada</span></h4><p>srsepc estable, epc.conf revisado, UE provisionado en user_db.csv, S1 establecido con eNodeB.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 2</span> Routing del UE, NAT y DNS <span class="pill">finalizada</span></h4><p>IP forwarding, NAT con iptables, dnsmasq. UE de 172.16.0.0/24 con conectividad útil al EPC.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 3</span> Plataforma base de la aplicación <span class="pill">finalizada</span></h4><p>Docker Compose con mosquitto, postgres y backend mínimo: /health, /v1/telemetry, /v1/frames.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 4</span> Integración con la Jetson <span class="pill">finalizada</span></h4><p>El backend orquesta la inferencia. Persiste ruta, etiqueta, confianza y latencia.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 5</span> Lógica de decisión y emisión de comandos <span class="pill">finalizada</span></h4><p>Alfabeto STOP, SLOW, LEFT, RIGHT, STRAIGHT. Publicación por MQTT y persistencia del evento.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 6</span> Orquestación extremo a extremo con coche real <span class="pill">finalizada</span></h4><p>Cierre del bucle con el vehículo en pista, registro completo del evento.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 7</span> Endurecimiento, seguridad y operación <span class="pill">finalizada</span></h4><p>Cadencia de frames, fallbacks ante fallo, logs de auditoría y retención de datos.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 8</span> Provisión del UE y política de attach reproducible <span class="pill">finalizada</span></h4><p>Alta del UE cerrada de forma operativa y reproducible.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 9</span> Supervisión y arranque automático <span class="pill">finalizada</span></h4><p>Arranque ordenado vía systemd con políticas de reinicio y checks de salud.</p></div>
-          </div>
-        </div>
-
-        <!-- ENB -->
-        <div class="track-panel" data-track="enb">
-          <h3>Ordenador 2 · eNodeB</h3>
-          <div class="owner-line">Responsable · <span>Luis Francisco Sánchez</span> · 5 fases · feb–abr 2026</div>
-          <div class="timeline">
-            <div class="phase done"><h4><span class="num">Fase 0</span> Preparación del nodo radio <span class="pill">finalizada</span></h4><p>IP 10.10.10.2/24, bladeRF detectada y operativa, equipo reservado en exclusiva para radio.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 1</span> S1 y celda LTE estables <span class="pill">finalizada</span></h4><p>enb.conf revisado, srsenb arrancando, S1 Setup Request y Response intercambiados con el EPC.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 2</span> Soporte al attach del UE y tráfico IP <span class="pill">finalizada</span></h4><p>Registro del coche estable, IP del EPC entregada, tráfico cursado sin caídas.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 3</span> Soporte de tráfico de aplicación <span class="pill">finalizada</span></h4><p>Radio estable con HTTP, MQTT, telemetría, frames y ack reales circulando entre coche y EPC.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 4</span> Congelación operativa para demo <span class="pill">finalizada</span></h4><p>enb.conf congelado, sin software adicional. Integrado en el checklist de arranque y cierre.</p></div>
-          </div>
-        </div>
-
-        <!-- CAR -->
-        <div class="track-panel" data-track="car">
-          <h3>Coche · AWS DeepRacer</h3>
-          <div class="owner-line">Responsable · <span>Alonso Sandoval</span> · 7 fases · feb–abr 2026</div>
-          <div class="timeline">
-            <div class="phase done"><h4><span class="num">Fase 0</span> Preparación funcional del vehículo <span class="pill">finalizada</span></h4><p>Agente separado en cinco piezas: captura, subida, MQTT, movimiento y watchdog.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 1</span> Alta como UE y conectividad básica <span class="pill">finalizada</span></h4><p>Registro en LTE, IP del rango 172.16.0.x, ping, DNS y HTTP simple contra el EPC.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 2</span> Implementación del agente <span class="pill">finalizada</span></h4><p>Las cinco piezas construidas con stack ligero: Python, OpenCV, HTTP, paho-mqtt.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 3</span> Validación aislada del agente <span class="pill">finalizada</span></h4><p>Cada pieza validada por separado antes de integrarla en el flujo real.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 4</span> Integración extremo a extremo <span class="pill">finalizada</span></h4><p>Captura, envío, orden por MQTT, ejecución, ack y telemetría.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 5</span> Seguridad funcional y operación <span class="pill">finalizada</span></h4><p>Watchdog afinado: si no llegan órdenes a tiempo, reduce o se detiene.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 6</span> Arranque del agente y modo degradado <span class="pill">finalizada</span></h4><p>Arranque controlado, timeouts y parada segura ante pérdida de control.</p></div>
-          </div>
-        </div>
-
-        <!-- JET -->
-        <div class="track-panel" data-track="jet">
-          <h3>Jetson Orin Nano</h3>
-          <div class="owner-line">Responsable · <span>Mario Medrano</span> · 6 fases · feb–may 2026</div>
-          <div class="timeline">
-            <div class="phase done"><h4><span class="num">Fase 0</span> Preparación y fijación del entorno <span class="pill">finalizada</span></h4><p>IP fija alcanzable desde el EPC, versiones de JetPack y dependencias documentadas.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 1</span> Servicio de inferencia local <span class="pill">finalizada</span></h4><p>Servicio con /health y /infer. Carga el modelo una sola vez. Devuelve etiqueta, confianza y latencia.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 2</span> Exposición del servicio al EPC <span class="pill">finalizada</span></h4><p>Puerto abierto, contrato de I/O fijado, accesibilidad desde el EPC confirmada.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 3</span> Operación bajo flujo real <span class="pill">finalizada</span></h4><p>Inferencias procedentes del backend bajo carga real, dentro del presupuesto de latencia.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 4</span> Robustez y preparación de demo <span class="pill">finalizada</span></h4><p>Control de fallos, timeouts y evaluación de optimización con TensorRT si fuera necesario.</p></div>
-            <div class="phase done"><h4><span class="num">Fase 5</span> Arranque automático y supervisión <span class="pill">finalizada</span></h4><p>Servicio estable tras reinicios, supervisión y comprobación de salud.</p></div>
-          </div>
-        </div>
-
-        <!-- INT -->
-        <div class="track-panel" data-track="int">
-          <h3>Integración (transversal)</h3>
-          <div class="owner-line">Responsable · <span>Alonso Sandoval</span> · 13 fases · feb–may 2026</div>
-          <div class="timeline">
-            <div class="phase done"><h4><span class="num">Fase 0</span> Congelación de topología y contratos <span class="pill">finalizada</span></h4></div>
-            <div class="phase done"><h4><span class="num">Fase 1</span> Validación de infraestructura LTE <span class="pill">finalizada</span></h4></div>
-            <div class="phase done"><h4><span class="num">Fase 2</span> Validación del attach del UE y salida IP <span class="pill">finalizada</span></h4></div>
-            <div class="phase done"><h4><span class="num">Fase 3</span> Validación de plataforma base de aplicación <span class="pill">finalizada</span></h4></div>
-            <div class="phase done"><h4><span class="num">Fase 4</span> Validación de la Jetson como servicio consumible <span class="pill">finalizada</span></h4></div>
-            <div class="phase done"><h4><span class="num">Fase 5</span> Validación EPC ↔ Jetson <span class="pill">finalizada</span></h4></div>
-            <div class="phase done"><h4><span class="num">Fase 6</span> Validación de decisión y emisión de comando <span class="pill">finalizada</span></h4></div>
-            <div class="phase done"><h4><span class="num">Fase 7</span> Validación del coche como actuador <span class="pill">finalizada</span></h4></div>
-            <div class="phase done"><h4><span class="num">Fase 8</span> Validación extremo a extremo completa <span class="pill">finalizada</span></h4></div>
-            <div class="phase done"><h4><span class="num">Fase 9</span> Validación de seguridad funcional <span class="pill">finalizada</span></h4></div>
-            <div class="phase done"><h4><span class="num">Fase 10</span> Validación final de operación y demo <span class="pill">finalizada</span></h4></div>
-            <div class="phase done"><h4><span class="num">Fase 11</span> Sincronización temporal y correlación de logs <span class="pill">finalizada</span></h4></div>
-            <div class="phase done"><h4><span class="num">Fase 12</span> Observabilidad y trazabilidad extremo a extremo <span class="pill">finalizada</span></h4></div>
-          </div>
-        </div>
+    <div class="grid c4" style="margin-top: 2rem">
+      <div class="card asphalt">
+        <span class="accent" aria-hidden="true"></span>
+        <div class="tag">EPC · Ordenador 1</div>
+        <h3>Núcleo LTE y control</h3>
+        <p>srsepc en <span class="mono">10.10.10.1</span>, asignación UE en
+        <span class="mono">172.16.0.0/24</span>. <span class="mono">coche.py</span> escucha
+        control en <span class="mono">20001/UDP</span> y sirve la consola del operador en
+        <span class="mono">8088/TCP</span>.</p>
+      </div>
+      <div class="card">
+        <span class="accent" aria-hidden="true"></span>
+        <div class="tag">eNodeB · Ordenador 2</div>
+        <h3>Radio acotada</h3>
+        <p>srsenb sobre <span class="mono">bladeRF 2.0 xA9</span> con MIMO 2×2 TM4. S1-MME
+        en <span class="mono">36412/SCTP</span> y GTP-U en <span class="mono">2152/UDP</span>.
+        Sin orquestación.</p>
+      </div>
+      <div class="card signal">
+        <span class="accent" aria-hidden="true"></span>
+        <div class="tag">Coche · DeepRacer</div>
+        <h3>Cliente físico</h3>
+        <p>Streams UDP de cámara <span class="mono">I</span>, batería <span class="mono">B</span>,
+        IMU <span class="mono">D</span> y LiDAR <span class="mono">L</span>. Ejecuta paquetes
+        de control <span class="mono">C</span> con steering y throttle.</p>
+      </div>
+      <div class="card lab">
+        <span class="accent" aria-hidden="true"></span>
+        <div class="tag">Jetson Orin Nano</div>
+        <h3>Inferencia offload</h3>
+        <p>Endpoint Roboflow-compatible en <span class="mono">9001/TCP</span>. Modelo
+        <span class="mono">tp2-g4-2026/2</span>. Nunca aloja orquestación, núcleo LTE ni
+        base de datos.</p>
       </div>
     </div>
   </div>
 </section>
 
-<section id="transversales">
+<!-- ─────────────── BLOQUE 2 · EVIDENCIA ─────────────── -->
+<section class="block" id="evidencia">
   <div class="wrap">
-    <div class="section-head">
-      <span class="eyebrow">Entregables transversales</span>
-      <h2>Lo que se entrega junto al demostrador</h2>
-      <p>Tres bloques que viven en paralelo a la implementación y que se cierran el 5 de junio de 2026.</p>
+    <div class="block-head">
+      <div>
+        <span class="eyebrow"><span class="ord">02.</span>Evidencia del prototipo</span>
+        <h2>Lo que mide el laboratorio</h2>
+      </div>
+      <p class="lede">
+        Cifras del banco de pruebas y de la simulación del despliegue real sobre la A-601
+        entre Valladolid y Segovia. Cada métrica está respaldada por el informe del
+        proyecto y por capturas reproducibles del laboratorio.
+      </p>
     </div>
 
-    <div class="grid cols-3">
-      <div class="card">
-        <h3>📜 Legal y permisos</h3>
-        <p>Procedimientos administrativos para el uso del espectro en banda 7, plantilla de documentación de la cláusula cuarta del contrato y defensa del proyecto frente a normativa nacional.</p>
-        <div class="owner">Responsable · <span>Luis Francisco Sánchez</span></div>
+    <h3 style="margin-bottom: 0.6rem">Red 4G privada · laboratorio</h3>
+    <p class="small-caption" style="margin-bottom: 1rem">iperf3 y ping desde el UE bajo la red LTE privada del banco de pruebas</p>
+    <div class="slabs">
+      <div class="slab">
+        <div class="key">Latencia ICMP media</div>
+        <div class="val">38<span class="u">,042 ms</span></div>
+        <div class="note">Rango 16,158–107,741 ms, sin pérdida de paquetes ICMP.</div>
       </div>
-      <div class="card">
-        <h3>📊 Análisis RF con Xirio</h3>
-        <p>Cálculo de coberturas y análisis radioeléctrico sobre el tramo asignado de la autovía A-601 entre los kilómetros 0 y 104, base de la memoria técnico-económica.</p>
-        <div class="owner">Responsable · <span>Alonso Sandoval</span></div>
+      <div class="slab">
+        <div class="key">TCP UL · DL</div>
+        <div class="val">15,0 / 23,5<span class="u"> Mbit/s</span></div>
+        <div class="note">Subida desde UE; bajada hacia UE bajo iperf3 sostenido.</div>
       </div>
-      <div class="card">
-        <h3>🎬 Demostración final</h3>
-        <p>Preparación del material físico, coordinación del día de la demostración y entrega del informe técnico-económico como entregable principal del proyecto.</p>
-        <div class="owner">Responsable · <span>Mario Medrano</span></div>
+      <div class="slab">
+        <div class="key">UDP throughput</div>
+        <div class="val">4,99<span class="u"> Mbit/s</span></div>
+        <div class="note">Flujo constante 5 Mbit/s objetivo, 0 % de pérdida (0/2282).</div>
+      </div>
+      <div class="slab">
+        <div class="key">Jitter UDP</div>
+        <div class="val">4,737<span class="u"> ms</span></div>
+        <div class="note">Compatible con tráfico interactivo tiempo real.</div>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 3rem; margin-bottom: 0.6rem">Modelo de visión · YOLO26 X</h3>
+    <p class="small-caption" style="margin-bottom: 1rem">Reentrenado sobre dataset propio TP2-G4-2026 con 4 985 imágenes y 10 962 anotaciones</p>
+    <div class="slabs">
+      <div class="slab">
+        <div class="key">mAP@50</div>
+        <div class="val">95,5<span class="u"> %</span></div>
+        <div class="note">Sobre conjunto de validación tras 300 épocas.</div>
+      </div>
+      <div class="slab">
+        <div class="key">Precisión</div>
+        <div class="val">94,0<span class="u"> %</span></div>
+        <div class="note">Verdaderos positivos sobre detecciones emitidas.</div>
+      </div>
+      <div class="slab">
+        <div class="key">Recall</div>
+        <div class="val">91,6<span class="u"> %</span></div>
+        <div class="note">Cobertura de instancias reales del conjunto.</div>
+      </div>
+      <div class="slab">
+        <div class="key">F1</div>
+        <div class="val">92,8<span class="u"> %</span></div>
+        <div class="note">Clase CONO ~60 % mAP: limitada por objetos pequeños y agrupados.</div>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 3rem; margin-bottom: 0.6rem">Despliegue A-601 · simulado en Xirio</h3>
+    <p class="small-caption" style="margin-bottom: 1rem">Banda 7 cedida por Vodafone S.A.U.; ver la página de cobertura para el detalle</p>
+    <div class="slabs">
+      <div class="slab">
+        <div class="key">Tramo evaluado</div>
+        <div class="val">104<span class="u"> km</span></div>
+        <div class="note">Valladolid – Segovia, kilómetros 0 a 104.</div>
+      </div>
+      <div class="slab">
+        <div class="key">Emplazamientos</div>
+        <div class="val">25</div>
+        <div class="note">20 existentes co-ubicados + 5 nuevos de obra propia.</div>
+      </div>
+      <div class="slab">
+        <div class="key">Sectoriales</div>
+        <div class="val">50</div>
+        <div class="note">Sectorización dual por mástil; 44 efectivas sobre calzada.</div>
+      </div>
+      <div class="slab">
+        <div class="key">Cobertura útil</div>
+        <div class="val">92,2<span class="u"> %</span></div>
+        <div class="note">Área servida con RSRP ≥ −110 dBm sobre el corredor.</div>
       </div>
     </div>
   </div>
 </section>
 
-<section id="equipo">
+<!-- ─────────────── BLOQUE 3 · SERVICIOS DIFERENCIALES ─────────────── -->
+<section class="block" id="servicios">
   <div class="wrap">
-    <div class="section-head">
-      <span class="eyebrow">Equipo</span>
-      <h2>Grupo 4 · TP2 2025–2026</h2>
-      <p>Cada miembro del equipo es responsable principal de uno o varios tracks. Las responsabilidades se mantienen explícitas en Jira para que la trazabilidad por subtarea sea inmediata.</p>
+    <div class="block-head">
+      <div>
+        <span class="eyebrow"><span class="ord">03.</span>Servicios</span>
+        <h2>Capas que viven en el EPC, no en el coche</h2>
+      </div>
+      <p class="lede">
+        El coche es un cliente delgado. Toda la inteligencia operativa (asistencia al
+        carril, control de velocidad por IMU, seguridad LiDAR y conducción autónoma) se
+        ejecuta como capas EPC-locales sobre el mismo flujo UDP, sin migrar orquestación
+        al vehículo ni a la Jetson.
+      </p>
     </div>
 
-    <div class="grid cols-3">
+    <div class="grid c3">
       <div class="card">
-        <div class="person">
-          <div class="avatar">AS</div>
-          <div class="info">
-            <strong>Alonso Sandoval</strong>
-            <span>CORE · Coche · Integración · Xirio</span>
-          </div>
-        </div>
+        <span class="accent" aria-hidden="true"></span>
+        <div class="tag">Operador</div>
+        <h3>Consola web en vivo</h3>
+        <p>Cámara anotada, modo manual / autónomo, sliders de tuning en caliente
+        (cruise throttle, steering trim, ganancia de carril, sectores LiDAR) y telemetría
+        en <span class="mono">8088/TCP</span>.</p>
+      </div>
+      <div class="card asphalt">
+        <span class="accent" aria-hidden="true"></span>
+        <div class="tag">Decisión</div>
+        <h3>Conducción autónoma</h3>
+        <p>FSM determinista sobre detecciones del modelo: <span class="mono">VELOCIDAD-MAX-30</span> aplica 0,50 por 3 s,
+        <span class="mono">VELOCIDAD-MAX-90</span> aplica 0,70 por 3 s, y <span class="mono">STOP</span>
+        / <span class="mono">PROHIBIDO</span> retienen neutral durante 5 s.</p>
+      </div>
+      <div class="card lab">
+        <span class="accent" aria-hidden="true"></span>
+        <div class="tag">Visión clásica</div>
+        <h3>Asistencia al carril</h3>
+        <p>Detector OpenCV de las cintas azul y verde sobre la moqueta negra. Aplica
+        corrección de steering acotada únicamente en acciones autónomas hacia delante.</p>
       </div>
       <div class="card">
-        <div class="person">
-          <div class="avatar">LS</div>
-          <div class="info">
-            <strong>Luis Francisco Sánchez</strong>
-            <span>eNodeB · Legal y permisos</span>
-          </div>
-        </div>
+        <span class="accent" aria-hidden="true"></span>
+        <div class="tag">Inercial</div>
+        <h3>Control PID por IMU</h3>
+        <p>BMI160 a través de paquetes <span class="mono">D</span>. Estimación acotada de
+        velocidad de avance que ajusta throttle autónomo sin nunca anular la seguridad
+        LiDAR ni la decisión de cámara.</p>
       </div>
-      <div class="card">
-        <div class="person">
-          <div class="avatar">MM</div>
-          <div class="info">
-            <strong>Mario Medrano</strong>
-            <span>Jetson · Demostración final</span>
-          </div>
-        </div>
+      <div class="card alert">
+        <span class="accent" aria-hidden="true"></span>
+        <div class="tag">Seguridad</div>
+        <h3>LiDAR safety</h3>
+        <p>Sector frontal de 45 haces. Obstáculo a ≤ 0,15 m fuerza <span class="mono">lidar-stop</span>;
+        entre 0,15 y 0,85 m limita throttle; entre 0,85 y 1,35 m añade corrección de steering.
+        LiDAR caducado no anula cámara.</p>
+      </div>
+      <div class="card signal">
+        <span class="accent" aria-hidden="true"></span>
+        <div class="tag">Dataset</div>
+        <h3>Grabación y replay</h3>
+        <p>Captura de frames candidatos, vídeo MP4 anotado, <span class="mono">manifest.jsonl</span> y
+        flags críticos durante sesiones reales. El replayer ofline permite reetiquetar para
+        retraining sin tocar el camino de control.</p>
       </div>
     </div>
   </div>
 </section>
 
-<footer>
+<!-- ─────────────── BLOQUE 4 · DESPLIEGUE / LEGAL ─────────────── -->
+<section class="block" id="despliegue">
   <div class="wrap">
-    <div>
-      <strong style="color: var(--text);">Taller de Proyectos II · Grupo 4</strong><br>
-      Máster en Ingeniería de Telecomunicación · Universidad de Valladolid · 2025–2026
+    <div class="block-head">
+      <div>
+        <span class="eyebrow"><span class="ord">04.</span>Despliegue real</span>
+        <h2>Cómo se lleva esto a la A-601</h2>
+      </div>
+      <p class="lede">
+        La memoria evalúa el coste y el cumplimiento normativo de un despliegue equivalente
+        sobre 104 km de autovía. El estudio de cobertura y el detalle de tráfico están
+        publicados en este sitio como vistas interactivas independientes.
+      </p>
     </div>
-    <div>
-      <a href="https://github.com/TallerProyectos2/TP2">Repositorio en GitHub</a>
+
+    <div class="grid c2">
+      <div class="bordered-box">
+        <span class="eyebrow"><span class="ord">04.1</span>Espectro</span>
+        <h3 style="margin-top: 0.6rem">Banda 7 cedida por Vodafone</h3>
+        <p>
+          El contrato académico cede 10 MHz por sentido en banda 7:
+          <strong>2540–2550 MHz</strong> en uplink y <strong>2660–2670 MHz</strong> en downlink.
+          La planificación adopta MIMO 2×2 con TM4, 16-QAM como modulación dimensionante y
+          corrección rural de COST-231 ajustada al corredor real.
+        </p>
+        <hr class="rule-thick"/>
+        <span class="eyebrow"><span class="ord">04.2</span>Marco normativo</span>
+        <h3 style="margin-top: 0.6rem">Sin atajos legales</h3>
+        <ul>
+          <li><strong>Ley 11/2022</strong>, General de Telecomunicaciones.</li>
+          <li><strong>RD 123/2017</strong>, sobre uso del dominio público radioeléctrico.</li>
+          <li><strong>RD 1066/2001</strong>, protección sanitaria frente a emisiones radioeléctricas.</li>
+          <li>Tramitación ante <strong>SETID</strong> y alta en el registro de la <strong>CNMC</strong>.</li>
+        </ul>
+      </div>
+
+      <div class="bordered-box">
+        <span class="eyebrow"><span class="ord">04.3</span>Resultados</span>
+        <h3 style="margin-top: 0.6rem">Cobertura sobre la calzada</h3>
+        <p>
+          La red propuesta cierra los huecos del escenario inicial y entrega cobertura útil
+          sobre el 92,2 % del área servida con RSRP ≥ −110 dBm. El RSRP medio entre los 44
+          sectores activos es de −96,9 dBm, prácticamente en el umbral de cobertura buena.
+        </p>
+        <p>
+          La validación cuantitativa se publica en
+          <a href="./coverage.html">Cobertura A-601</a> y el análisis de tráfico que sustenta
+          la capacidad en <a href="./dashboard.html">Dashboard A-601</a>.
+        </p>
+        <hr class="rule-thick"/>
+        <span class="eyebrow"><span class="ord">04.4</span>Económico</span>
+        <h3 style="margin-top: 0.6rem">Orden de magnitud</h3>
+        <p>
+          El estudio económico del proyecto separa CAPEX inicial (obra, equipamiento radio,
+          ingeniería y permisos), OPEX recurrente (co-ubicación, energía, mantenimiento) y
+          el coste del primer año. Las cifras concretas se justifican en el capítulo
+          económico de la memoria.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────── BLOQUE 5 · EQUIPO ─────────────── -->
+<section class="block" id="equipo">
+  <div class="wrap">
+    <div class="block-head">
+      <div>
+        <span class="eyebrow"><span class="ord">05.</span>Equipo</span>
+        <h2>Grupo 4 · responsabilidades operativas</h2>
+      </div>
+      <p class="lede">
+        Cada miembro del equipo es responsable principal de uno o varios nodos del
+        laboratorio. Las titularidades son explícitas para la trazabilidad técnica, pero la
+        integración extremo a extremo se trabaja entre los tres en sesiones conjuntas.
+      </p>
+    </div>
+
+    <div class="grid c3">
+      <article class="card">
+        <span class="accent" aria-hidden="true"></span>
+        <div class="tag">AS</div>
+        <h3>Alonso Sandoval</h3>
+        <p>Ordenador 1 (CORE / EPC) y Coche (DeepRacer). Estudio de cobertura con Xirio
+        sobre el tramo A-601 entre Valladolid y Segovia.</p>
+      </article>
+      <article class="card">
+        <span class="accent" aria-hidden="true"></span>
+        <div class="tag">LS</div>
+        <h3>Luis Francisco Sánchez</h3>
+        <p>Ordenador 2 (eNodeB) sobre bladeRF y srsenb. Bloque transversal de aspectos
+        legales y permisos del despliegue.</p>
+      </article>
+      <article class="card">
+        <span class="accent" aria-hidden="true"></span>
+        <div class="tag">MM</div>
+        <h3>Mario Medrano</h3>
+        <p>Jetson Orin Nano como nodo dedicado de inferencia. Coordinación de la
+        demostración final y preparación del informe técnico-económico.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<footer class="site">
+  <div class="wrap">
+    <div class="cols">
+      <div class="colophon">
+        <strong>Taller de Proyectos II · Grupo 4</strong><br/>
+        Máster en Ingeniería de Telecomunicación · Universidad de Valladolid · Curso 2025–2026.<br/>
+        Sitio servido como dossier técnico del laboratorio; cifras tomadas del informe
+        del proyecto y de los validation logs de cada máquina.
+      </div>
+      <nav aria-label="Vistas técnicas">
+        <h4>Vistas técnicas</h4>
+        <a href="./dashboard.html">Dashboard A-601</a>
+        <a href="./coverage.html">Validación de cobertura</a>
+        <a href="./demo.html">Demostración</a>
+      </nav>
+      <nav aria-label="Repositorio">
+        <h4>Repositorio</h4>
+        <a href="https://github.com/TallerProyectos2/TP2" rel="noopener">GitHub · TallerProyectos2 / TP2</a>
+      </nav>
+    </div>
+    <div class="bottom">
+      <span>© 2026 Grupo 4 — uso académico</span>
+      <span>ETSIT · UVa</span>
     </div>
   </div>
 </footer>
 
 <script>
-  // Track tabs
-  const tabs = document.querySelectorAll('.track-nav button');
-  const panels = document.querySelectorAll('.track-panel');
-  tabs.forEach(t => {
-    t.addEventListener('click', () => {
-      const key = t.dataset.track;
-      tabs.forEach(x => x.classList.toggle('active', x === t));
-      panels.forEach(p => p.classList.toggle('active', p.dataset.track === key));
+  // Hamburger menu toggle
+  (function(){
+    var btn = document.querySelector('nav.bar .menu-toggle');
+    var list = document.getElementById('nav-list');
+    if (!btn || !list) return;
+    btn.addEventListener('click', function(){
+      var open = list.classList.toggle('open');
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
-  });
+  })();
 </script>
 
 </body>

@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TP2 · Demostración integral del laboratorio</title>
+<meta name="description" content="Demostración integral del prototipo TP2: vehículo conectado bajo red LTE privada con detección de señales, asistencia al carril, control inercial y parada por LiDAR ejecutándose como capas EPC-locales." />
+<meta name="theme-color" content="#14181c" />
+<link rel="stylesheet" href="./site.css" />
+</head>
+<body>
+
+<nav class="bar" aria-label="Principal">
+  <div class="wrap">
+    <a class="brand" href="./index.html">
+      <span class="mark" aria-hidden="true"></span>
+      TP2<span class="label">· Grupo 4 · 2025–2026</span>
+    </a>
+    <button class="menu-toggle" aria-expanded="false" aria-controls="nav-list" type="button">Menú</button>
+    <ul id="nav-list">
+      <li><a href="./index.html">Inicio</a></li>
+      <li><a href="./dashboard.html">Dashboard A-601</a></li>
+      <li><a href="./coverage.html">Cobertura</a></li>
+      <li><a href="./demo.html" aria-current="page">Demostración</a></li>
+    </ul>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-row">
+      <div>
+        <div class="ribbon">
+          <span class="pill">Sesión <span class="num">06</span> · Lab ETSIT</span>
+          <span class="pill">Tramo <span class="num">≈ 3 min</span> · 1080p</span>
+          <span class="status"><span class="dot" aria-hidden="true"></span>Cierre operativo del bucle</span>
+        </div>
+        <h1>
+          Una vuelta completa: <em>cámara</em>, <em>LiDAR</em>, <em>IMU</em><br/>
+          y EPC tomando todas las decisiones.
+        </h1>
+        <p class="lede subtitle">
+          Vídeo de demostración grabado sobre el circuito del laboratorio. El coche entra
+          en modo autónomo, atraviesa una secuencia de señales fabricadas para el
+          prototipo, reacciona ante una caja física como obstáculo y vuelve a ceder el
+          control al operador desde la consola web del EPC.
+        </p>
+      </div>
+      <aside aria-label="Ficha de la demostración">
+        <dl class="hero-meta">
+          <div class="row"><dt>Pista</dt><dd>Circuito de laboratorio</dd></div>
+          <div class="row"><dt>Vehículo</dt><dd>AWS DeepRacer · UE LTE</dd></div>
+          <div class="row"><dt>Detector</dt><dd>YOLO26 X · tp2-g4-2026/2</dd></div>
+          <div class="row"><dt>Red</dt><dd>srsRAN privado · banda 7</dd></div>
+          <div class="row"><dt>Seguridad</dt><dd>LiDAR frontal + watchdog UE</dd></div>
+        </dl>
+      </aside>
+    </div>
+  </div>
+</header>
+
+<!-- ─────────────── BLOQUE 1 · VÍDEO ─────────────── -->
+<section class="block" id="video">
+  <div class="wrap">
+    <div class="block-head">
+      <div>
+        <span class="eyebrow"><span class="ord">01.</span>Reproducción</span>
+        <h2>Vídeo de la sesión</h2>
+      </div>
+      <p class="lede">
+        Reproducción embebida sin cookies. El stream se sirve a través del modo privacy-enhanced
+        de YouTube y se carga bajo demanda; si el reproductor no está disponible, se muestra
+        un mensaje sin enlace.
+      </p>
+    </div>
+
+    <figure class="embed-16x9" aria-label="Vídeo de la demostración del laboratorio TP2">
+      <iframe
+        src="https://www.youtube-nocookie.com/embed/AYSiCe6IK5g?rel=0&modestbranding=1"
+        title="Demostración integral del laboratorio TP2"
+        loading="lazy"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        referrerpolicy="strict-origin-when-cross-origin"
+        allowfullscreen>
+      </iframe>
+      <noscript>
+        <p>La demostración se reproduce desde un reproductor embebido sin cookies. Habilita JavaScript para verlo desde esta página.</p>
+      </noscript>
+    </figure>
+    <p class="small-caption" style="margin-top: 0.8rem">
+      Reproductor privacy-enhanced · sin cookies de terceros hasta que el usuario lo activa
+    </p>
+  </div>
+</section>
+
+<!-- ─────────────── BLOQUE 2 · GUION DEL VÍDEO ─────────────── -->
+<section class="block" id="guion">
+  <div class="wrap">
+    <div class="block-head">
+      <div>
+        <span class="eyebrow"><span class="ord">02.</span>Qué se ve</span>
+        <h2>Guion de la demostración, paso a paso</h2>
+      </div>
+      <p class="lede">
+        Cada etapa del recorrido demuestra una capa concreta del sistema: la
+        FSM autónoma del EPC consume detecciones del modelo, la asistencia clásica de carril
+        estabiliza el avance, el control inercial PID modula throttle y la capa LiDAR
+        impone parada ante obstáculos no anticipados.
+      </p>
+    </div>
+
+    <ol class="timeline">
+      <li>
+        <div class="body">
+          <span class="meta">Arranque · modo autónomo</span>
+          <h4>Salida desde reposo y entrada en la pista</h4>
+          <p>El operador conmuta a modo autónomo desde la consola del EPC en
+          <span class="mono">8088/TCP</span>. El coche estabiliza el avance sobre las cintas
+          azul y verde mediante la asistencia OpenCV de carril.</p>
+        </div>
+      </li>
+      <li>
+        <div class="body">
+          <span class="meta">Maniobra · giro izquierda</span>
+          <h4>Primer giro a la izquierda</h4>
+          <p>La FSM determinista del EPC ejecuta un giro de 90° en cuanto la detección
+          confirmada supera el umbral de área y persistencia. La trim de steering se
+          suspende temporalmente para preservar el lock total.</p>
+        </div>
+      </li>
+      <li>
+        <div class="body">
+          <span class="meta">Señal · velocidad 90</span>
+          <h4>Aceleración bajo señal de velocidad máxima 90</h4>
+          <p>La clase <span class="mono">VELOCIDAD-MAX-90</span> activa una rampa de
+          throttle de 0,70 durante 3 s; tras el pulso, el coche vuelve a la velocidad de
+          crucero que marca el slider del EPC.</p>
+        </div>
+      </li>
+      <li>
+        <div class="body">
+          <span class="meta">Señal · STOP</span>
+          <h4>Detención completa ante señal STOP</h4>
+          <p>La clase <span class="mono">STOP</span> retiene neutral durante 5 s. El watchdog
+          del coche garantiza ralentización si el EPC dejase de emitir comandos por encima
+          del timeout configurado.</p>
+        </div>
+      </li>
+      <li>
+        <div class="body">
+          <span class="meta">Maniobra · giro derecha</span>
+          <h4>Segundo giro a la derecha</h4>
+          <p>Tras el cooldown de la señal anterior, el coche reanuda marcha y resuelve un
+          giro de 90° a la derecha con la misma política de maneuver-lock que la izquierda.</p>
+        </div>
+      </li>
+      <li>
+        <div class="body">
+          <span class="meta">Señal · velocidad 30</span>
+          <h4>Reducción bajo señal de velocidad máxima 30</h4>
+          <p>La clase <span class="mono">VELOCIDAD-MAX-30</span> aplica throttle 0,50
+          durante 3 s. Con telemetría BMI160 fresca, el PID inercial cierra el lazo y mantiene
+          la velocidad objetivo aunque la pista cambie de fricción.</p>
+        </div>
+      </li>
+      <li>
+        <div class="body">
+          <span class="meta">Seguridad · LiDAR</span>
+          <h4>Obstáculo físico: parada por LiDAR</h4>
+          <p>Una caja se coloca delante del coche en marcha. La capa
+          <span class="mono">lidar_processor.py</span> impone <span class="mono">lidar-stop</span>
+          al detectar el obstáculo a menos de 0,15 m en el sector frontal de 45 haces.</p>
+        </div>
+      </li>
+      <li>
+        <div class="body">
+          <span class="meta">Cierre · vuelta a manual</span>
+          <h4>Devolución del control al operador</h4>
+          <p>El operador pulsa modo manual desde la consola y recupera control directo de
+          steering y throttle. La transición no requiere reinicio del UE ni del EPC; el
+          UDP de control simplemente cambia de fuente lógica.</p>
+        </div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ─────────────── BLOQUE 3 · QUÉ DEMUESTRA ─────────────── -->
+<section class="block" id="que-demuestra">
+  <div class="wrap">
+    <div class="block-head">
+      <div>
+        <span class="eyebrow"><span class="ord">03.</span>Lectura técnica</span>
+        <h2>Qué demuestra el vídeo</h2>
+      </div>
+      <p class="lede">
+        Los tres minutos del laboratorio comprimen la idea central del prototipo: las
+        decisiones no viven en el coche. El vídeo es la prueba de que el coche se comporta
+        como cliente delgado y de que la capa de control puede evolucionar sin tocar el
+        vehículo.
+      </p>
+    </div>
+
+    <div class="grid c3">
+      <div class="card asphalt">
+        <span class="accent" aria-hidden="true"></span>
+        <div class="tag">Plano de red</div>
+        <h3>El bucle pasa por la red privada</h3>
+        <p>Cámara, IMU y LiDAR viajan en UDP por LTE hasta el EPC. El comando vuelve por
+        el mismo enlace. Si la radio cae, el watchdog del coche degrada con seguridad.</p>
+      </div>
+      <div class="card lab">
+        <span class="accent" aria-hidden="true"></span>
+        <div class="tag">Plano de inferencia</div>
+        <h3>El detector es un servicio</h3>
+        <p>El EPC consulta la Jetson como endpoint HTTP. El coche nunca habla con la
+        Jetson directamente; eso permite cambiar de modelo sin reflashear el vehículo.</p>
+      </div>
+      <div class="card alert">
+        <span class="accent" aria-hidden="true"></span>
+        <div class="tag">Plano de seguridad</div>
+        <h3>El LiDAR puede vetar al detector</h3>
+        <p>La parada por caja física demuestra que la seguridad determinista del LiDAR se
+        impone sobre la decisión de cámara cuando el riesgo de colisión inmediata domina.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="site">
+  <div class="wrap">
+    <div class="cols">
+      <div class="colophon">
+        <strong>Demostración integral · sesión de laboratorio</strong><br/>
+        Reproducción embebida con privacy-enhanced mode; no se cargan cookies de terceros
+        hasta que el usuario pulsa play. Las cifras de latencia y throughput de la red usada
+        en la sesión están publicadas en <a href="./index.html#evidencia">Evidencia del prototipo</a>.
+      </div>
+      <nav aria-label="Vistas técnicas">
+        <h4>Otras vistas</h4>
+        <a href="./index.html">Inicio</a>
+        <a href="./dashboard.html">Dashboard A-601</a>
+        <a href="./coverage.html">Validación de cobertura</a>
+      </nav>
+      <nav aria-label="Repositorio">
+        <h4>Repositorio</h4>
+        <a href="https://github.com/TallerProyectos2/TP2" rel="noopener">GitHub · TallerProyectos2 / TP2</a>
+      </nav>
+    </div>
+    <div class="bottom">
+      <span>© 2026 Grupo 4 — uso académico</span>
+      <span>ETSIT · UVa</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  (function(){
+    var btn = document.querySelector('nav.bar .menu-toggle');
+    var list = document.getElementById('nav-list');
+    if (!btn || !list) return;
+    btn.addEventListener('click', function(){
+      var open = list.classList.toggle('open');
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+  })();
+</script>
+
+</body>
+</html>
